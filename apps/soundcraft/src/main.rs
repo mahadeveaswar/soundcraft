@@ -100,6 +100,9 @@ impl eframe::App for App {
         }
         // The system Quit (⌘Q) ends the process from inside the event loop, so `run_native` never
         // returns: release the player's plugin instances and shut plugin hosting down here.
+        if let Some(p) = &self.0.player {
+            p.audition_all_off();
+        }
         self.0.player = None;
         soundcraft_engine::shutdown_plugin_hosts();
     }

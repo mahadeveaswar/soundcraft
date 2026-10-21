@@ -68,6 +68,14 @@ pub enum TransportRequest {
     HalfSpeed,
     Scrub(Samples),
     AllNotesOff,
+    /// Press (`on`) or release a live note on a track's instrument (note audition). The host
+    /// calls the audio player; the document is not touched.
+    Audition {
+        track: TrackId,
+        pitch: u8,
+        velocity: u8,
+        on: bool,
+    },
 }
 
 /// Snapshot of the transport reported back by the host (playback position etc.).

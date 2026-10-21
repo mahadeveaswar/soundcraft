@@ -57,6 +57,9 @@ use soundcraft_model::{
     AutoParam, BusId, ChannelFormat, Clip, ClipContent, Route, Session, SourceAudio, Speaker, SurroundPan, Track, TrackId, TrackKind,
 };
 use soundcraft_time::{Range, Samples, TICKS_PER_QUARTER};
+mod live;
+pub use live::LiveNote;
+
 use std::collections::HashMap;
 use std::ops::Bound;
 use std::sync::Arc;
@@ -226,6 +229,8 @@ struct Strip {
     sample: Option<Arc<SourceAudio>>,
     /// MIDI notes currently sounding on the instrument (pitch), for note-offs at stops/seek.
     held: Vec<u8>,
+    /// Live (audition) notes sounding on the instrument, kept apart from `held`.
+    live: live::LiveHeld,
     /// The instrument's next block starts somewhere new: send it the controllers in effect there.
     chase: bool,
     muted: bool,
@@ -310,6 +315,7 @@ impl Strip {
             instrument: None,
             sample: None,
             held: Vec::new(),
+            live: live::LiveHeld::new(),
             chase: true,
             muted: false,
             gr: 0.0,
@@ -511,6 +517,7 @@ impl MixEngine {
                 i.failed = false;
             }
             s.held.clear();
+            s.live.clear();
             s.chase = true;
             s.align.clear();
             s.align_pre.clear();
@@ -576,6 +583,7 @@ impl MixEngine {
                 cx.retire(old);
                 strip.instrument = want.and_then(|i| cx.make(t.id, INSTRUMENT_SLOT, i, ich));
                 strip.sample = None;
+                strip.live.clear();
             }
             sync_sample(strip, want, s);
         }
@@ -615,16 +623,20 @@ impl MixEngine {
     /// Render `frames` (≤ max_block) samples starting at `pos` into `out` (≥ 2 channels).
     pub fn render(&mut self, s: &Session, pos: Samples, frames: usize, out: &mut [Vec<f32>]) {
         let frames = frames.min(self.max_block);
-        if pos != self.last_end {
+        // A stopped transport never advances `pos`, so there every block would look like a seek
+        // and kill live notes: the guard only applies when the transport runs.
+        if pos != self.last_end && !self.monitor_only {
             // Seek: silence held notes and ringing plugins.
             for st in self.strips.values_mut() {
                 if let Some(i) = &mut st.instrument {
                     i.plugin.all_notes_off();
                 }
                 st.held.clear();
+                st.live.clear();
                 st.chase = true;
             }
         }
+        self.live_tick(frames);
         self.last_end = pos.saturating_add(frames as i64);
         self.ensure_synced(s);
         for b in self.busses.values_mut() {
@@ -932,7 +944,7 @@ fn process_strip(
             }
         }
         TrackKind::Audio if live.monitor_only => {}
-        TrackKind::Instrument | TrackKind::Midi if live.monitor_only => {}
+        TrackKind::Instrument | TrackKind::Midi if live.monitor_only && !strip.live.active() => {}
         TrackKind::Audio => {
             let block = Range { start: pos, end: pos.saturating_add(frames as i64) };
             for clip in t.clips() {
@@ -994,10 +1006,13 @@ fn process_strip(
                     apply_params(inst, ins, t, INSTRUMENT_SLOT, pos);
                 }
                 inst.plugin.set_transport(&transport);
-                if std::mem::take(&mut strip.chase) {
-                    chase_controllers(s, t, pos, inst);
+                // Stopped: only live notes sound, the clips' notes and controllers stay silent.
+                if !live.monitor_only {
+                    if std::mem::take(&mut strip.chase) {
+                        chase_controllers(s, t, pos, inst);
+                    }
+                    schedule_notes(s, t, pos, frames, inst, &mut strip.held);
                 }
-                schedule_notes(s, t, pos, frames, inst, &mut strip.held);
                 if strip.buf.len() >= 2 {
                     inst.plugin.process(&mut strip.buf, frames);
                 } else if let Some(c0) = strip.buf.first_mut() {

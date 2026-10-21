@@ -790,6 +790,7 @@ impl SoundApp {
     /// Whether the meters are live: while playing, and while armed or input-monitored tracks are heard.
     fn meters_live(&self) -> bool {
         self.engine.transport.playing
+            || self.player.as_ref().is_some_and(|p| p.live_active())
             || (self.recorder.is_some() && self.engine.session().tracks.iter().any(|t| t.mixer.input_monitor || t.mixer.record_arm))
     }
 
@@ -1075,7 +1076,16 @@ impl SoundApp {
                     self.play_from_selection();
                 }
                 TransportRequest::Scrub(at) => self.engine.transport.position = at,
-                TransportRequest::AllNotesOff => {}
+                TransportRequest::AllNotesOff => {
+                    if let Some(p) = &self.player {
+                        p.audition_all_off();
+                    }
+                }
+                TransportRequest::Audition { track, pitch, velocity, on } => {
+                    if let Some(p) = &self.player {
+                        p.audition(track, pitch, velocity, on);
+                    }
+                }
             }
         }
         // Read back the position.

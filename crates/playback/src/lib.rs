@@ -23,12 +23,14 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod devices;
+mod live;
 pub mod record;
 
 pub use devices::AudioConfig;
 
+use live::{LiveEvent, LiveQueue};
 use soundcraft_dsp::{Plugin, PluginEditor, PluginStateReader};
-use soundcraft_mix::{MAX_CHANNELS, MixEngine, PreparedInstance, StripMeter, itu_stereo_fold, main_channels};
+use soundcraft_mix::{LiveNote, MAX_CHANNELS, MixEngine, PreparedInstance, StripMeter, itu_stereo_fold, main_channels};
 use soundcraft_model::{Session, TrackId};
 use soundcraft_time::{Range, Samples};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -171,6 +173,8 @@ struct AudioState {
     /// Retired plugin instances go back to the UI thread to be dropped there.
     garbage: Sender<Vec<Box<dyn Plugin>>>,
     old_sessions: Option<SyncSender<Arc<Session>>>,
+    /// Live (audition) note events from the UI thread.
+    live: Arc<LiveQueue>,
 }
 
 fn new_engine(sr: f32) -> MixEngine {
@@ -187,6 +191,7 @@ impl AudioState {
         AudioState {
             garbage,
             old_sessions: None,
+            live: Arc::new(LiveQueue::new()),
             fold: fold_gains(&session),
             rx,
             shared,
@@ -330,9 +335,18 @@ impl AudioState {
     /// Fill an interleaved device buffer.
     fn fill(&mut self, out: &mut [f32], channels: usize) {
         self.drain();
+        while let Some(ev) = self.live.pop() {
+            match ev {
+                LiveEvent::Note(n) => self.mix.live_note(n),
+                LiveEvent::AllOff => self.mix.live_all_off(),
+            }
+        }
+        // A live (audition) note, or the release tail after one, sounds while the transport is stopped.
+        let live = self.mix.live_active();
+        self.live.set_active(live);
         let channels = channels.max(1);
         let monitoring = self.input.is_some() && self.session.tracks.iter().any(|t| t.mixer.input_monitor || t.mixer.record_arm);
-        if !self.playing && !monitoring {
+        if !self.playing && !monitoring && !live {
             out.iter_mut().for_each(|x| *x = 0.0);
             if let Ok(mut m) = self.shared.meters.try_lock() {
                 m.main = StripMeter::default();
@@ -347,7 +361,7 @@ impl AudioState {
         for frame in out.chunks_mut(channels) {
             while self.read >= self.pending_len as f64 {
                 self.read -= self.pending_len as f64;
-                if !self.playing && !monitoring {
+                if !self.playing && !monitoring && !live {
                     break;
                 }
                 self.render_next(quantum);
@@ -357,7 +371,7 @@ impl AudioState {
             }
             let i0 = self.read.floor() as usize;
             let fr = (self.read - i0 as f64) as f32;
-            let sounding = self.playing || monitoring;
+            let sounding = self.playing || monitoring || live;
             let nch = self.pending.len();
             let sample = |c: usize| {
                 let ch = self.pending.get(c);
@@ -456,6 +470,8 @@ impl Side {
 pub struct Player {
     shared: Arc<Shared>,
     fault: Arc<Fault>,
+    /// Live (audition) note events to the audio thread.
+    live: Arc<LiveQueue>,
     /// The block count last seen while playing, and since when.
     #[cfg(not(target_arch = "wasm32"))]
     watch: Mutex<Option<(u64, std::time::Instant)>>,
@@ -534,18 +550,19 @@ impl Player {
                         let (tx, rx) = channel();
                         let (gtx, grx) = channel();
                         let state = AudioState::new(rx, Arc::clone(&shared), Arc::clone(&session), f64::from(rate), gtx);
+                        let live = Arc::clone(&state.live);
                         let fault = Arc::new(Fault::default());
                         let stream = match format {
                             cpal::SampleFormat::I32 => build_output::<i32>(&device, config, state, channels, &fault, &shared),
                             cpal::SampleFormat::I16 => build_output::<i16>(&device, config, state, channels, &fault, &shared),
                             _ => build_output::<f32>(&device, config, state, channels, &fault, &shared),
                         }?;
-                        Ok(Opened { stream, tx, grx, fault })
+                        Ok(Opened { stream, tx, grx, fault, live })
                     },
                     |opened| start_stream(&opened.stream),
                 );
                 match opened {
-                    Some((config, Opened { stream, tx, grx, fault })) => {
+                    Some((config, Opened { stream, tx, grx, fault, live })) => {
                         let rate = config.sample_rate.0;
                         let channels = usize::from(config.channels);
                         let buffer = match config.buffer_size {
@@ -559,6 +576,7 @@ impl Player {
                         Player {
                             shared,
                             fault,
+                            live,
                             #[cfg(not(target_arch = "wasm32"))]
                             watch: Mutex::new(None),
                             tx,
@@ -611,6 +629,7 @@ impl Player {
     ) -> Player {
         let rate = session.sample_rate.hz();
         let mut state = AudioState::new(rx, Arc::clone(&shared), session, f64::from(rate), gtx);
+        let live = Arc::clone(&state.live);
         let fault = Arc::new(Fault::default());
         let failed = Arc::clone(&fault);
         let spawn = std::thread::Builder::new().name("soundcraft-clock".into()).spawn(move || {
@@ -637,6 +656,7 @@ impl Player {
         Player {
             shared,
             fault,
+            live,
             watch: Mutex::new(None),
             tx,
             side,
@@ -661,6 +681,7 @@ impl Player {
         Player {
             shared,
             fault: Arc::default(),
+            live: Arc::new(LiveQueue::new()),
             tx,
             side,
             _stream: None,
@@ -762,6 +783,25 @@ impl Player {
     pub fn stop(&self) {
         self.shared.playing.store(false, Ordering::Relaxed);
         let _ = self.tx.send(Cmd::Stop);
+    }
+
+    /// Press (`on`) or release a live note on `track`'s instrument, sounding even while the
+    /// transport is stopped. `pitch` is clamped to 0..=127 and `velocity` to 1..=127. `false` when
+    /// the queue was full and the event was dropped (the engine releases an orphaned note itself
+    /// after a timeout). UI thread only.
+    pub fn audition(&self, track: TrackId, pitch: u8, velocity: u8, on: bool) -> bool {
+        self.live.push(LiveEvent::Note(LiveNote { track, pitch: pitch.min(127), velocity: velocity.clamp(1, 127), on }))
+    }
+
+    /// Whether a live (audition) note or its release tail is sounding, so the UI keeps its meters
+    /// live while the transport is stopped. Lock-free.
+    pub fn live_active(&self) -> bool {
+        self.live.is_active()
+    }
+
+    /// Release every live note on every track. UI thread only.
+    pub fn audition_all_off(&self) {
+        let _ = self.live.push(LiveEvent::AllOff);
     }
 
     pub fn locate(&self, at: Samples) {
@@ -897,6 +937,7 @@ struct Opened {
     tx: Sender<Cmd>,
     grx: Receiver<Vec<Box<dyn Plugin>>>,
     fault: Arc<Fault>,
+    live: Arc<LiveQueue>,
 }
 
 /// Build and start the attempts in order; the first that builds and starts wins. A build error or
@@ -1133,6 +1174,42 @@ mod tests {
         let fault = Fault::default();
         fault.gone.store(true, Ordering::Relaxed);
         assert_eq!((fault.trouble(false), fault.trouble(true)), (Some(OutputTrouble::Gone), None));
+    }
+
+    #[test]
+    fn a_live_note_sounds_through_fill_while_the_transport_is_stopped() {
+        use soundcraft_model::{ChannelFormat, Insert, TrackKind};
+        let mut s = soundcraft_model::Session::default();
+        let t = s.add_track(TrackKind::Instrument, ChannelFormat::Stereo, None);
+        if let Some(tr) = s.track_mut(t) {
+            tr.instrument = Some(Insert::new("subtractive_synth"));
+        }
+        let shared = Arc::new(Shared {
+            position: AtomicI64::new(0),
+            playing: AtomicBool::new(false),
+            speed: AtomicU32::new(1000),
+            meters: Mutex::new(MeterSnapshot::default()),
+        });
+        let (_tx, rx) = channel();
+        let mut st = AudioState::new(rx, shared, Arc::new(s), 48_000.0, channel().0);
+        st.mix.ensure_synced(&st.session);
+        let live = Arc::clone(&st.live);
+        let mut out = vec![0.0f32; 2 * 512];
+        for _ in 0..3 {
+            st.fill(&mut out, 2);
+            assert!(out.iter().all(|x| *x == 0.0), "silent before any live note");
+        }
+        assert!(live.push(LiveEvent::Note(LiveNote { track: t, pitch: 60, velocity: 100, on: true })));
+        let mut loud = 0.0f32;
+        for _ in 0..6 {
+            st.fill(&mut out, 2);
+            loud = out.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+        }
+        assert!(loud > 1e-4, "the held live note should sound while stopped: {loud}");
+        assert!(!st.playing);
+        assert!(live.push(LiveEvent::AllOff));
+        st.fill(&mut out, 2);
+        assert!(st.mix.live_active(), "the release tail keeps rendering");
     }
 
     #[test]
