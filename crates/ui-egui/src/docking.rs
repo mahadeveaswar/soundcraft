@@ -29,7 +29,7 @@ impl Panel {
             Self::History => "history",
         }
     }
-    fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             Self::Canvas => "Session",
             Self::Tracks => "Tracks and Groups",
@@ -37,6 +37,16 @@ impl Panel {
             Self::Midi => "MIDI Editor",
             Self::Memory => "Memory Locations",
             Self::History => "Undo History",
+        }
+    }
+    /// The `zone` name of `ui.dock` `move` that puts the panel back on its default side.
+    pub fn default_zone_name(self) -> &'static str {
+        match self.default_side() {
+            Zone::Left => "left",
+            Zone::Top => "top",
+            Zone::Bottom => "bottom",
+            Zone::Center => "center",
+            _ => "right",
         }
     }
     fn default_side(self) -> Zone {
@@ -348,6 +358,13 @@ fn command_for(app: &mut crate::SoundApp, reset: bool, params: &Value, edit: boo
         workspace.validate_mix()?;
     }
     if reset {
+        // Reset means the core panes come back too: syncing a fresh layout with a saved "hidden"
+        // flag would otherwise hide the track list again.
+        let defaults = crate::UiState::default();
+        app.ui.show_tracks_list = defaults.show_tracks_list;
+        if edit {
+            app.ui.show_clip_list = defaults.show_clip_list;
+        }
         workspace = if edit { Workspace::default() } else { mix_default() };
         sync(&mut workspace, app, edit)?;
     } else {
@@ -411,14 +428,55 @@ pub fn show(app: &mut crate::SoundApp, ui: &mut egui::Ui, window: crate::MainWin
     style.border = egui::Stroke::new(1.0, t.border);
     style.accent = t.accent;
     style.font = crate::theme::regular(11.5);
-    let output = DockArea::new(egui::Id::new(("soundcraft-docking", edit))).show_with_limits(
-        ui,
-        &workspace.layout,
-        &style,
-        |panel| panel.label().into(),
-        permissions,
-        panel_limits,
-        |ui, panel| match panel {
+    let area = ui.available_rect_before_wrap();
+    let inner = crate::panel_menu::hints(app, ui, area, edit);
+    let mut content = Content { app, edit, t };
+    let mut run = |ui: &mut egui::Ui| {
+        DockArea::new(egui::Id::new(("soundcraft-docking", edit))).show_customized(
+            ui,
+            &workspace.layout,
+            &style,
+            |panel| panel.label().into(),
+            permissions,
+            panel_limits,
+            &mut content,
+        )
+    };
+    let output = if inner == area { run(ui) } else { ui.scope_builder(egui::UiBuilder::new().max_rect(inner), run).inner };
+    let _ = sync(&mut workspace, app, edit);
+    publish_visibility(app, &workspace, edit);
+    store(app, workspace, edit);
+    for action in output.actions {
+        if let Err(error) = serde_json::to_value(action)
+            .map_err(|error| error.to_string())
+            .and_then(|action| command_for(app, false, &json!({"action": action}), edit))
+        {
+            app.ui.status = format!("Panel move was not applied: {error}");
+        }
+    }
+    if let Some(request) = app.midi.dock_request.take() {
+        let result = if request.get("operation").and_then(Value::as_str) == Some("showAll") {
+            crate::panel_menu::show_all(app).map(|_| ())
+        } else {
+            command_for(app, false, &request, edit).map(|_| ())
+        };
+        if let Err(error) = result {
+            app.ui.status = format!("Panel change was not applied: {error}");
+        }
+    }
+}
+
+/// The dock content adapter: panel bodies plus the app-owned tab-strip buttons and tab menu.
+struct Content<'a> {
+    app: &'a mut crate::SoundApp,
+    edit: bool,
+    t: crate::theme::Tokens,
+}
+
+impl craft_ui::docking::DockContent<Panel> for Content<'_> {
+    fn body(&mut self, ui: &mut egui::Ui, panel: &Panel) {
+        let (app, edit, t) = (&mut *self.app, self.edit, &self.t);
+        match panel {
             Panel::Canvas => {
                 ui.painter().rect_filled(ui.max_rect(), 0.0, t.window_bg);
                 if edit {
@@ -435,23 +493,20 @@ pub fn show(app: &mut crate::SoundApp, ui: &mut egui::Ui, window: crate::MainWin
             }
             Panel::Memory => crate::panels::memory_locations(app, ui),
             Panel::History => crate::panels::undo_history(app, ui),
-        },
-    );
-    let _ = sync(&mut workspace, app, edit);
-    publish_visibility(app, &workspace, edit);
-    store(app, workspace, edit);
-    for action in output.actions {
-        if let Err(error) = serde_json::to_value(action)
-            .map_err(|error| error.to_string())
-            .and_then(|action| command_for(app, false, &json!({"action": action}), edit))
-        {
-            app.ui.status = format!("Panel move was not applied: {error}");
         }
     }
-    if let Some(request) = app.midi.dock_request.take()
-        && let Err(error) = command_for(app, false, &request, edit)
-    {
-        app.ui.status = format!("Panel change was not applied: {error}");
+
+    fn panel_menu(&mut self, ui: &mut egui::Ui, _panel: &Panel) {
+        crate::panel_menu::list_menu(self.app, ui, true);
+        ui.separator();
+    }
+
+    fn group_header_width(&self, _panels: &[Panel], active: &Panel, _floating: bool) -> f32 {
+        crate::panel_menu::header_width(*active)
+    }
+
+    fn group_header(&mut self, ui: &mut egui::Ui, _panels: &[Panel], active: &Panel, floating: bool) {
+        crate::panel_menu::header(self.app, ui, *active, floating);
     }
 }
 

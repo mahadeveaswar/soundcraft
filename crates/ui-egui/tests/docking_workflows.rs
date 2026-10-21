@@ -157,3 +157,19 @@ fn legacy_preferences_restore_the_theme_and_validate_default_docking() {
     restored.docking.validate().unwrap();
     restored.mix_docking.validate_mix().unwrap();
 }
+
+#[test]
+fn reset_brings_back_a_closed_track_list_and_clip_list() {
+    let mut app = SoundApp::new(soundcraft_engine::Engine::default(), None, Services::default());
+    app.run("ui.dock", json!({"operation":"close","panel":"tracks"})).unwrap();
+    app.run("ui.dock", json!({"operation":"close","panel":"clips"})).unwrap();
+    assert!(!app.ui.show_tracks_list && !app.ui.show_clip_list, "closing hides both panes");
+    app.run("ui.dock.reset", json!({})).unwrap();
+    assert!(app.ui.show_tracks_list && app.ui.show_clip_list, "reset shows both panes again");
+    assert!(app.ui.docking.layout.contains(&Panel::Tracks) && app.ui.docking.layout.contains(&Panel::Clips));
+    // Mix window too.
+    app.ui.window = MainWindow::Mix;
+    app.run("ui.dock", json!({"operation":"close","panel":"tracks"})).unwrap();
+    app.run("ui.dock.reset", json!({})).unwrap();
+    assert!(app.ui.mix_docking.layout.contains(&Panel::Tracks));
+}
