@@ -129,6 +129,17 @@ pub fn draw(painter: &Painter, r: Rect, name: &str, c: Color32) {
         "triangle_down" => {
             painter.add(Shape::convex_polygon(vec![p(r, 0.25, 0.35), p(r, 0.75, 0.35), p(r, 0.5, 0.68)], c, Stroke::NONE));
         }
+        "keyboard" => {
+            // Piano keys: an outlined body, three white-key dividers, two black keys.
+            let body = Rect::from_min_max(p(r, 0.1, 0.25), p(r, 0.9, 0.75));
+            painter.rect_stroke(body, 1.5, s, egui::StrokeKind::Middle);
+            for x in [0.3, 0.5, 0.7] {
+                painter.line_segment([p(r, x, 0.5), p(r, x, 0.75)], Stroke::new(s.width * 0.7, c));
+            }
+            for x in [0.2, 0.4, 0.6] {
+                painter.rect_filled(Rect::from_min_max(p(r, x + 0.04, 0.25), p(r, x + 0.16, 0.55)), 0.0, c);
+            }
+        }
         "note" => {
             painter.circle_filled(p(r, 0.38, 0.72), r.width() * 0.13, c);
             painter.line_segment([p(r, 0.5, 0.72), p(r, 0.5, 0.2)], s);

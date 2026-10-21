@@ -1143,7 +1143,22 @@ fn track_header(app: &mut SoundApp, ui: &mut Ui, track: &Track, head: Rect, sele
                 }
             });
         }
-        let field = at(30.0, 75.0, 92.0, 17.0);
+        let is_inst = track.kind == TrackKind::Instrument;
+        let field = at(30.0, 75.0, if is_inst { 72.0 } else { 92.0 }, 17.0);
+        if is_inst {
+            let r = at(104.0, 75.0, 18.0, 17.0);
+            let resp = ui.interact(r, ui.id().with(("open_instrument", id.0)), Sense::click());
+            let loaded = track.instrument.is_some();
+            raised_key(ui.painter(), r, t.slot_face, resp.hovered() && loaded);
+            crate::icons::draw(ui.painter(), r.shrink(1.0), "keyboard", if loaded { t.text } else { t.text_dim });
+            let tip = if loaded { "Open instrument" } else { "No instrument loaded" };
+            if resp.on_hover_text(tip).clicked() && loaded {
+                let slot = soundcraft_mix::INSTRUMENT_SLOT;
+                if !app.ui.plugin_windows.contains(&(id, slot)) {
+                    app.ui.plugin_windows.push((id, slot));
+                }
+            }
+        }
         if matches!(track.kind, TrackKind::Audio | TrackKind::Instrument) {
             let resp = ui.interact(field, ui.id().with(("field", id.0)), Sense::click());
             ui.painter().rect_filled(field, 2.0, shade(head_bg, if resp.hovered() { -0.02 } else { -0.1 }));

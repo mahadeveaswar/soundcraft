@@ -396,6 +396,10 @@ pub fn show(app: &mut crate::SoundApp, ui: &mut egui::Ui, window: crate::MainWin
         let _ = sync(&mut workspace, app, edit);
     }
     cancel_replaced_workspace(app, &before_sync, &workspace, edit);
+    app.midi.floating = workspace.layout.floating.iter().any(|group| group.panels.contains(&Panel::Midi));
+    if edit && !app.ui.show_midi_editor {
+        app.midi.minimized = false;
+    }
     let mut style = DockStyle::from_ui(ui);
     style.min_pane = 96.0;
     style.tab_height = MIDI_TAB_HEIGHT;
@@ -443,6 +447,11 @@ pub fn show(app: &mut crate::SoundApp, ui: &mut egui::Ui, window: crate::MainWin
         {
             app.ui.status = format!("Panel move was not applied: {error}");
         }
+    }
+    if let Some(request) = app.midi.dock_request.take()
+        && let Err(error) = command_for(app, false, &request, edit)
+    {
+        app.ui.status = format!("Panel change was not applied: {error}");
     }
 }
 

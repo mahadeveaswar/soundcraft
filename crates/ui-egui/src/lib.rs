@@ -14,6 +14,7 @@ pub mod extra_windows;
 pub mod fonts;
 pub mod icons;
 pub mod menus;
+pub mod midi_audition;
 pub mod midi_editor;
 pub mod mix_window;
 pub mod ops_windows;
@@ -63,6 +64,8 @@ pub struct UiState {
     pub window: MainWindow,
     pub show_tracks_list: bool,
     pub show_clip_list: bool,
+    /// Piano roll: sound notes as they are clicked, drawn or moved.
+    pub audition: bool,
     pub show_transport: bool,
     pub show_memory_locations: bool,
     pub show_big_counter: bool,
@@ -136,6 +139,7 @@ impl Default for UiState {
             window: MainWindow::Edit,
             show_tracks_list: true,
             show_clip_list: true,
+            audition: true,
             show_transport: false,
             show_memory_locations: false,
             show_big_counter: false,
@@ -1001,12 +1005,14 @@ impl SoundApp {
         let sel = s.edit.selection;
         let preroll = if s.edit.pre_post_roll { s.edit.pre_roll } else { 0 };
         let postroll = if s.edit.pre_post_roll { s.edit.post_roll } else { 0 };
+        // A playhead placed in the MIDI Editor within the unchanged selection is where play starts.
+        let from = midi_editor::placed_position(self.midi.play_from, sel).unwrap_or(sel.start);
         if s.edit.loop_playback && !sel.is_empty() {
-            self.start_play(sel.start, None, Some(sel));
+            self.start_play(from, None, Some(sel));
         } else if !sel.is_empty() {
-            self.start_play((sel.start - preroll).max(0), Some(sel.end + postroll), None);
+            self.start_play((from - preroll).max(0), Some(sel.end + postroll), None);
         } else {
-            self.start_play((sel.start - preroll).max(0), None, None);
+            self.start_play((from - preroll).max(0), None, None);
         }
     }
 
@@ -1265,6 +1271,7 @@ impl SoundApp {
             mix_window::show_separate(self, &ctx);
         }
         panels::floating(self, &ctx);
+        midi_audition::frame_end(self, &ctx);
         windows::show(self, &ctx);
         video_window::show(self, &ctx);
         ops_windows::show(self, &ctx);
