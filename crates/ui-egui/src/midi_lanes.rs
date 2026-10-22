@@ -89,12 +89,30 @@ impl Lane {
         }
     }
 
+    /// The track automation parameter that drives the same controller (none for velocity).
+    pub fn auto_param(self) -> Option<soundcraft_model::AutoParam> {
+        use soundcraft_model::AutoParam;
+        match self {
+            Lane::Velocity => None,
+            Lane::Modulation => Some(AutoParam::MidiCc(1)),
+            Lane::Expression => Some(AutoParam::MidiCc(11)),
+            Lane::Sustain => Some(AutoParam::MidiCc(64)),
+            Lane::PitchBend => Some(AutoParam::PitchBend),
+        }
+    }
+
     pub fn kind(self) -> soundcraft_midi::CtrlKind {
         match self {
             Lane::PitchBend => soundcraft_midi::CtrlKind::PitchBend,
             other => soundcraft_midi::CtrlKind::Cc(other.command().1 as u8),
         }
     }
+}
+
+/// True when the track's automation lane for this controller owns it during playback (the track
+/// reads automation and the lane has points), so the clip's own events are not heard.
+pub fn automated_by_track(track: &soundcraft_model::Track, lane: Lane) -> bool {
+    track.mixer.automation_mode.reads() && lane.auto_param().and_then(|p| track.lane(&p).map(|l| !l.points.is_empty())).unwrap_or(false)
 }
 
 /// One lane of the stack.
@@ -370,6 +388,9 @@ fn ctrl_lane(
     let kind = lane.kind();
     let evs: Vec<_> = sequence.ctrls.iter().filter(|c| c.channel == 0 && c.kind == kind).collect();
     let col = Color32::from_rgb(base.r().saturating_add(40), base.g().saturating_add(40), base.b().saturating_add(40));
+    // Clip data is dimmed and badged while the track's own automation lane drives this controller.
+    let automated = app.engine.session().find_clip(cid).and_then(|(t, _)| app.engine.session().track(t)).is_some_and(|t| automated_by_track(t, lane));
+    let col = if automated { col.gamma_multiply(0.4) } else { col };
     let mut prev = (r.min.x, y_of(zero));
     for c in &evs {
         let (x, y) = (x_of(c.tick), y_of(c.value));
@@ -380,6 +401,13 @@ fn ctrl_lane(
     }
     painter.line_segment([pos2(prev.0, prev.1), pos2(r.max.x, prev.1)], Stroke::new(1.5, col));
 
+    if automated {
+        let tk = Tokens::current();
+        let galley = painter.layout_no_wrap("Automated by track lane".to_string(), regular(9.0), tk.text);
+        let pill = Rect::from_min_size(pos2(r.min.x + 6.0, r.min.y + 3.0), galley.size() + vec2(10.0, 4.0));
+        painter.rect(pill, 3.0, tk.button, Stroke::new(1.0, tk.border), egui::StrokeKind::Inside);
+        painter.galley(pill.min + vec2(5.0, 2.0), galley, tk.text);
+    }
     let resp = ui.interact(r, ui.id().with(("ctrl", cid.0, idx)), Sense::click_and_drag());
     if resp.is_pointer_button_down_on() || resp.clicked() {
         app.midi.active_lane = idx;
@@ -472,6 +500,21 @@ fn line_in_lane(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn badge_shows_only_when_a_lane_with_points_owns_the_controller() {
+        use soundcraft_model::{AutoParam, AutomationMode, ChannelFormat, Track, TrackId, TrackKind};
+        let mut t = Track::new(TrackId(1), "I", TrackKind::Instrument, ChannelFormat::Stereo, [1, 2, 3]);
+        assert!(!automated_by_track(&t, Lane::Expression), "no lane");
+        t.lane_mut(&AutoParam::MidiCc(11));
+        assert!(!automated_by_track(&t, Lane::Expression), "empty lane does not own");
+        t.lane_mut(&AutoParam::MidiCc(11)).set_point(0, 5.0);
+        assert!(automated_by_track(&t, Lane::Expression));
+        assert!(!automated_by_track(&t, Lane::Modulation), "other controllers are unaffected");
+        assert!(!automated_by_track(&t, Lane::Velocity));
+        t.mixer.automation_mode = AutomationMode::Off;
+        assert!(!automated_by_track(&t, Lane::Expression), "mode Off: clip data plays");
+    }
 
     #[test]
     fn default_stack_is_velocity_only_and_add_remove_work() {
