@@ -95,6 +95,8 @@ pub const UI_COMMANDS: &[(&str, &str, &str, Option<&str>)] = &[
     ("ui.theme_duplicate", "Duplicate Theme", "", None),
     ("ui.theme_export", "Export Theme", "", None),
     ("ui.theme_import", "Import Theme", "", None),
+    ("ui.theme_move", "Move Theme", "", None),
+    ("ui.theme_folder", "Shared Themes Folder", "", None),
     ("ui.menu_layout", "Menu Layout", "", None),
     ("ui.toolbar_style", "Toolbar Style", "", None),
     ("ui.header_style", "Track Header Style", "", None),

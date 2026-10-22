@@ -1,4 +1,4 @@
-//! `cargo xtask <ci|layers|assets|parity|wasm>` — repository gates.
+//! `cargo xtask <ci|layers|assets|themes|parity|wasm>` — repository gates.
 
 mod ico;
 mod version;
@@ -112,6 +112,82 @@ fn assets() -> Result<(), String> {
     }
 }
 
+/// The file stem for a theme name. A copy of `theme_doc::slug` in the UI crate (xtask has no
+/// workspace dependencies); keep the two in step.
+fn theme_slug(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.trim().chars() {
+        if c.is_alphanumeric() {
+            out.extend(c.to_lowercase());
+        } else if (c == ' ' || c == '-' || c == '_') && !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    let out: String = out.chars().take(64).collect();
+    let out = out.trim_end_matches('-').to_string();
+    if out.is_empty() { "theme".into() } else { out }
+}
+
+/// Check the shipped themes in `themes/`: valid theme files, file name = slug of the name, LF line
+/// ends, canonical text (sorted keys, 2-space pretty JSON, one trailing newline) and plain
+/// generic names. The product-name check itself is the check-names script run before commits.
+fn themes() -> Result<(), String> {
+    let dir = root().join("themes");
+    let mut problems = Vec::new();
+    let mut count = 0;
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .map_err(|e| format!("themes/: {e}"))?
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .collect();
+    files.sort();
+    for path in files {
+        count += 1;
+        let file = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let text = match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(e) => {
+                problems.push(format!("{file}: {e}"));
+                continue;
+            }
+        };
+        let value: serde_json::Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(e) => {
+                problems.push(format!("{file}: not valid JSON: {e}"));
+                continue;
+            }
+        };
+        if value["format"] != "soundcraft-theme" {
+            problems.push(format!("{file}: `format` must be \"soundcraft-theme\""));
+        }
+        let name = value["name"].as_str().unwrap_or("");
+        if name.trim().is_empty() || name.chars().count() > 64 {
+            problems.push(format!("{file}: `name` must be 1 to 64 characters"));
+        }
+        if !name.chars().all(|c| c.is_alphanumeric() || c == ' ' || c == '-') || name.chars().count() > 32 {
+            problems.push(format!("{file}: the name `{name}` must be short plain words (letters, digits, spaces, hyphens)"));
+        }
+        if file != format!("{}.json", theme_slug(name)) {
+            problems.push(format!("{file}: the file name must be `{}.json`", theme_slug(name)));
+        }
+        if text.contains('\r') {
+            problems.push(format!("{file}: use LF line ends"));
+        }
+        let canonical = serde_json::to_string_pretty(&value).map(|t| t + "\n").unwrap_or_default();
+        if text != canonical {
+            problems.push(format!("{file}: not in canonical form (sorted keys, 2-space indent, one trailing newline); save it from the app"));
+        }
+    }
+    if problems.is_empty() {
+        println!("themes: ok ({count} shipped)");
+        Ok(())
+    } else {
+        Err(format!("theme problems:\n  {}", problems.join("\n  ")))
+    }
+}
+
 fn parity() -> Result<(), String> {
     cargo(&["run", "-q", "-p", "soundcraft-cli", "--", "parity", "--write", "docs/parity-checklist.md"])
 }
@@ -150,6 +226,7 @@ fn ci() -> Result<(), String> {
         ("clippy", Box::new(|| cargo(&["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]))),
         ("test", Box::new(|| cargo(&["test", "--workspace"]))),
         ("assets", Box::new(assets)),
+        ("themes", Box::new(themes)),
         ("layers", Box::new(layers)),
         ("wasm", Box::new(wasm)),
     ];
@@ -174,11 +251,12 @@ fn main() -> ExitCode {
         Some("ci") => ci(),
         Some("layers") => layers(),
         Some("assets") => assets(),
+        Some("themes") => themes(),
         Some("parity") => parity(),
         Some("wasm") => wasm(),
         Some("version") => version::run(args.get(1..).unwrap_or(&[])),
         Some("ico") => ico::run(args.get(1..).unwrap_or(&[])),
-        _ => Err("usage: cargo xtask <ci|layers|assets|parity|wasm|version>".into()),
+        _ => Err("usage: cargo xtask <ci|layers|assets|themes|parity|wasm|version>".into()),
     };
     match r {
         Ok(()) => ExitCode::SUCCESS,
@@ -186,5 +264,24 @@ fn main() -> ExitCode {
             eprintln!("xtask: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_slugs_follow_the_app_rule() {
+        for (name, want) in
+            [("Sunset", "sunset"), ("My Theme", "my-theme"), ("  a__b - c  ", "a-b-c"), ("--x--", "x"), ("!!!", "theme"), ("", "theme")]
+        {
+            assert_eq!(theme_slug(name), want, "{name:?}");
+        }
+    }
+
+    #[test]
+    fn the_shipped_themes_pass_the_check() {
+        themes().expect("themes/ is valid");
     }
 }

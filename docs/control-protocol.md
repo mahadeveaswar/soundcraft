@@ -91,17 +91,55 @@ OS appearance and therefore resolves System to Dark.
 
 `ui.theme_*` commands edit a custom colour theme on top of Dark, Light or Midnight. The first
 edit forks an unsaved "Custom (from Dark)" copy that is saved with the UI preferences.
-`ui.theme_get {}` returns the name, base, `dirty`, every colour as `#RRGGBB`, the settings and
-contrast warnings. `ui.theme_list {}` lists built-in and saved themes.
+`ui.theme_get {}` returns the name, base, `scope`, `dirty`, every colour as `#RRGGBB`, the settings
+and contrast warnings.
 `ui.theme_set_color {key, color}` (an unknown key lists the valid ones),
 `ui.theme_set_param {key, value}` (`clip_opacity`, `clip_opacity_selected`, `grid_strength`,
 `track_tint`, `grid_beat_always`), `ui.theme_set_track_color {index 0-15, color}` and
-`ui.theme_reset {key?}` change the working copy. `ui.theme_load`, `ui.theme_save {name?}`,
-`ui.theme_rename {from, to}`, `ui.theme_delete`, `ui.theme_duplicate {name, to}`,
-`ui.theme_export {path?}` and `ui.theme_import {path?}` manage themes; built-in names cannot be
-overwritten, renamed or deleted. Saved themes are JSON files in the `themes` folder next to
-`ui.json`; with `SOUNDCRAFT_NO_PREFS` they stay in memory. A theme's track palette is pushed to
-the engine with `track_palette.set` when the theme applies and cleared for built-in themes. The
+`ui.theme_reset {key?}` change the working copy.
+
+Themes live in scopes: `builtin` (Dark, Light, Midnight, Colour-safe), `shipped` (the repository's
+`themes/` folder, embedded in every build, read-only), `shared` (a folder of theme files meant to
+be committed to git), `user` (the `themes` folder next to `ui.json`, shown as "This computer") and
+`memory` (kept until quit, only when there is no folder to write to). Shipped and built-in themes
+cannot be saved over, renamed or deleted. A shared theme with the same name hides the shipped one;
+a shared and a user theme may share a name (both are listed; `ui.theme_load` without a scope
+prefers shared). Names compare case-insensitively.
+
+- `ui.theme_list {}`: `themes` (each with `name`, `scope`, `read_only`, `builtin`, `active`,
+  `path` for files), `active`, `shared_dir`, `user_dir` (`themes_dir` is the same), `default_scope`,
+  `prefs_enabled` and `skipped` (`[{scope, file, reason}]`: files that were not accepted, because
+  they are larger than 256 KiB, not UTF-8, not valid JSON, not a SoundCraft theme file, have a bad
+  name or repeat a name; a newer version still loads).
+- `ui.theme_load {name, scope?}`.
+- `ui.theme_save {name?, scope?}`: scope `shared` or `user`; without it the active theme's scope
+  if it is shared or user, else the `theme_default_scope` UI preference, else shared when a shared
+  folder is set, else user. A built-in name is refused; a name that exists in the same scope is
+  overwritten.
+- `ui.theme_duplicate {name, to, scope?}`, `ui.theme_import {path?, scope?}`,
+  `ui.theme_rename {from, to, scope?}`, `ui.theme_delete {name, scope?}`,
+  `ui.theme_export {path?}` (exports the working or active theme).
+- `ui.theme_move {name, from, to}`: copy a saved theme between `shared` and `user` (or from
+  `memory`), then remove the original; refuses when the target already has that name.
+- `ui.theme_folder {path?, detect?}`: no arguments reports `{shared_dir, detected, source}` with
+  `source` `pref`, `detected` or `off`. `path` sets the shared folder (a folder that may not exist
+  yet; a file is refused), `path: ""` turns it off, `path: null` or `detect: true` goes back to
+  the detected folder. The setting is the `shared_themes_folder` UI preference.
+
+Save, duplicate, import and move report `saved_to` (`shared`, `user` or `memory`), `path` (files)
+and `warning`. With no folder to write to (`SOUNDCRAFT_NO_PREFS`, tests, the web) the theme is kept
+in memory, the call succeeds with `saved_to: "memory"` and a warning that it is NOT saved to disk.
+A failed write to a folder (the shared folder included) is an error naming the folder; nothing is
+redirected elsewhere and the working copy stays unsaved.
+
+Files are canonical so that git diffs stay small: `<slug>.json` (lowercase name, letters and digits
+kept, space, `-` and `_` become `-`, at most 64 characters, `-2`, `-3` when another theme has the
+slug), sorted keys, 2-space indent, unset settings left out, LF line ends and one trailing newline;
+saving a theme twice gives identical bytes. An older `<Name>.json` still loads and is replaced by
+the slug file the next time it is saved. The desktop app detects the shared folder only when it runs
+from a cargo build folder of a source checkout that has a `themes/` folder (never for installed
+apps), and not at all under `SOUNDCRAFT_NO_PREFS`. A theme's track palette is pushed to the engine
+with `track_palette.set` when the theme applies and cleared for built-in themes. The
 Settings window (see Settings) is the UI for these commands.
 
 ## Settings

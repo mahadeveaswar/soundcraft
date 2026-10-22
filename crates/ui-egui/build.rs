@@ -24,6 +24,43 @@ fn main() {
     if let Err(e) = std::fs::write(&out, generate(&json, &people)) {
         println!("cargo::warning=writing {}: {e}", out.display());
     }
+    shipped_themes();
+}
+
+/// Embed the repository's `themes/*.json` as a table of (file name, text), sorted by file name.
+/// A missing folder gives an empty table.
+fn shipped_themes() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../themes");
+    println!("cargo::rerun-if-changed={}", dir.display());
+    let mut files: Vec<(String, String)> = std::fs::read_dir(&dir)
+        .map(|rd| {
+            rd.filter_map(Result::ok)
+                .map(|e| e.path())
+                .filter(|p| p.is_file() && p.extension().is_some_and(|x| x.eq_ignore_ascii_case("json")))
+                .filter_map(|p| {
+                    let name = p.file_name()?.to_string_lossy().into_owned();
+                    let text = std::fs::read_to_string(&p).map_err(|e| println!("cargo::warning={}: {e}", p.display())).ok()?;
+                    Some((name, text))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    files.sort();
+    let mut o = String::from(
+        "pub const SHIPPED: &[(&str, &str)] = &[
+",
+    );
+    for (name, text) in &files {
+        let _ = writeln!(o, "    ({name:?}, {text:?}),");
+    }
+    o.push_str(
+        "];
+",
+    );
+    let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap_or_default()).join("shipped_themes.rs");
+    if let Err(e) = std::fs::write(&out, o) {
+        println!("cargo::warning=writing {}: {e}", out.display());
+    }
 }
 
 fn read<T>(path: &std::path::Path, fallback: &str, parse: impl Fn(&str) -> Result<T, String>) -> Option<T> {

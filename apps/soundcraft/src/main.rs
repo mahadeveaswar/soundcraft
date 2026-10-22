@@ -18,6 +18,7 @@ mod graphics;
 mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
+mod themes_folder;
 
 use soundcraft_engine::Engine;
 use soundcraft_ui_egui::{Services, SoundApp, UiState, dialogs};
@@ -197,6 +198,8 @@ fn services() -> Services {
         })),
         free_space: Some(Box::new(|path: &std::path::Path| fs4::available_space(path).ok())),
         themes_dir: if prefs_enabled() { config_dir().map(|d| d.join("themes")) } else { None },
+        shared_themes_dir: if prefs_enabled() { themes_folder::detect_for_running_exe() } else { None },
+        prefs_enabled: prefs_enabled(),
     }
 }
 

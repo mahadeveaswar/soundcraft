@@ -132,6 +132,9 @@ fn per_colour_reset_clears_only_that_colour() {
     h.state_mut().run("ui.theme_set_color", json!({"key": "accent", "color": "#FF8800"})).unwrap();
     h.state_mut().run("ui.theme_set_color", json!({"key": "playhead", "color": "#00FF00"})).unwrap();
     h.run_steps(3);
+    // The page is taller since the shared-folder rows; bring the button into view first.
+    h.get_by_label("Reset Accent").scroll_to_me();
+    h.run_steps(3);
     h.get_by_label("Reset Accent").click();
     h.run_steps(3);
     assert_eq!(get(&mut h)["overrides"], json!(["playhead"]));

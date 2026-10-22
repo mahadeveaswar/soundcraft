@@ -1,0 +1,16 @@
+{
+  "base": "dark",
+  "colors": {
+    "accent": "#4F9DDE",
+    "playhead": "#FFD166",
+    "selection": "#3A5F8A"
+  },
+  "format": "soundcraft-theme",
+  "name": "Slate",
+  "params": {
+    "clip_opacity": 0.8,
+    "grid_strength": 1.5
+  },
+  "track_palette": [],
+  "version": 1
+}

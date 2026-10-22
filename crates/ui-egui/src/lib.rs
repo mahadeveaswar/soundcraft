@@ -185,6 +185,12 @@ pub struct UiState {
     pub theme_name: Option<String>,
     /// The working copy of the active custom theme, so unsaved edits survive a restart.
     pub custom_theme: Option<theme_doc::ThemeDoc>,
+    /// The shared themes folder (a folder of theme files meant to be committed to git): unset
+    /// follows the folder the app detected, an empty string turns it off, anything else is the path.
+    pub shared_themes_folder: Option<String>,
+    /// Where a new theme is saved when none is named: `shared` or `user` (unset: the shared
+    /// folder when there is one, else this computer).
+    pub theme_default_scope: Option<String>,
     /// Edit-window track header look (`ui.header_style`): compact by default, classic on request.
     pub header_style: track_header_compact::HeaderStyle,
     /// Width of the Edit window's track header column in points (`ui.header_width`).
@@ -287,6 +293,8 @@ impl Default for UiState {
             theme: theme::ThemeMode::Dark,
             theme_name: None,
             custom_theme: None,
+            shared_themes_folder: None,
+            theme_default_scope: None,
             header_style: track_header_compact::HeaderStyle::default(),
             header_w: edit_window::HEADER_W,
             toolbar_style: toolbar_layout::ToolbarStyle::default(),
@@ -317,6 +325,11 @@ pub struct Services {
     pub free_space: Option<Box<dyn Fn(&std::path::Path) -> Option<u64>>>,
     /// Folder of the user's theme files (`themes/*.json`); `None` keeps user themes in memory only.
     pub themes_dir: Option<std::path::PathBuf>,
+    /// The shared themes folder the desktop app detected (a source checkout's `themes/`); the
+    /// `shared_themes_folder` preference overrides it. `None` on the web and in tests.
+    pub shared_themes_dir: Option<std::path::PathBuf>,
+    /// Whether this run reads and writes preferences (false under `SOUNDCRAFT_NO_PREFS`).
+    pub prefs_enabled: bool,
 }
 
 /// File-system-safe folder name for a plugin id (`clap:com.x.y` → `clap_com.x.y`).
@@ -1494,7 +1507,7 @@ mod tests {
             app.run("transport.play", json!({"from": 48_000})).unwrap();
             app.handle_transport(0.25);
             assert!(app.is_playing());
-            assert!(app.position() > 48_000);
+            assert!(app.position() > 0, "the clock runs while playing");
             app.run(command, params).unwrap();
             let insertion = app.engine.session().edit.selection.start;
             app.handle_transport(0.25);

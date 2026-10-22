@@ -1,0 +1,20 @@
+{
+  "base": "dark",
+  "colors": {
+    "arrange_bg": "#101011",
+    "border": "#101011",
+    "panel": "#101011",
+    "window_bg": "#101011"
+  },
+  "format": "soundcraft-theme",
+  "name": "Night Owl",
+  "params": {
+    "clip_corner": 7.0,
+    "clip_opacity": 0.35,
+    "clip_opacity_selected": 0.66,
+    "grid_beat_always": false,
+    "track_tint": 0.25
+  },
+  "track_palette": [],
+  "version": 1
+}

@@ -9,12 +9,18 @@ use crate::theme_doc::{self, ColorKey};
 use egui::{Color32, Id, RichText, Sense, TextEdit, Ui, vec2};
 use serde_json::{Value, json};
 
-/// Transient page state kept in egui memory: the name field and the last message.
+/// Transient page state kept in egui memory: the name field, the last message and the theme
+/// list read from `ui.theme_list` (re-read after every command and every couple of seconds).
 #[derive(Clone, Default)]
 struct PageState {
     name: String,
     message: String,
     error: bool,
+    /// The message is a warning (the action worked, with a caveat).
+    warn: bool,
+    list: Value,
+    fetched_at: f64,
+    refresh: bool,
 }
 
 fn state_id() -> Id {
@@ -46,14 +52,29 @@ const PARAMS: &[(&str, &str, f32, f32)] = &[
 pub fn page(app: &mut SoundApp, ui: &mut Ui) {
     let mut st = ui.data_mut(|d| d.get_temp::<PageState>(state_id())).unwrap_or_default();
     let t = Tokens::current();
+    let now = ui.input(|i| i.time);
+    if st.refresh || st.list.is_null() || now - st.fetched_at > 2.0 {
+        st.list = app.run("ui.theme_list", json!({})).unwrap_or_default();
+        st.fetched_at = now;
+        st.refresh = false;
+    }
+    prefs_banner(app, ui, &t);
     heading(ui, "Theme");
     theme_row(app, ui, &mut st);
     file_row(app, ui, &mut st);
+    folder_row(app, ui, &mut st);
     reset_all(app, ui, &mut st);
     if !st.message.is_empty() {
-        let color = if st.error { t.rec } else { t.text_dim };
+        let color = if st.error {
+            t.rec
+        } else if st.warn {
+            t.meter_yellow
+        } else {
+            t.text_dim
+        };
         ui.label(RichText::new(&st.message).font(regular(11.0)).color(color));
     }
+    skipped_note(ui, &t, &st.list);
     ui.add_space(6.0);
     contrast_summary(ui, &t);
     ui.add_space(6.0);
@@ -70,45 +91,110 @@ fn heading(ui: &mut Ui, text: &str) {
     ui.add_space(2.0);
 }
 
-/// Run a command and keep its error (or nothing) as the page message.
+/// Run a command and keep its error or warning (or nothing) as the page message.
 fn exec(app: &mut SoundApp, st: &mut PageState, id: &str, params: Value) -> Option<Value> {
+    st.refresh = true;
     match app.run(id, params) {
         Ok(v) => {
-            st.message.clear();
             st.error = false;
+            st.warn = warned(&v);
+            st.message = v["warning"].as_str().unwrap_or_default().to_string();
             Some(v)
         }
         Err(e) => {
             st.message = e;
             st.error = true;
+            st.warn = false;
             None
         }
     }
 }
 
+/// Whether a command result carries a warning (the theme was kept in memory only).
+fn warned(v: &Value) -> bool {
+    v["warning"].as_str().is_some()
+}
+
+/// The place a theme lives, as shown next to it.
+fn badge(scope: &str) -> &'static str {
+    match scope {
+        "builtin" => "Built-in",
+        "shipped" => "Shipped",
+        "shared" => "Shared",
+        "user" => "This computer",
+        _ => "Not saved",
+    }
+}
+
+/// Shown while preferences are off (or on the web): saved themes are not written to disk.
+fn prefs_banner(app: &SoundApp, ui: &mut Ui, t: &Tokens) {
+    let text = if cfg!(target_arch = "wasm32") {
+        "This web build cannot save files: use Export to keep a theme"
+    } else if !app.services.prefs_enabled {
+        "Preferences are off for this run: themes are not saved"
+    } else {
+        return;
+    };
+    ui.horizontal(|ui| {
+        warning_icon(ui, t);
+        ui.label(RichText::new(text).font(regular(11.0)).color(t.meter_yellow));
+    });
+    ui.add_space(4.0);
+}
+
+/// A warning line when theme files were skipped because they could not be read.
+fn skipped_note(ui: &mut Ui, t: &Tokens, list: &Value) {
+    let skipped = list["skipped"].as_array().map(Vec::as_slice).unwrap_or_default();
+    if skipped.is_empty() {
+        return;
+    }
+    let detail: Vec<String> = skipped
+        .iter()
+        .map(|s| format!("{} ({}): {}", s["file"].as_str().unwrap_or("?"), s["scope"].as_str().unwrap_or("?"), s["reason"].as_str().unwrap_or("?")))
+        .collect();
+    let n = skipped.len();
+    let plural = if n == 1 { "" } else { "s" };
+    ui.horizontal(|ui| {
+        warning_icon(ui, t).on_hover_text(detail.join("\n"));
+        ui.label(RichText::new(format!("{n} theme file{plural} could not be read")).font(regular(11.0)).color(t.meter_yellow))
+            .on_hover_text(detail.join("\n"));
+    });
+}
+
 fn theme_row(app: &mut SoundApp, ui: &mut Ui, st: &mut PageState) {
     let shown = app.ui.theme_name.clone().unwrap_or_else(|| app.ui.theme.label().to_string());
     let dirty = crate::theme_cmds::is_dirty(app);
-    let mut chosen = None;
+    let scope = crate::theme_cmds::current_scope(app);
+    let mut chosen: Option<(String, String)> = None;
     ui.horizontal(|ui| {
         ui.label("Theme");
         egui::ComboBox::from_id_salt("settings_theme_picker").selected_text(if dirty { format!("{shown} *") } else { shown }).width(200.0).show_ui(
             ui,
             |ui| {
-                // The list reads the themes folder, so it is only fetched while the menu is open.
+                // The list reads the theme folders, so it is re-read while the menu is open.
                 let list = app.run("ui.theme_list", json!({})).unwrap_or_default();
-                let active = app.ui.theme_name.clone().unwrap_or_default();
                 for th in list["themes"].as_array().map(Vec::as_slice).unwrap_or_default() {
                     let Some(name) = th["name"].as_str() else { continue };
-                    if ui.selectable_label(active.eq_ignore_ascii_case(name), name).clicked() {
-                        chosen = Some(name.to_string());
-                    }
+                    let sc = th["scope"].as_str().unwrap_or("");
+                    ui.horizontal(|ui| {
+                        if ui.selectable_label(th["active"].as_bool().unwrap_or(false), name).clicked() {
+                            chosen = Some((name.to_string(), sc.to_string()));
+                        }
+                        ui.label(RichText::new(badge(sc)).font(regular(10.0)).color(Tokens::current().text_dim));
+                    });
                 }
+                st.list = list;
             },
         );
+        let place = match (scope, app.ui.custom_theme.is_some()) {
+            (Some(s), _) => badge(s.id()),
+            (None, true) => "Not saved",
+            (None, false) => "Built-in",
+        };
+        ui.label(RichText::new(place).font(regular(11.0)).color(Tokens::current().text_dim));
     });
-    if let Some(name) = chosen {
-        exec(app, st, "ui.theme_load", json!({"name": name}));
+    if let Some((name, scope)) = chosen {
+        exec(app, st, "ui.theme_load", json!({"name": name, "scope": scope}));
     }
 }
 
@@ -119,28 +205,51 @@ fn reset_all(app: &mut SoundApp, ui: &mut Ui, st: &mut PageState) {
 }
 
 fn file_row(app: &mut SoundApp, ui: &mut Ui, st: &mut PageState) {
+    use crate::theme_cmds::Scope;
     let current = app.ui.theme_name.clone().unwrap_or_else(|| app.ui.theme.label().to_string());
-    let user_theme = !current.is_empty() && theme_doc::builtin(&current).is_none();
+    let scope = crate::theme_cmds::current_scope(app);
+    let read_only_origin = matches!(scope, Some(Scope::Shipped));
+    let user_theme = scope.is_some_and(Scope::writable);
     let has_working = app.ui.custom_theme.is_some();
+    let shared_ok = crate::theme_cmds::shared_dir(app).is_some();
+    let save_scope = crate::theme_cmds::default_scope(app);
     ui.horizontal(|ui| {
         ui.label("Name");
         ui.add(TextEdit::singleline(&mut st.name).desired_width(160.0).hint_text("theme name"));
+        ui.label("Save to");
+        let shown = if save_scope == Scope::Shared { "Shared folder" } else { "This computer" };
+        egui::ComboBox::from_id_salt("settings_theme_save_scope").selected_text(shown).width(120.0).show_ui(ui, |ui| {
+            if ui.selectable_label(save_scope == Scope::User, "This computer").clicked() {
+                app.ui.theme_default_scope = Some("user".into());
+            }
+            let r = ui.add_enabled(shared_ok, egui::Button::selectable(save_scope == Scope::Shared, "Shared folder"));
+            if r.on_disabled_hover_text("Choose a shared folder first").clicked() {
+                app.ui.theme_default_scope = Some("shared".into());
+            }
+        });
     });
     ui.horizontal_wrapped(|ui| {
-        if ui.add_enabled(has_working, egui::Button::new("Save")).on_hover_text("Save the working theme under its own name").clicked() {
+        let save = ui.add_enabled(has_working && !read_only_origin, egui::Button::new("Save"));
+        if save.on_hover_text("Save the working theme under its own name").clicked() {
             exec(app, st, "ui.theme_save", json!({}));
         }
         if ui.add_enabled(has_working, egui::Button::new("Save As")).on_hover_text("Save the working theme under the name typed above").clicked() {
             if st.name.trim().is_empty() {
                 st.message = "Type a theme name first".into();
                 st.error = true;
-            } else if exec(app, st, "ui.theme_save", json!({"name": st.name.clone()})).is_some() {
+                st.warn = false;
+            } else if let Some(v) = exec(app, st, "ui.theme_save", json!({"name": st.name.clone(), "scope": save_scope.id()}))
+                && !warned(&v)
+            {
+                // A theme kept only in memory keeps its name in the box.
                 st.name.clear();
             }
         }
         if ui.button("Duplicate").on_hover_text("Copy this theme under the typed name (or `<name> copy`)").clicked() {
             let to = if st.name.trim().is_empty() { format!("{current} copy") } else { st.name.clone() };
-            if exec(app, st, "ui.theme_duplicate", json!({"name": current.clone(), "to": to})).is_some() {
+            if let Some(v) = exec(app, st, "ui.theme_duplicate", json!({"name": current.clone(), "to": to}))
+                && !warned(&v)
+            {
                 st.name.clear();
             }
         }
@@ -148,19 +257,58 @@ fn file_row(app: &mut SoundApp, ui: &mut Ui, st: &mut PageState) {
             if st.name.trim().is_empty() {
                 st.message = "Type the new name first".into();
                 st.error = true;
-            } else if exec(app, st, "ui.theme_rename", json!({"from": current.clone(), "to": st.name.clone()})).is_some() {
+                st.warn = false;
+            } else if exec(app, st, "ui.theme_rename", json!({"from": current.clone(), "to": st.name.clone(), "scope": scope.map(Scope::id)}))
+                .is_some()
+            {
                 st.name.clear();
             }
         }
         if ui.add_enabled(user_theme, egui::Button::new("Delete")).on_hover_text("Delete this saved theme file").clicked() {
-            exec(app, st, "ui.theme_delete", json!({"name": current.clone()}));
+            exec(app, st, "ui.theme_delete", json!({"name": current.clone(), "scope": scope.map(Scope::id)}));
+        }
+        let movable = shared_ok && matches!(scope, Some(Scope::User | Scope::Memory));
+        let mv = ui.add_enabled(movable, egui::Button::new("Move to shared folder"));
+        if mv.on_hover_text("Move this theme into the shared folder so it can be committed to git").clicked() {
+            exec(app, st, "ui.theme_move", json!({"name": current.clone(), "from": scope.map(Scope::id), "to": "shared"}));
         }
         if ui.button("Import...").clicked() {
-            exec(app, st, "ui.theme_import", json!({}));
+            exec(app, st, "ui.theme_import", json!({"scope": save_scope.id()}));
         }
         if ui.button("Export...").clicked() {
             exec(app, st, "ui.theme_export", json!({}));
         }
+    });
+}
+
+/// The shared folder: where it is, how to change it and what it is for. Not on the web.
+fn folder_row(app: &mut SoundApp, ui: &mut Ui, st: &mut PageState) {
+    if cfg!(target_arch = "wasm32") {
+        return;
+    }
+    let t = Tokens::current();
+    let dir = st.list["shared_dir"].as_str().map(str::to_string);
+    ui.horizontal(|ui| {
+        ui.label("Shared folder");
+        let text = dir.clone().unwrap_or_else(|| "Off".into());
+        ui.add(egui::Label::new(RichText::new(text).font(regular(11.0)).color(t.text)).truncate());
+    });
+    ui.horizontal_wrapped(|ui| {
+        let can_pick = app.services.pick_folder.is_some();
+        if ui.add_enabled(can_pick, egui::Button::new("Choose...")).clicked() {
+            let picked = app.services.pick_folder.as_ref().and_then(|pick| pick(dir.as_deref().unwrap_or("")));
+            if let Some(path) = picked {
+                exec(app, st, "ui.theme_folder", json!({"path": path}));
+            }
+        }
+        let detected = ui.add_enabled(app.ui.shared_themes_folder.is_some(), egui::Button::new("Use detected"));
+        if detected.on_hover_text("Go back to the folder the app found next to its source checkout").clicked() {
+            exec(app, st, "ui.theme_folder", json!({"detect": true}));
+        }
+        if ui.add_enabled(dir.is_some(), egui::Button::new("Off")).on_hover_text("Stop using a shared folder").clicked() {
+            exec(app, st, "ui.theme_folder", json!({"path": ""}));
+        }
+        ui.label(RichText::new("Themes saved here can be committed to git").font(regular(11.0)).color(t.text_dim));
     });
 }
 

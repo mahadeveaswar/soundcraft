@@ -48,39 +48,48 @@ impl Base {
     }
 }
 
-/// Numeric and boolean settings; `None` keeps the base palette's value.
+/// Numeric and boolean settings; `None` keeps the base palette's value. Fields are declared in
+/// alphabetical order and unset ones are not written, so saved files are canonical.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct Params {
+    /// Clip corner radius in points, 0..=8.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clip_corner: Option<f32>,
+    /// Glossy clips: gloss strength 0..=1 (0 is flat).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clip_gloss: Option<f32>,
     /// Clip body opacity 0..=1 (1 is an opaque body).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub clip_opacity: Option<f32>,
     /// Clip body opacity while selected, 0..=1.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub clip_opacity_selected: Option<f32>,
-    /// Grid line strength 0..=2 relative to the base palette (1 is unchanged).
-    pub grid_strength: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub grid_beat_always: Option<bool>,
-    /// Track colour tint 0..=1 in the Edit window.
-    pub track_tint: Option<f32>,
-    /// Glossy clips: gloss strength 0..=1 (0 is flat).
-    pub clip_gloss: Option<f32>,
-    /// Clip corner radius in points, 0..=8.
-    pub clip_corner: Option<f32>,
+    /// Grid line strength 0..=2 relative to the base palette (1 is unchanged).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grid_strength: Option<f32>,
     /// Track header corner radius in points, 0..=8.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub header_corner: Option<f32>,
+    /// Track colour tint 0..=1 in the Edit window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub track_tint: Option<f32>,
 }
 
-/// A theme file.
+/// A theme file. Fields are declared in alphabetical order: that is the key order on disk.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct ThemeDoc {
-    pub format: String,
-    pub version: u32,
-    pub name: String,
     pub base: Base,
     pub colors: BTreeMap<String, String>,
+    pub format: String,
+    pub name: String,
     pub params: Params,
     /// Default colours for new tracks, `#RRGGBB` each; empty keeps the built-in set.
     pub track_palette: Vec<String>,
+    pub version: u32,
 }
 
 impl Default for ThemeDoc {
@@ -399,8 +408,132 @@ pub fn from_json(text: &str) -> Result<ThemeDoc, String> {
     Ok(doc)
 }
 
+/// The canonical text of a theme file: pretty with 2-space indents, keys sorted, unset settings
+/// left out, LF line ends and one trailing newline. Saving the same theme twice gives the same
+/// bytes, so a theme in git only changes when the theme does.
 pub fn to_json(doc: &ThemeDoc) -> Result<String, String> {
-    serde_json::to_string_pretty(doc).map_err(|e| e.to_string())
+    let mut text = serde_json::to_string_pretty(doc).map_err(|e| e.to_string())?;
+    text.push('\n');
+    Ok(text)
+}
+
+/// The most a theme file may hold (bytes); bigger files are skipped when a folder is scanned.
+pub const MAX_FILE_BYTES: u64 = 256 * 1024;
+/// The longest theme name (characters).
+pub const MAX_NAME_CHARS: usize = 64;
+
+/// The file stem for a theme name: lowercase, letters and digits kept, space, `-` and `_` become
+/// one `-`, everything else is dropped, at most 64 characters, `theme` when nothing is left.
+/// (`cargo xtask themes` carries a copy of this rule; keep them in step.)
+pub fn slug(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.trim().chars() {
+        if c.is_alphanumeric() {
+            out.extend(c.to_lowercase());
+        } else if (c == ' ' || c == '-' || c == '_') && !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    let out: String = out.chars().take(MAX_NAME_CHARS).collect();
+    let out = out.trim_end_matches('-').to_string();
+    if out.is_empty() { "theme".into() } else { out }
+}
+
+/// A theme file that a folder scan did not accept, and why.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Skipped {
+    pub file: String,
+    pub reason: String,
+}
+
+/// A theme read from a file.
+#[derive(Clone, Debug)]
+pub struct Loaded {
+    pub doc: ThemeDoc,
+    pub path: std::path::PathBuf,
+}
+
+/// Parse one theme file for a folder scan: size capped, UTF-8, valid JSON of our format, a usable
+/// name (an empty one falls back to the file stem). A newer version still loads.
+pub fn load_file(path: &std::path::Path) -> Result<ThemeDoc, String> {
+    let len = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
+    if len > MAX_FILE_BYTES {
+        return Err(format!("larger than {} KiB", MAX_FILE_BYTES / 1024));
+    }
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let text = String::from_utf8(bytes).map_err(|_| "not valid UTF-8 text".to_string())?;
+    let mut doc = from_json(&text)?;
+    if doc.name.trim().is_empty() {
+        doc.name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    }
+    doc.name = doc.name.trim().to_string();
+    if doc.name.is_empty() || doc.name.chars().count() > MAX_NAME_CHARS || doc.name.chars().any(char::is_control) {
+        return Err("the theme name is empty, longer than 64 characters or has control characters".into());
+    }
+    Ok(doc)
+}
+
+/// Every acceptable `*.json` theme in `dir` (hidden files and `*.json.tmp` leftovers ignored),
+/// sorted by name, plus the files that were skipped. A missing folder is empty. Never panics.
+pub fn load_dir(dir: &std::path::Path) -> (Vec<Loaded>, Vec<Skipped>) {
+    let mut loaded: Vec<Loaded> = Vec::new();
+    let mut skipped = Vec::new();
+    let Ok(rd) = std::fs::read_dir(dir) else { return (loaded, skipped) };
+    let mut paths: Vec<std::path::PathBuf> = rd
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.is_file())
+        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("json")))
+        .filter(|p| !p.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')))
+        .collect();
+    paths.sort_by_key(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()));
+    for path in paths {
+        let file = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        match load_file(&path) {
+            Ok(doc) if loaded.iter().any(|l| l.doc.name.eq_ignore_ascii_case(&doc.name)) => {
+                skipped.push(Skipped { file, reason: format!("another file already defines `{}`", doc.name) });
+            }
+            Ok(doc) => loaded.push(Loaded { doc, path }),
+            Err(reason) => {
+                log::warn!("{}: {reason}", path.display());
+                skipped.push(Skipped { file, reason });
+            }
+        }
+    }
+    loaded.sort_by_key(|l| l.doc.name.to_lowercase());
+    (loaded, skipped)
+}
+
+mod shipped_data {
+    include!(concat!(env!("OUT_DIR"), "/shipped_themes.rs"));
+}
+
+/// The themes in the repository's `themes/` folder, embedded at build time (file name, text).
+pub fn shipped_sources() -> &'static [(&'static str, &'static str)] {
+    shipped_data::SHIPPED
+}
+
+/// The shipped themes, parsed once. An invalid file is skipped (a unit test fails on one).
+pub fn shipped_docs() -> &'static [ThemeDoc] {
+    static DOCS: std::sync::OnceLock<Vec<ThemeDoc>> = std::sync::OnceLock::new();
+    DOCS.get_or_init(|| {
+        let mut docs: Vec<ThemeDoc> = shipped_sources()
+            .iter()
+            .filter_map(|(file, text)| match from_json(text) {
+                Ok(d) if !d.name.trim().is_empty() => Some(d),
+                Ok(_) => {
+                    log::warn!("shipped theme {file}: no name");
+                    None
+                }
+                Err(e) => {
+                    log::warn!("shipped theme {file}: {e}");
+                    None
+                }
+            })
+            .collect();
+        docs.sort_by_key(|d| d.name.to_lowercase());
+        docs
+    })
 }
 
 /// The track palette of a document as RGB triples; `None` when it carries none. Invalid entries
@@ -618,5 +751,124 @@ mod tests {
         assert_eq!(track_colors(&doc), Ok(Some(vec![[255, 0, 0], [0, 255, 0]])));
         doc.track_palette.push("zzz".into());
         assert!(track_colors(&doc).is_err());
+    }
+}
+
+#[cfg(test)]
+mod file_tests {
+    use super::*;
+
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("soundcraft-themedoc-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp folder");
+        dir
+    }
+
+    fn doc(name: &str) -> ThemeDoc {
+        let mut d = ThemeDoc { name: name.into(), ..ThemeDoc::default() };
+        d.colors.insert("accent".into(), "#FF8800".into());
+        d.params.clip_opacity = Some(0.3);
+        d
+    }
+
+    #[test]
+    fn slugs_are_lowercase_dashed_and_never_empty() {
+        for (name, want) in [
+            ("Sunset", "sunset"),
+            ("My Theme", "my-theme"),
+            ("  a__b - c  ", "a-b-c"),
+            ("--x--", "x"),
+            ("Colour-safe", "colour-safe"),
+            ("Dark 2", "dark-2"),
+            ("!!!", "theme"),
+            ("", "theme"),
+            ("Caf\u{e9} Noir", "caf\u{e9}-noir"),
+        ] {
+            assert_eq!(slug(name), want, "{name:?}");
+        }
+        let long = slug(&"ab ".repeat(40));
+        assert!(long.chars().count() <= MAX_NAME_CHARS && !long.ends_with('-'), "{long}");
+    }
+
+    #[test]
+    fn saved_text_is_canonical_sorted_and_identical_when_saved_twice() {
+        let d = doc("Sunset");
+        let (a, b) = (to_json(&d).expect("json"), to_json(&d).expect("json"));
+        assert_eq!(a, b);
+        assert!(a.ends_with("}\n") && !a.ends_with("\n\n") && !a.contains('\r'));
+        let keys = ["\"base\"", "\"colors\"", "\"format\"", "\"name\"", "\"params\"", "\"track_palette\"", "\"version\""];
+        let at: Vec<usize> = keys.iter().map(|k| a.find(k).expect("key present")).collect();
+        assert!(at.windows(2).all(|w| w[0] < w[1]), "top-level keys sorted: {a}");
+        assert!(!a.contains("null"), "unset settings are left out: {a}");
+        assert_eq!(from_json(&a).expect("reads back"), d);
+        // Settings keep alphabetical order however they were set.
+        let mut p = doc("P");
+        p.params = Params { track_tint: Some(0.5), clip_corner: Some(2.0), grid_strength: Some(1.0), ..Params::default() };
+        let t = to_json(&p).expect("json");
+        assert!(t.find("clip_corner") < t.find("grid_strength") && t.find("grid_strength") < t.find("track_tint"), "{t}");
+    }
+
+    #[test]
+    fn a_folder_scan_keeps_good_files_and_reports_the_rest() {
+        let dir = temp_dir("scan");
+        let good = to_json(&doc("Good")).expect("json");
+        std::fs::write(dir.join("good.json"), &good).expect("write");
+        std::fs::write(dir.join("Same.json"), to_json(&doc("good")).expect("json")).expect("write");
+        std::fs::write(dir.join("broken.json"), "{not json").expect("write");
+        std::fs::write(dir.join("foreign.json"), r#"{"format":"something-else","name":"X"}"#).expect("write");
+        std::fs::write(dir.join("big.json"), format!("{{\"format\":\"soundcraft-theme\",\"name\":\"Big\",\"pad\":\"{}\"}}", "x".repeat(300 * 1024)))
+            .expect("write");
+        std::fs::write(dir.join("binary.json"), [0xff_u8, 0xfe, 0x00, 0x80]).expect("write");
+        std::fs::write(dir.join("longname.json"), format!("{{\"format\":\"soundcraft-theme\",\"name\":\"{}\"}}", "n".repeat(65))).expect("write");
+        std::fs::write(dir.join("newer.json"), r##"{"format":"soundcraft-theme","version":99,"name":"Newer","future":1}"##).expect("write");
+        std::fs::write(dir.join("nameless.json"), r#"{"format":"soundcraft-theme"}"#).expect("write");
+        std::fs::write(dir.join("good.json.tmp"), "leftover").expect("write");
+        std::fs::write(dir.join(".hidden.json"), good).expect("write");
+        std::fs::write(dir.join("notes.txt"), "hello").expect("write");
+        std::fs::create_dir_all(dir.join("sub.json")).expect("a folder named like a theme");
+        let (loaded, skipped) = load_dir(&dir);
+        let names: Vec<&str> = loaded.iter().map(|l| l.doc.name.as_str()).collect();
+        assert_eq!(names, ["Good", "nameless", "Newer"], "{skipped:?}");
+        assert_eq!(loaded.iter().find(|l| l.doc.name == "Newer").map(|l| l.doc.version), Some(99));
+        let files: Vec<&str> = skipped.iter().map(|s| s.file.as_str()).collect();
+        for f in ["Same.json", "big.json", "binary.json", "broken.json", "foreign.json", "longname.json"] {
+            assert!(files.contains(&f), "{f} should be skipped: {files:?}");
+        }
+        assert_eq!(skipped.len(), 6, "{skipped:?}");
+        assert!(skipped.iter().find(|s| s.file == "big.json").is_some_and(|s| s.reason.contains("256")));
+        assert_eq!(load_dir(&dir.join("missing")).0.len(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn shipped_themes_parse_are_canonical_generic_and_resolve_cleanly() {
+        assert!(!shipped_sources().is_empty(), "the themes folder ships at least one theme");
+        assert_eq!(shipped_docs().len(), shipped_sources().len(), "every shipped file parses");
+        for (file, text) in shipped_sources() {
+            let d = from_json(text).unwrap_or_else(|e| panic!("{file}: {e}"));
+            assert_eq!(format!("{}.json", slug(&d.name)), *file, "file name is the slug of the name");
+            assert_eq!(&to_json(&d).expect("json"), text, "{file} is in canonical form");
+            assert!(!text.contains('\r'), "{file} uses LF");
+            let r = resolve(&d);
+            assert!(r.ignored.is_empty() && r.warnings.is_empty(), "{file}: {:?} {:?}", r.ignored, r.warnings);
+            assert!(contrast_warnings(&r.tokens).is_empty(), "{file}: contrast");
+            assert!(track_colors(&d).is_ok(), "{file}: track colours");
+            assert!(builtin(&d.name).is_none(), "{file}: a built-in name is reserved");
+        }
+    }
+
+    /// The rule behind the names policy, as far as a committed test can state it: shipped theme
+    /// names are plain words (letters, digits, spaces, hyphens), short, and carry no links.
+    /// The word list of products to avoid lives outside the repository and is applied by the
+    /// check script that runs before every commit.
+    #[test]
+    fn shipped_theme_names_are_generic() {
+        for d in shipped_docs() {
+            let n = &d.name;
+            assert!(n.chars().count() <= 32, "{n}: short");
+            assert!(n.chars().all(|c| c.is_alphanumeric() || c == ' ' || c == '-'), "{n}: plain words only");
+            assert!(!n.to_lowercase().contains("http") && !n.contains('.'), "{n}: no links");
+        }
     }
 }

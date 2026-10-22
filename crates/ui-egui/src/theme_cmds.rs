@@ -1,14 +1,55 @@
 //! `ui.theme_*` commands: the working custom theme, saved user themes and the track palette push.
 //!
 //! The working copy lives in `UiState.custom_theme` (saved with the other UI prefs, so unsaved
-//! edits survive a restart). Saved user themes are JSON files in `Services.themes_dir`; without
-//! a folder (tests, `SOUNDCRAFT_NO_PREFS`) they are kept in memory only.
+//! edits survive a restart). Saved themes are JSON files in the shared folder
+//! (`Services.shared_themes_dir` or the `shared_themes_folder` pref) or the user folder
+//! (`Services.themes_dir`); with neither (tests, `SOUNDCRAFT_NO_PREFS`, the web) they are kept in
+//! memory and every save says so. The shipped themes (`themes/` in the repository) are read-only.
 
 use crate::SoundApp;
 use crate::theme::{self, ThemeMode};
 use crate::theme_doc::{self, Base, ThemeDoc};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
+
+/// Where a theme lives. Built-in and shipped themes are read-only; shared and user themes are
+/// files; memory themes exist only until the app quits (no folder to write to).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scope {
+    Builtin,
+    Shipped,
+    Shared,
+    User,
+    Memory,
+}
+
+impl Scope {
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Builtin => "builtin",
+            Self::Shipped => "shipped",
+            Self::Shared => "shared",
+            Self::User => "user",
+            Self::Memory => "memory",
+        }
+    }
+
+    fn parse(s: &str) -> Result<Self, String> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "builtin" => Ok(Self::Builtin),
+            "shipped" => Ok(Self::Shipped),
+            "shared" => Ok(Self::Shared),
+            "user" => Ok(Self::User),
+            "memory" => Ok(Self::Memory),
+            other => Err(format!("unknown scope `{other}` (builtin, shipped, shared, user or memory)")),
+        }
+    }
+
+    /// Whether themes of this scope can be saved, renamed and deleted.
+    pub const fn writable(self) -> bool {
+        matches!(self, Self::Shared | Self::User | Self::Memory)
+    }
+}
 
 /// Runtime state that is not saved with the prefs.
 #[derive(Default)]
@@ -18,8 +59,45 @@ pub struct ThemeState {
     applied: Option<ThemeDoc>,
     /// The loaded or saved document the working copy is compared with for `dirty`.
     saved: Option<ThemeDoc>,
-    /// User themes when there is no themes folder.
+    /// User themes when there is no folder to write to.
     memory: Vec<ThemeDoc>,
+    /// Where the active custom theme was loaded from or last saved to.
+    scope: Option<Scope>,
+}
+
+/// One theme the list shows.
+struct Entry {
+    doc: ThemeDoc,
+    scope: Scope,
+    path: Option<PathBuf>,
+}
+
+/// Where a save goes.
+enum Target {
+    Shared(PathBuf),
+    User(PathBuf),
+    Memory,
+}
+
+/// What a store did, reported by save, duplicate, import and move.
+struct Stored {
+    scope: Scope,
+    path: Option<PathBuf>,
+    warning: Option<String>,
+}
+
+impl Stored {
+    fn add_to(&self, v: &mut Value) {
+        if let Some(o) = v.as_object_mut() {
+            o.insert("saved_to".into(), json!(self.scope.id()));
+            if let Some(p) = &self.path {
+                o.insert("path".into(), json!(p.to_string_lossy()));
+            }
+            if let Some(w) = &self.warning {
+                o.insert("warning".into(), json!(w));
+            }
+        }
+    }
 }
 
 /// Help text for the control protocol: the valid parameter keys.
@@ -36,14 +114,15 @@ pub fn clean_name(raw: &str) -> Result<String, String> {
     if name.is_empty() {
         return Err("theme name must not be empty".into());
     }
-    if name.chars().count() > 64 {
+    if name.chars().count() > theme_doc::MAX_NAME_CHARS {
         return Err("theme name must be at most 64 characters".into());
     }
     Ok(name)
 }
 
+/// The default file name of an exported theme.
 fn file_name(name: &str) -> String {
-    format!("{name}.json")
+    format!("{}.json", theme_doc::slug(name))
 }
 
 fn io_err(what: &str, e: &std::io::Error) -> String {
@@ -51,91 +130,225 @@ fn io_err(what: &str, e: &std::io::Error) -> String {
 }
 
 fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
+    let what = format!("could not write the theme to {}", path.display());
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| io_err("could not create the themes folder", &e))?;
+        std::fs::create_dir_all(dir).map_err(|e| io_err(&format!("could not create the folder {}", dir.display()), &e))?;
     }
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, text).map_err(|e| io_err("could not write the theme", &e))?;
+    std::fs::write(&tmp, text).map_err(|e| io_err(&what, &e))?;
     std::fs::rename(&tmp, path).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
-        io_err("could not write the theme", &e)
+        io_err(&what, &e)
     })
 }
 
-/// The saved user themes.
-fn user_themes(app: &SoundApp) -> Vec<ThemeDoc> {
-    let Some(dir) = &app.services.themes_dir else {
-        return app.theme_state.memory.clone();
-    };
-    let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
-    let mut out: Vec<ThemeDoc> = rd
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("json")))
-        .filter_map(|p| {
-            let doc = std::fs::read_to_string(&p).map_err(|e| e.to_string()).and_then(|t| theme_doc::from_json(&t));
-            match doc {
-                Ok(mut d) => {
-                    if d.name.trim().is_empty() {
-                        d.name = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-                    }
-                    Some(d)
-                }
-                Err(e) => {
-                    log::warn!("{}: {e}", p.display());
-                    None
-                }
-            }
-        })
-        .collect();
-    out.sort_by_key(|d| d.name.to_lowercase());
-    out
+fn same_file(a: &Path, b: &Path) -> bool {
+    match (a.file_name(), b.file_name()) {
+        (Some(x), Some(y)) => x.to_string_lossy().eq_ignore_ascii_case(&y.to_string_lossy()),
+        _ => false,
+    }
 }
 
-fn find_user(app: &SoundApp, name: &str) -> Option<ThemeDoc> {
-    user_themes(app).into_iter().find(|d| d.name.eq_ignore_ascii_case(name.trim()))
+/// Write `doc` into `dir` as `<slug>.json` (`-2`, `-3` ... when another theme's file has that
+/// name), replacing the file that already holds a theme of this name and removing any older file
+/// for it (a legacy `<Name>.json`), so a theme is never stored twice.
+fn write_theme(dir: &Path, doc: &ThemeDoc) -> Result<PathBuf, String> {
+    let (existing, _) = theme_doc::load_dir(dir);
+    let same: Vec<PathBuf> = existing.iter().filter(|l| l.doc.name.eq_ignore_ascii_case(&doc.name)).map(|l| l.path.clone()).collect();
+    let stem = theme_doc::slug(&doc.name);
+    let target = (1..)
+        .map(|i| if i == 1 { dir.join(format!("{stem}.json")) } else { dir.join(format!("{stem}-{i}.json")) })
+        .find(|p| !p.exists() || same.iter().any(|s| same_file(s, p)))
+        .ok_or("no free file name")?;
+    write_atomic(&target, &theme_doc::to_json(doc)?)?;
+    for old in same.iter().filter(|s| !same_file(s, &target)) {
+        let _ = std::fs::remove_file(old);
+    }
+    Ok(target)
+}
+
+/// The shared themes folder in effect: the preference, else the one the app detected. Always
+/// `None` on the web.
+pub fn shared_dir(app: &SoundApp) -> Option<PathBuf> {
+    if cfg!(target_arch = "wasm32") {
+        return None;
+    }
+    match &app.ui.shared_themes_folder {
+        Some(s) if s.trim().is_empty() => None,
+        Some(s) => Some(PathBuf::from(s.trim())),
+        None => app.services.shared_themes_dir.clone(),
+    }
+}
+
+/// Where the shared folder setting comes from: `pref`, `detected` or `off`.
+fn folder_source(app: &SoundApp) -> &'static str {
+    match &app.ui.shared_themes_folder {
+        Some(s) if s.trim().is_empty() => "off",
+        Some(_) => "pref",
+        None if shared_dir(app).is_some() => "detected",
+        None => "off",
+    }
+}
+
+/// The scope a new theme goes to when none is named: the preference when usable, else the shared
+/// folder when there is one, else this computer.
+pub fn default_scope(app: &SoundApp) -> Scope {
+    let shared = shared_dir(app).is_some();
+    let user = app.services.themes_dir.is_some();
+    match app.ui.theme_default_scope.as_deref() {
+        Some("user") if user => Scope::User,
+        Some("shared") | None if shared => Scope::Shared,
+        _ if shared && !user => Scope::Shared,
+        _ => Scope::User,
+    }
+}
+
+/// The scope of the active custom theme, `None` for a built-in palette or an unsaved working copy.
+pub fn current_scope(app: &SoundApp) -> Option<Scope> {
+    app.theme_state.scope.filter(|_| app.ui.custom_theme.is_some() || app.ui.theme == ThemeMode::Custom)
+}
+
+fn resolve_target(app: &SoundApp, requested: Option<&str>, prefer: Option<Scope>) -> Result<Target, String> {
+    let scope = match requested {
+        Some(s) => match Scope::parse(s)? {
+            sc @ (Scope::Shared | Scope::User) => sc,
+            _ => return Err("`scope` must be `shared` or `user`".into()),
+        },
+        None => match prefer {
+            Some(Scope::Shared) if shared_dir(app).is_some() => Scope::Shared,
+            Some(Scope::User) if app.services.themes_dir.is_some() => Scope::User,
+            _ => default_scope(app),
+        },
+    };
+    target_for(app, scope)
+}
+
+fn target_for(app: &SoundApp, scope: Scope) -> Result<Target, String> {
+    match scope {
+        Scope::Shared => {
+            shared_dir(app).map(Target::Shared).ok_or_else(|| "there is no shared themes folder; choose one first (ui.theme_folder)".to_string())
+        }
+        Scope::User => Ok(app.services.themes_dir.clone().map_or(Target::Memory, Target::User)),
+        Scope::Memory => Ok(Target::Memory),
+        Scope::Builtin | Scope::Shipped => Err("built-in and shipped themes are read-only".into()),
+    }
+}
+
+fn memory_warning() -> String {
+    if cfg!(target_arch = "wasm32") {
+        "This web build cannot save files: the theme is kept until you close the page. Use Export... to keep it.".into()
+    } else {
+        "Preferences are disabled for this run: the theme is kept until you quit but is NOT saved to disk. Use Export... to keep it.".into()
+    }
+}
+
+/// Everything the list shows, in display order, and the files that could not be read.
+fn scan(app: &SoundApp) -> (Vec<Entry>, Vec<(Scope, theme_doc::Skipped)>) {
+    let mut out: Vec<Entry> =
+        theme_doc::builtin_names().iter().filter_map(|n| theme_doc::builtin(n)).map(|doc| Entry { doc, scope: Scope::Builtin, path: None }).collect();
+    let mut skipped = Vec::new();
+    let mut files = |dir: Option<PathBuf>, scope: Scope| -> Vec<Entry> {
+        let Some(dir) = dir else { return Vec::new() };
+        let (loaded, bad) = theme_doc::load_dir(&dir);
+        skipped.extend(bad.into_iter().map(|b| (scope, b)));
+        loaded.into_iter().map(|l| Entry { doc: l.doc, scope, path: Some(l.path) }).collect()
+    };
+    let shared = files(shared_dir(app), Scope::Shared);
+    let user = files(app.services.themes_dir.clone(), Scope::User);
+    // A shared theme of the same name hides the shipped one.
+    out.extend(theme_doc::shipped_docs().iter().filter(|d| !shared.iter().any(|s| s.doc.name.eq_ignore_ascii_case(&d.name))).map(|d| Entry {
+        doc: d.clone(),
+        scope: Scope::Shipped,
+        path: None,
+    }));
+    out.extend(shared);
+    out.extend(user);
+    let mut mem = app.theme_state.memory.clone();
+    mem.sort_by_key(|d| d.name.to_lowercase());
+    out.extend(mem.into_iter().map(|doc| Entry { doc, scope: Scope::Memory, path: None }));
+    (out, skipped)
+}
+
+/// The theme of this name (case-insensitive). Without a scope: shared, user, memory, shipped,
+/// then built-in.
+fn find(app: &SoundApp, name: &str, scope: Option<Scope>) -> Option<Entry> {
+    let name = name.trim();
+    let mut hits: Vec<Entry> =
+        scan(app).0.into_iter().filter(|e| e.doc.name.eq_ignore_ascii_case(name) && scope.is_none_or(|s| s == e.scope)).collect();
+    let rank = |s: Scope| match s {
+        Scope::Shared => 0,
+        Scope::User => 1,
+        Scope::Memory => 2,
+        Scope::Shipped => 3,
+        Scope::Builtin => 4,
+    };
+    hits.sort_by_key(|e| rank(e.scope));
+    hits.into_iter().next()
+}
+
+fn scope_param(p: &Value) -> Result<Option<Scope>, String> {
+    p.get("scope").and_then(Value::as_str).map(Scope::parse).transpose()
 }
 
 fn is_builtin(name: &str) -> bool {
     theme_doc::builtin(name).is_some()
 }
 
-fn store_user(app: &mut SoundApp, doc: &ThemeDoc) -> Result<(), String> {
-    if let Some(dir) = app.services.themes_dir.clone() {
-        // A rename of case only, or an overwrite, replaces the existing file.
-        for old in user_themes(app).iter().filter(|d| d.name.eq_ignore_ascii_case(&doc.name)) {
-            if old.name != doc.name {
-                let _ = std::fs::remove_file(dir.join(file_name(&old.name)));
-            }
+/// Whether any listed theme (built-in, shipped, shared, user or memory) already has this name.
+fn name_taken(app: &SoundApp, name: &str) -> bool {
+    find(app, name, None).is_some()
+}
+
+fn store(app: &mut SoundApp, doc: &ThemeDoc, target: Target) -> Result<Stored, String> {
+    match target {
+        Target::Shared(dir) => write_theme(&dir, doc).map(|p| Stored { scope: Scope::Shared, path: Some(p), warning: None }),
+        Target::User(dir) => write_theme(&dir, doc).map(|p| Stored { scope: Scope::User, path: Some(p), warning: None }),
+        Target::Memory => {
+            let mem = &mut app.theme_state.memory;
+            mem.retain(|d| !d.name.eq_ignore_ascii_case(&doc.name));
+            mem.push(doc.clone());
+            Ok(Stored { scope: Scope::Memory, path: None, warning: Some(memory_warning()) })
         }
-        write_atomic(&dir.join(file_name(&doc.name)), &theme_doc::to_json(doc)?)
-    } else {
-        let mem = &mut app.theme_state.memory;
-        mem.retain(|d| !d.name.eq_ignore_ascii_case(&doc.name));
-        mem.push(doc.clone());
-        Ok(())
     }
 }
 
-fn remove_user(app: &mut SoundApp, name: &str) -> Result<(), String> {
-    if let Some(dir) = app.services.themes_dir.clone() {
-        let doc = find_user(app, name).ok_or_else(|| format!("no saved theme `{name}`"))?;
-        std::fs::remove_file(dir.join(file_name(&doc.name))).map_err(|e| io_err("could not delete the theme", &e))
-    } else {
-        let mem = &mut app.theme_state.memory;
-        let before = mem.len();
-        mem.retain(|d| !d.name.eq_ignore_ascii_case(name.trim()));
-        if mem.len() == before { Err(format!("no saved theme `{name}`")) } else { Ok(()) }
+fn remove_entry(app: &mut SoundApp, e: &Entry) -> Result<(), String> {
+    match (&e.path, e.scope) {
+        (Some(path), _) => std::fs::remove_file(path).map_err(|err| io_err(&format!("could not delete {}", path.display()), &err)),
+        (None, Scope::Memory) => {
+            app.theme_state.memory.retain(|d| !d.name.eq_ignore_ascii_case(&e.doc.name));
+            Ok(())
+        }
+        _ => Err(format!("`{}` is read-only", e.doc.name)),
     }
 }
 
-/// A name no built-in or saved theme uses: `name`, then `name 2`, `name 3`, ...
+/// The writable theme `name` in `scope` (any writable scope when none is named), or why not.
+fn find_writable(app: &SoundApp, name: &str, scope: Option<Scope>, verb: &str) -> Result<Entry, String> {
+    let hit = match scope {
+        Some(s) => find(app, name, Some(s)),
+        None => [Scope::Shared, Scope::User, Scope::Memory].into_iter().find_map(|s| find(app, name, Some(s))),
+    };
+    match hit {
+        Some(e) if e.scope.writable() => Ok(e),
+        Some(e) => {
+            Err(format!("`{}` is a {} theme and cannot be {verb}", e.doc.name, if e.scope == Scope::Builtin { "built-in" } else { "shipped" }))
+        }
+        None => match find(app, name, None) {
+            Some(e) => {
+                Err(format!("`{}` is a {} theme and cannot be {verb}", e.doc.name, if e.scope == Scope::Builtin { "built-in" } else { "shipped" }))
+            }
+            None => Err(format!("no saved theme `{name}`")),
+        },
+    }
+}
+
+/// A name no listed theme uses: `name`, then `name 2`, `name 3`, ...
 fn unique_name(app: &SoundApp, name: &str) -> String {
-    let taken = |n: &str| is_builtin(n) || find_user(app, n).is_some();
-    if !taken(name) {
+    if !name_taken(app, name) {
         return name.to_string();
     }
-    (2..).map(|i| format!("{name} {i}")).find(|n| !taken(n)).unwrap_or_else(|| name.to_string())
+    (2..).map(|i| format!("{name} {i}")).find(|n| !name_taken(app, n)).unwrap_or_else(|| name.to_string())
 }
 
 fn push_track_palette(app: &mut SoundApp, doc: Option<&ThemeDoc>) {
@@ -182,6 +395,7 @@ pub fn select_builtin(app: &mut SoundApp, mode: ThemeMode) {
     app.ui.custom_theme = None;
     app.theme_state.applied = None;
     app.theme_state.saved = None;
+    app.theme_state.scope = None;
     push_track_palette(app, None);
 }
 
@@ -234,6 +448,7 @@ fn describe(app: &SoundApp) -> Value {
     json!({
         "name": name,
         "mode": app.ui.theme.id(),
+        "scope": current_scope(app).map(Scope::id),
         "base": doc.base.id(),
         "dirty": dirty(app),
         "colors": colors,
@@ -354,27 +569,20 @@ fn reset(app: &mut SoundApp, p: &Value) -> Result<Value, String> {
 
 fn load(app: &mut SoundApp, p: &Value) -> Result<Value, String> {
     let name = str_param(p, "name")?.trim().to_string();
-    let doc = if let Some(user) = find_user(app, &name) {
-        Some(user)
-    } else if let Some(b) = theme_doc::builtin(&name) {
-        match (b.colors.is_empty() && b.params == theme_doc::Params::default() && b.track_palette.is_empty(), b.base) {
-            (true, base) => {
-                let mode = match base {
-                    Base::Dark => ThemeMode::Dark,
-                    Base::Light => ThemeMode::Light,
-                    Base::Midnight => ThemeMode::Midnight,
-                };
-                select_builtin(app, mode);
-                return Ok(describe(app));
-            }
-            _ => Some(b),
-        }
-    } else {
-        None
-    };
-    let doc = doc.ok_or_else(|| format!("no theme named `{name}`"))?;
+    let found = find(app, &name, scope_param(p)?).ok_or_else(|| format!("no theme named `{name}`"))?;
+    let (scope, doc) = (found.scope, found.doc);
+    if scope == Scope::Builtin && doc.colors.is_empty() && doc.params == theme_doc::Params::default() && doc.track_palette.is_empty() {
+        let mode = match doc.base {
+            Base::Dark => ThemeMode::Dark,
+            Base::Light => ThemeMode::Light,
+            Base::Midnight => ThemeMode::Midnight,
+        };
+        select_builtin(app, mode);
+        return Ok(describe(app));
+    }
     app.theme_state.saved = Some(doc.clone());
     apply(app, doc);
+    app.theme_state.scope = Some(scope);
     Ok(describe(app))
 }
 
@@ -388,27 +596,35 @@ fn save(app: &mut SoundApp, p: &Value) -> Result<Value, String> {
         return Err(format!("`{name}` is a built-in theme and cannot be overwritten; save under another name"));
     }
     doc.name = name;
-    store_user(app, &doc)?;
+    let target = resolve_target(app, p.get("scope").and_then(Value::as_str), app.theme_state.scope)?;
+    let stored = store(app, &doc, target)?;
     app.theme_state.saved = Some(doc.clone());
     apply(app, doc);
-    Ok(describe(app))
+    app.theme_state.scope = Some(stored.scope);
+    let mut out = describe(app);
+    stored.add_to(&mut out);
+    Ok(out)
 }
 
 fn rename(app: &mut SoundApp, p: &Value) -> Result<Value, String> {
     let from = str_param(p, "from")?;
     let to = clean_name(str_param(p, "to")?)?;
-    if is_builtin(from) {
-        return Err(format!("`{from}` is a built-in theme and cannot be renamed"));
-    }
-    let mut doc = find_user(app, from).ok_or_else(|| format!("no saved theme `{from}`"))?;
-    if (is_builtin(&to) || find_user(app, &to).is_some()) && !doc.name.eq_ignore_ascii_case(&to) {
+    let mut e = find_writable(app, from, scope_param(p)?, "renamed")?;
+    if name_taken(app, &to) && !e.doc.name.eq_ignore_ascii_case(&to) {
         return Err(format!("a theme named `{to}` already exists"));
     }
-    let old = doc.name.clone();
-    doc.name.clone_from(&to);
-    store_user(app, &doc)?;
-    if !old.eq_ignore_ascii_case(&to) {
-        remove_user(app, &old)?;
+    let old = e.doc.name.clone();
+    e.doc.name.clone_from(&to);
+    let target = target_for(app, e.scope)?;
+    let stored = store(app, &e.doc, target)?;
+    // The old file goes unless the new name reuses it (a case-only rename); memory is keyed by name.
+    if let Some(old_path) = &e.path
+        && stored.path.as_ref().is_none_or(|n| !same_file(n, old_path))
+    {
+        let _ = std::fs::remove_file(old_path);
+    }
+    if e.scope == Scope::Memory && !old.eq_ignore_ascii_case(&to) {
+        app.theme_state.memory.retain(|d| !d.name.eq_ignore_ascii_case(&old));
     }
     if app.ui.theme_name.as_deref() == Some(old.as_str()) {
         if let Some(w) = &mut app.ui.custom_theme {
@@ -424,23 +640,78 @@ fn rename(app: &mut SoundApp, p: &Value) -> Result<Value, String> {
 
 fn delete(app: &mut SoundApp, p: &Value) -> Result<Value, String> {
     let name = str_param(p, "name")?;
-    if is_builtin(name) {
-        return Err(format!("`{name}` is a built-in theme and cannot be deleted"));
-    }
-    remove_user(app, name)?;
-    Ok(json!({"deleted": name}))
+    let e = find_writable(app, name, scope_param(p)?, "deleted")?;
+    remove_entry(app, &e)?;
+    Ok(json!({"deleted": e.doc.name}))
 }
 
 fn duplicate(app: &mut SoundApp, p: &Value) -> Result<Value, String> {
     let name = str_param(p, "name")?;
     let to = clean_name(str_param(p, "to")?)?;
-    if is_builtin(&to) || find_user(app, &to).is_some() {
+    if name_taken(app, &to) {
         return Err(format!("a theme named `{to}` already exists"));
     }
-    let mut doc = find_user(app, name).or_else(|| theme_doc::builtin(name)).ok_or_else(|| format!("no theme named `{name}`"))?;
+    let source = find(app, name, None).ok_or_else(|| format!("no theme named `{name}`"))?;
+    let target = resolve_target(app, p.get("scope").and_then(Value::as_str), Some(source.scope))?;
+    let mut doc = source.doc;
     doc.name.clone_from(&to);
-    store_user(app, &doc)?;
-    Ok(json!({"name": to}))
+    let stored = store(app, &doc, target)?;
+    let mut out = json!({"name": to});
+    stored.add_to(&mut out);
+    Ok(out)
+}
+
+/// Copy a saved theme to the other folder, then remove the original.
+fn move_theme(app: &mut SoundApp, p: &Value) -> Result<Value, String> {
+    let name = str_param(p, "name")?;
+    let from = Scope::parse(str_param(p, "from")?)?;
+    let to = Scope::parse(str_param(p, "to")?)?;
+    if !from.writable() || !matches!(to, Scope::Shared | Scope::User) {
+        return Err("`from` must be shared, user or memory and `to` must be shared or user".into());
+    }
+    if from == to {
+        return Err("`from` and `to` are the same".into());
+    }
+    let e = find(app, name, Some(from)).ok_or_else(|| format!("no {} theme `{name}`", from.id()))?;
+    if find(app, &e.doc.name, Some(to)).is_some() {
+        return Err(format!("a {} theme named `{}` already exists", to.id(), e.doc.name));
+    }
+    let target = target_for(app, to)?;
+    if matches!(target, Target::Memory) {
+        return Err("this computer has no themes folder to move the theme to".into());
+    }
+    let stored = store(app, &e.doc, target)?;
+    remove_entry(app, &e)?;
+    if app.ui.theme_name.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(&e.doc.name)) && app.theme_state.scope == Some(from) {
+        app.theme_state.scope = Some(stored.scope);
+    }
+    let mut out = json!({"name": e.doc.name});
+    stored.add_to(&mut out);
+    Ok(out)
+}
+
+/// Report or change the shared themes folder.
+fn folder(app: &mut SoundApp, p: &Value) -> Result<Value, String> {
+    if p.get("detect").and_then(Value::as_bool) == Some(true) {
+        app.ui.shared_themes_folder = None;
+    } else if let Some(v) = p.get("path") {
+        match v {
+            Value::Null => app.ui.shared_themes_folder = None,
+            Value::String(s) => {
+                let s = s.trim();
+                if !s.is_empty() && Path::new(s).is_file() {
+                    return Err(format!("`{s}` is a file, not a folder"));
+                }
+                app.ui.shared_themes_folder = Some(s.to_string());
+            }
+            _ => return Err("`path` must be a string (empty turns the shared folder off) or null".into()),
+        }
+    }
+    Ok(json!({
+        "shared_dir": shared_dir(app).map(|d| d.to_string_lossy().into_owned()),
+        "detected": app.services.shared_themes_dir.as_ref().map(|d| d.to_string_lossy().into_owned()),
+        "source": folder_source(app),
+    }))
 }
 
 fn export(app: &mut SoundApp, p: &Value) -> Result<Value, String> {
@@ -479,23 +750,48 @@ fn import(app: &mut SoundApp, p: &Value) -> Result<Value, String> {
     let base_name = clean_name(if base_name.trim().is_empty() { "Imported" } else { &base_name })?;
     doc.name = unique_name(app, &base_name);
     let r = theme_doc::resolve(&doc);
-    store_user(app, &doc)?;
+    let target = resolve_target(app, p.get("scope").and_then(Value::as_str), app.theme_state.scope)?;
+    let stored = store(app, &doc, target)?;
     app.theme_state.saved = Some(doc.clone());
     let name = doc.name.clone();
     apply(app, doc);
-    Ok(json!({"name": name, "ignored": r.ignored, "warnings": r.warnings}))
+    app.theme_state.scope = Some(stored.scope);
+    let mut out = json!({"name": name, "ignored": r.ignored, "warnings": r.warnings});
+    stored.add_to(&mut out);
+    Ok(out)
 }
 
 fn list(app: &SoundApp) -> Value {
     let active = app.ui.theme_name.clone();
-    let is_active = |n: &str| active.as_deref().is_some_and(|a| a.eq_ignore_ascii_case(n));
-    let mut themes: Vec<Value> =
-        theme_doc::builtin_names().into_iter().map(|n| json!({"name": n, "builtin": true, "active": is_active(&n)})).collect();
-    themes.extend(user_themes(app).into_iter().map(|d| json!({"name": d.name, "builtin": false, "active": is_active(&d.name)})));
+    let cur = app.theme_state.scope;
+    let (entries, skipped) = scan(app);
+    let themes: Vec<Value> = entries
+        .iter()
+        .map(|e| {
+            let is_active = active.as_deref().is_some_and(|a| a.eq_ignore_ascii_case(&e.doc.name)) && cur.is_none_or(|c| c == e.scope);
+            let mut v = json!({
+                "name": e.doc.name,
+                "builtin": e.scope == Scope::Builtin,
+                "active": is_active,
+                "scope": e.scope.id(),
+                "read_only": !e.scope.writable(),
+            });
+            if let (Some(path), Some(o)) = (&e.path, v.as_object_mut()) {
+                o.insert("path".into(), json!(path.to_string_lossy()));
+            }
+            v
+        })
+        .collect();
+    let path_of = |d: Option<PathBuf>| d.map(|d| d.to_string_lossy().into_owned());
     json!({
         "themes": themes,
         "active": active,
-        "themes_dir": app.services.themes_dir.as_ref().map(|d| d.to_string_lossy().into_owned()),
+        "themes_dir": path_of(app.services.themes_dir.clone()),
+        "user_dir": path_of(app.services.themes_dir.clone()),
+        "shared_dir": path_of(shared_dir(app)),
+        "default_scope": default_scope(app).id(),
+        "prefs_enabled": app.services.prefs_enabled,
+        "skipped": skipped.iter().map(|(s, b)| json!({"scope": s.id(), "file": b.file, "reason": b.reason})).collect::<Vec<_>>(),
     })
 }
 
@@ -515,6 +811,8 @@ pub fn run(app: &mut SoundApp, id: &str, p: &Value) -> Result<Value, String> {
         "ui.theme_duplicate" => duplicate(app, p),
         "ui.theme_export" => export(app, p),
         "ui.theme_import" => import(app, p),
+        "ui.theme_move" => move_theme(app, p),
+        "ui.theme_folder" => folder(app, p),
         _ => Err(format!("unknown theme command `{id}`")),
     }
 }
@@ -541,11 +839,13 @@ fn boot(app: &mut SoundApp) {
         push_track_palette(app, None);
         return;
     }
-    let doc = app.ui.custom_theme.clone().or_else(|| app.ui.theme_name.as_deref().and_then(|n| find_user(app, n)));
+    let found = app.ui.theme_name.as_deref().and_then(|n| find(app, n, None));
+    let doc = app.ui.custom_theme.clone().or_else(|| found.as_ref().map(|e| e.doc.clone()));
     match doc {
         Some(doc) => {
-            let saved = find_user(app, &doc.name).or_else(|| Some(ThemeDoc { base: doc.base, ..ThemeDoc::default() }));
-            app.theme_state.saved = saved;
+            let entry = find(app, &doc.name, None);
+            app.theme_state.scope = entry.as_ref().map(|e| e.scope);
+            app.theme_state.saved = entry.map(|e| e.doc).or_else(|| Some(ThemeDoc { base: doc.base, ..ThemeDoc::default() }));
             apply(app, doc);
         }
         None => {

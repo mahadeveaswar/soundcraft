@@ -65,6 +65,9 @@ Parity is measured, not guessed: `crates/engine/catalog/menus.txt` lists the inc
 ## Quality gates (before every commit)
 `cargo xtask ci` = fmt check, `clippy --workspace --all-targets -D warnings`, tests, assets, layers, wasm check. Commit after each arc of work that builds; one topic per commit.
 
+## Themes folder
+`themes/*.json` are the themes that ship with the app (embedded by `crates/ui-egui/build.rs`) and the folder a source build shares between machines. One file per theme, named `<slug of the name>.json`, in the canonical form the app writes (save it from Settings > Appearance rather than hand-editing); names stay generic. `cargo xtask themes` checks them. Test and screenshot runs of the app must set `SOUNDCRAFT_NO_PREFS=1` (otherwise a build under `target/` finds this folder and saves into it), and never leave stray files in `themes/`.
+
 ## Release
 Push to the `release` branch to build signed installers for macOS (universal DMG), Windows (x64/x86 MSI + zip), Linux (AppImage, deb, rpm, tar.gz, Flatpak; riscv64 tar.gz), FreeBSD and Web (wasm zip). Version: `cargo xtask version [set X.Y.Z]`. See `docs/release-playbook.md` and craftrules `release/playbook.md`.
 
