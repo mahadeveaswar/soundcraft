@@ -247,6 +247,12 @@ pub struct Tokens {
     pub grid_beat: Color32,
     /// Draw the beat lines even while View > Grid Lines is off.
     pub grid_beat_always: bool,
+    // --- TB-5/TB-6 tokens: info row and selection strip ---
+    /// Backgrounds of the Standard toolbar's info row and selection strip.
+    pub info_row_bg: Color32,
+    pub sel_strip_bg: Color32,
+    /// "not connected" and other warnings in the info row.
+    pub status_warn: Color32,
 }
 
 impl Tokens {
@@ -351,6 +357,9 @@ impl Tokens {
         grid_bar: Color32::from_rgb(66, 66, 70),
         grid_beat: Color32::from_rgb(52, 52, 54),
         grid_beat_always: false,
+        info_row_bg: Color32::from_rgb(36, 36, 38),
+        sel_strip_bg: Color32::from_rgb(33, 33, 35),
+        status_warn: Color32::from_rgb(232, 148, 40),
     };
 
     pub const LIGHT: Tokens = Tokens {
@@ -454,6 +463,9 @@ impl Tokens {
         grid_bar: Color32::from_rgb(162, 166, 172),
         grid_beat: Color32::from_rgb(188, 191, 196),
         grid_beat_always: false,
+        info_row_bg: Color32::from_rgb(204, 206, 210),
+        sel_strip_bg: Color32::from_rgb(210, 212, 216),
+        status_warn: Color32::from_rgb(176, 96, 8),
     };
 
     /// Midnight: near-black blue-grey panels, bright bar and beat grid, translucent clips and a

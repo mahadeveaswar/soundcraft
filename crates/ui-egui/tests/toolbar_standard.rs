@@ -31,7 +31,9 @@ fn standard_is_one_34_point_row_and_classic_keeps_78() {
     assert_eq!(toolbar::height(std.state()), 34.0);
     assert_eq!(toolbar::height(classic.state()), 78.0);
     let shift = timeline_top(&classic) - timeline_top(&std);
-    assert!((shift - 44.0).abs() < 1.0, "the Standard row should be 44 pt shorter, was {shift}");
+    // Standard is 44 pt shorter, then adds the info row and the selection strip.
+    let rows = soundcraft_ui_egui::info_row::HEIGHT + soundcraft_ui_egui::selection_strip::HEIGHT;
+    assert!((shift - (44.0 - rows)).abs() < 1.0, "the Standard rows should net {} pt, was {shift}", 44.0 - rows);
 }
 
 #[test]

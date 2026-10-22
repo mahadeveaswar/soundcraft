@@ -196,7 +196,7 @@ pub fn adjust_params(tempo: &TempoMap, base_tick: i64, lead: &Note, f: Field, te
 
 /// A text field that edits a copy of `current` while it has focus. Returns the text when an edit
 /// is committed (Enter or focus lost); Escape abandons it.
-fn text_field(ui: &mut Ui, id: egui::Id, label: egui::Id, current: &str, width: f32) -> Option<String> {
+pub(crate) fn text_field(ui: &mut Ui, id: egui::Id, label: egui::Id, current: &str, width: f32) -> Option<String> {
     let editing = ui.data(|d| d.get_temp::<String>(id));
     let mut text = editing.clone().unwrap_or_else(|| current.to_string());
     let resp = ui.add(egui::TextEdit::singleline(&mut text).desired_width(width).font(egui::TextStyle::Small).id(id.with("edit")));

@@ -114,6 +114,16 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
         .exact_size(toolbar::height(app))
         .frame(egui::Frame::NONE.fill(t.toolbar_bg))
         .show(ui, |ui| toolbar::show(app, ui));
+    if toolbar::effective_style(app) == crate::toolbar_layout::ToolbarStyle::Standard {
+        egui::Panel::top("edit_info_row")
+            .exact_size(crate::info_row::HEIGHT)
+            .frame(egui::Frame::NONE.fill(t.info_row_bg))
+            .show(ui, |ui| crate::info_row::show(app, ui));
+        egui::Panel::top("edit_selection_strip")
+            .exact_size(crate::selection_strip::HEIGHT)
+            .frame(egui::Frame::NONE.fill(t.sel_strip_bg))
+            .show(ui, |ui| crate::selection_strip::show(app, ui));
+    }
     egui::Panel::bottom("edit_status").exact_size(22.0).frame(egui::Frame::NONE.fill(t.toolbar_bg)).show(ui, |ui| status_bar(app, ui));
     crate::transport_bar::show_docked(app, ui, "transport_bar");
     egui::Panel::bottom("lower_dock_tabs").exact_size(22.0).frame(egui::Frame::NONE.fill(t.panel_bg2)).show(ui, |ui| dock_tabs(app, ui));
@@ -1597,7 +1607,11 @@ pub(crate) fn grid_lines(painter: &egui::Painter, s: &Session, tl: Rect, lane: R
         }
     }
     if s.edit.grid_lines || t.grid_beat_always {
-        let grid = if s.edit.grid_lines { s.edit.grid } else { GridValue::Note { value: NoteValue::Quarter, dotted: false, triplet: false } };
+        let grid = if s.edit.grid_lines {
+            soundcraft_engine::cmd::grid_adapt::effective_grid(s, view.start)
+        } else {
+            GridValue::Note { value: NoteValue::Quarter, dotted: false, triplet: false }
+        };
         let step_px = grid.step_samples(view.start, sr, &s.tempo, s.frame_rate) as f64 / s.edit.zoom.samples_per_px;
         if step_px > 7.0 {
             let col = grid_veil(t.grid_beat, t.playlist_bg);
@@ -2015,7 +2029,7 @@ pub(crate) fn snap_on(s: &Session) -> bool {
 
 pub(crate) fn snap(s: &Session, at: Samples) -> Samples {
     let on = snap_on(s);
-    if on { s.edit.grid.snap(at, s.sample_rate, &s.tempo, s.frame_rate) } else { at }
+    if on { soundcraft_engine::cmd::grid_adapt::effective_grid(s, at).snap(at, s.sample_rate, &s.tempo, s.frame_rate) } else { at }
 }
 
 fn clip_at(track: &Track, at: Samples) -> Option<&Clip> {
@@ -2599,7 +2613,11 @@ fn automation_id(p: &AutoParam) -> String {
 
 /// Grid snapping while dragging; holding Cmd/Ctrl swaps Grid and Slip.
 fn drag_snap(s: &Session, at: Samples, flip: bool) -> Samples {
-    if s.edit.edit_mode.is_grid() != flip { s.edit.grid.snap(at, s.sample_rate, &s.tempo, s.frame_rate) } else { at }
+    if s.edit.edit_mode.is_grid() != flip {
+        soundcraft_engine::cmd::grid_adapt::effective_grid(s, at).snap(at, s.sample_rate, &s.tempo, s.frame_rate)
+    } else {
+        at
+    }
 }
 
 /// What a clip drag works out once per target track rather than every frame: where the tracks go
