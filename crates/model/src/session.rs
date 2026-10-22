@@ -330,6 +330,10 @@ pub struct Session {
     /// The folder relative source paths point into: where the session was opened or last saved.
     #[serde(skip)]
     pub folder: Option<std::path::PathBuf>,
+    /// Theme override for the colours new tracks cycle through; `None` uses `TRACK_COLORS`.
+    /// Not saved: the engine owns it and the UI pushes it (`track_palette.set`).
+    #[serde(skip)]
+    pub track_palette: Option<Vec<[u8; 3]>>,
 }
 
 impl Default for Session {
@@ -364,6 +368,7 @@ impl Session {
             midi_originals: std::collections::BTreeMap::new(),
             pool: SourcePool::default(),
             folder: None,
+            track_palette: None,
         };
         s.edit.pre_roll = sample_rate.samples(2.0);
         s.edit.post_roll = sample_rate.samples(2.0);
@@ -453,6 +458,9 @@ impl Session {
 
     pub fn next_track_color(&self) -> [u8; 3] {
         let n = self.tracks.iter().filter(|t| t.kind != TrackKind::Master).count();
+        if let Some(p) = self.track_palette.as_ref().filter(|p| !p.is_empty()) {
+            return p.get(n % p.len()).copied().unwrap_or([128, 128, 128]);
+        }
         TRACK_COLORS.get(n % TRACK_COLORS.len()).copied().unwrap_or([128, 128, 128])
     }
 

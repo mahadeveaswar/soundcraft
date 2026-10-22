@@ -39,6 +39,7 @@ mod surround;
 mod tab;
 mod track;
 mod track_more;
+mod track_palette;
 mod transport;
 mod video;
 mod view;
@@ -139,6 +140,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(midi_tools::specs());
         v.extend(view_more::specs());
         v.extend(track_more::specs());
+        v.extend(track_palette::specs());
         v.extend(clip_more::specs());
         v.extend(clip_list::specs());
         v.extend(event_more::specs());

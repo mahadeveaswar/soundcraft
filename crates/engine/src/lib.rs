@@ -134,6 +134,9 @@ pub struct Engine {
     /// Revision counter; bumps on every document change but zoom/scroll (UI caches key on it).
     pub revision: u64,
     dirty: bool,
+    /// Theme override for new-track colours (see `cmd/track_palette.rs`); mirrored into the
+    /// session on each `session_mut` so undo and open never lose it.
+    track_palette: Option<Vec<[u8; 3]>>,
     /// The document as last opened or saved, for `is_dirty`.
     saved: Arc<Session>,
     /// `is_dirty` as of a revision.
@@ -172,6 +175,7 @@ impl Engine {
             path: None,
             revision: 1,
             dirty: false,
+            track_palette: None,
             dirty_at: Cell::new((0, false)),
             merge_key: None,
             merge_hold: None,
@@ -192,7 +196,21 @@ impl Engine {
     pub fn session_mut(&mut self) -> &mut Session {
         self.revision = self.revision.wrapping_add(1);
         self.dirty = true;
-        Arc::make_mut(&mut self.doc)
+        let doc = Arc::make_mut(&mut self.doc);
+        if doc.track_palette != self.track_palette {
+            doc.track_palette.clone_from(&self.track_palette);
+        }
+        doc
+    }
+
+    /// The new-track colour override, if any.
+    pub fn track_palette(&self) -> Option<&[[u8; 3]]> {
+        self.track_palette.as_deref()
+    }
+
+    /// Set or clear (`None` or empty) the new-track colour override. Not a document change.
+    pub fn set_track_palette(&mut self, colors: Option<Vec<[u8; 3]>>) {
+        self.track_palette = colors.filter(|c| !c.is_empty());
     }
 
     /// Like `session_mut`, for `edit.zoom` only and without bumping `revision`.
