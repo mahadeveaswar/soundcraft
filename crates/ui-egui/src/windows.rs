@@ -373,6 +373,24 @@ fn workspace(app: &mut SoundApp, ctx: &egui::Context) {
     app.ui.show_workspace = open;
 }
 
+/// Restore saved window configuration `index`. Appearance choices (theme, menu layout, toolbar
+/// style) are not part of a window layout and stay as they are.
+pub(crate) fn apply_configuration(app: &mut SoundApp, index: usize) {
+    let Some((_, v)) = app.ui.configurations.get(index) else { return };
+    let Ok(mut st) = serde_json::from_value::<crate::UiState>(v.clone()) else { return };
+    if let Err(error) = st.docking.validate().and_then(|()| st.mix_docking.validate_mix()) {
+        app.ui.status = format!("Window configuration could not be restored: {error}");
+        return;
+    }
+    st.configurations = app.ui.configurations.clone();
+    st.theme = app.ui.theme;
+    st.menu_layout = app.ui.menu_layout;
+    st.toolbar_style = app.ui.toolbar_style;
+    st.show_configurations = true;
+    crate::docking::cancel_replaced_state(app, &st);
+    app.ui = st;
+}
+
 fn configurations(app: &mut SoundApp, ctx: &egui::Context) {
     let mut open = app.ui.show_configurations;
     win(ctx, &mut open, "Window Configurations", vec2(320.0, 240.0), |ui| {
@@ -386,20 +404,10 @@ fn configurations(app: &mut SoundApp, ctx: &egui::Context) {
         }
         ui.separator();
         let list = app.ui.configurations.clone();
-        for (i, (name, v)) in list.iter().enumerate() {
+        for (i, (name, _)) in list.iter().enumerate() {
             ui.horizontal(|ui| {
-                if ui.button(format!("{}  {name}", i + 1)).clicked()
-                    && let Ok(mut st) = serde_json::from_value::<crate::UiState>(v.clone())
-                {
-                    if let Err(error) = st.docking.validate().and_then(|()| st.mix_docking.validate_mix()) {
-                        app.ui.status = format!("Window configuration could not be restored: {error}");
-                    } else {
-                        st.configurations = app.ui.configurations.clone();
-                        st.theme = app.ui.theme;
-                        st.show_configurations = true;
-                        crate::docking::cancel_replaced_state(app, &st);
-                        app.ui = st;
-                    }
+                if ui.button(format!("{}  {name}", i + 1)).clicked() {
+                    apply_configuration(app, i);
                 }
                 if ui.small_button("✕").clicked() {
                     app.ui.configurations.remove(i);
@@ -745,6 +753,18 @@ pub fn clip_effects(app: &mut SoundApp, ctx: &egui::Context) {
 #[allow(clippy::unwrap_used)]
 mod audio_health_tests {
     use super::*;
+
+    #[test]
+    fn restoring_a_window_configuration_keeps_the_appearance_choices() {
+        let mut app = SoundApp::new(soundcraft_engine::Engine::default(), None, crate::Services::default());
+        app.run("window.config_new", json!({})).unwrap();
+        app.ui.toolbar_style = crate::toolbar_layout::ToolbarStyle::Classic;
+        app.ui.menu_layout = crate::menu_layout::MenuLayout::Classic;
+        apply_configuration(&mut app, 0);
+        assert_eq!(app.ui.toolbar_style, crate::toolbar_layout::ToolbarStyle::Classic);
+        assert_eq!(app.ui.menu_layout, crate::menu_layout::MenuLayout::Classic);
+        assert_eq!(app.ui.configurations.len(), 1);
+    }
 
     #[test]
     fn window_command_renders_report_and_close_clears_snapshot() {

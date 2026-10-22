@@ -76,6 +76,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str, Option<&str>)] = &[
     ("ui.set", "Set UI State", "", None),
     ("ui.theme", "Appearance", "", None),
     ("ui.menu_layout", "Menu Layout", "", None),
+    ("ui.toolbar_style", "Toolbar Style", "", None),
     ("ui.header_style", "Track Header Style", "", None),
     ("ui.header_width", "Track Header Width", "", None),
     ("ui.transport_position", "Transport Position", "", None),
@@ -284,6 +285,15 @@ pub fn menu_bar(app: &mut SoundApp, ui: &mut egui::Ui) {
                             ui.separator();
                             crate::track_header_compact::view_menu(app, ui);
                             crate::transport_bar::view_menu(app, ui);
+                            ui.menu_button("Toolbar Style", |ui| {
+                                for s in crate::toolbar_layout::ToolbarStyle::ALL {
+                                    let label = if app.ui.toolbar_style == s { format!("✔ {}", s.label()) } else { s.label().to_string() };
+                                    if ui.button(label).clicked() {
+                                        let _ = app.run("ui.toolbar_style", json!({"value": s.id()}));
+                                        ui.close();
+                                    }
+                                }
+                            });
                             ui.menu_button("Menu Layout", |ui| {
                                 for m in crate::menu_layout::MenuLayout::ALL {
                                     let label = if app.ui.menu_layout == m { format!("✔ {}", m.label()) } else { m.label().to_string() };
@@ -562,6 +572,9 @@ pub fn run_ui_command(app: &mut SoundApp, id: &str, p: &Value) -> Option<Result<
     }
     if id == "ui.header_width" {
         return Some(crate::header_width::command(app, p));
+    }
+    if id == "ui.toolbar_style" {
+        return Some(crate::toolbar_layout::command(app, p));
     }
     if id == "ui.menu_layout" {
         return Some(crate::menu_layout::command(app, p));

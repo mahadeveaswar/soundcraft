@@ -44,6 +44,8 @@ pub mod shortcuts;
 pub mod spot;
 pub mod theme;
 pub mod toolbar;
+pub mod toolbar_layout;
+mod toolbar_standard;
 pub mod track_add_menu;
 pub mod track_header_compact;
 pub mod transport_bar;
@@ -151,6 +153,8 @@ pub struct UiState {
     pub header_style: track_header_compact::HeaderStyle,
     /// Width of the Edit window's track header column in points (`ui.header_width`).
     pub header_w: f32,
+    /// Edit window toolbar (`ui.toolbar_style`): one compact row by default, the two-row classic one on request.
+    pub toolbar_style: toolbar_layout::ToolbarStyle,
     /// Menu bar arrangement (`ui.menu_layout`): grouped by task by default, catalog order on request.
     pub menu_layout: menu_layout::MenuLayout,
     /// Where the transport controls live (`ui.transport_position`): bottom bar by default.
@@ -235,6 +239,7 @@ impl Default for UiState {
             theme: theme::ThemeMode::Dark,
             header_style: track_header_compact::HeaderStyle::default(),
             header_w: edit_window::HEADER_W,
+            toolbar_style: toolbar_layout::ToolbarStyle::default(),
             menu_layout: menu_layout::MenuLayout::default(),
             transport_position: transport_bar::TransportPosition::default(),
             transport_visible: true,
