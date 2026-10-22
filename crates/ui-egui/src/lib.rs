@@ -4,6 +4,7 @@
 //! executing commands. It can be replaced without touching anything below it.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod auto_lanes_ui;
 pub mod bounce;
 pub mod control;
 pub mod credits;
@@ -42,6 +43,7 @@ pub mod theme;
 pub mod toolbar;
 pub mod track_add_menu;
 pub mod track_header_compact;
+pub mod transport_bar;
 pub mod video_track;
 pub mod video_window;
 pub mod waveform;
@@ -139,6 +141,8 @@ pub struct UiState {
     pub theme: theme::ThemeMode,
     /// Edit-window track header look (`ui.header_style`): compact by default, classic on request.
     pub header_style: track_header_compact::HeaderStyle,
+    /// Where the transport controls live (`ui.transport_position`): bottom bar by default.
+    pub transport_position: transport_bar::TransportPosition,
     /// The main window's size (logical points) and maximized state, and the interface scale, as
     /// the desktop app last saw them; it restores them at launch.
     pub window_size: [f32; 2],
@@ -203,6 +207,7 @@ impl Default for UiState {
             configurations: Vec::new(),
             theme: theme::ThemeMode::Dark,
             header_style: track_header_compact::HeaderStyle::default(),
+            transport_position: transport_bar::TransportPosition::default(),
             window_size: [1600.0, 1000.0],
             window_maximized: false,
             ui_scale: 1.0,

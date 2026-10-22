@@ -16,6 +16,13 @@ pub fn strip_width(narrow: bool) -> f32 {
 }
 
 pub fn show(app: &mut SoundApp, ui: &mut Ui) {
+    if app.ui.transport_position == crate::transport_bar::TransportPosition::Bottom {
+        let t = crate::theme::Tokens::current();
+        egui::Panel::bottom("mix_transport_bar")
+            .exact_size(crate::transport_bar::HEIGHT)
+            .frame(egui::Frame::NONE.fill(t.toolbar_bg))
+            .show(ui, |ui| crate::transport_bar::show(app, ui));
+    }
     crate::docking::show(app, ui, crate::MainWindow::Mix);
 }
 

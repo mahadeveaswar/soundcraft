@@ -34,10 +34,15 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
                 edit_modes(app, ui);
                 zoom_group(app, ui);
                 tools(app, ui);
-                counters(app, ui);
+                let top = app.ui.transport_position == crate::transport_bar::TransportPosition::Top;
+                if top {
+                    counters(app, ui);
+                }
                 grid_nudge(app, ui);
-                transport(app, ui);
-                tempo_meter(app, ui);
+                if top {
+                    transport(app, ui);
+                    tempo_meter(app, ui);
+                }
                 output_meter(app, ui);
             });
         });
@@ -397,7 +402,7 @@ fn tempo_meter(app: &mut SoundApp, ui: &mut Ui) {
 
 /// The tempo in effect at the playhead, right-aligned at `right`: drag it (Shift for fine steps),
 /// or click and type.
-fn tempo_value(app: &mut SoundApp, ui: &mut Ui, right: f32, y: f32, bpm: f64) {
+pub(crate) fn tempo_value(app: &mut SoundApp, ui: &mut Ui, right: f32, y: f32, bpm: f64) {
     let t = Tokens::current();
     let w = ui.painter().layout_no_wrap(format!("{bpm:.4}"), mono(11.0), t.counter_text).size().x;
     let rect = Rect::from_min_max(pos2(right - w - 4.0, y - 8.0), pos2(right + 4.0, y + 8.0));

@@ -75,6 +75,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str, Option<&str>)] = &[
     ("ui.set", "Set UI State", "", None),
     ("ui.theme", "Appearance", "", None),
     ("ui.header_style", "Track Header Style", "", None),
+    ("ui.transport_position", "Transport Position", "", None),
     ("ui.midi_tool", "MIDI Editor Tool", "", None),
     ("ui.midi_snap", "MIDI Editor Snap", "", None),
     ("ui.midi_lane_add", "MIDI Editor Add Lane", "", None),
@@ -266,6 +267,7 @@ pub fn menu_bar(app: &mut SoundApp, ui: &mut egui::Ui) {
                         if root.label == "View" {
                             ui.separator();
                             crate::track_header_compact::view_menu(app, ui);
+                            crate::transport_bar::view_menu(app, ui);
                         }
                         if root.label == "AudioSuite" {
                             ui.separator();
@@ -526,6 +528,9 @@ pub fn run_ui_command(app: &mut SoundApp, id: &str, p: &Value) -> Option<Result<
     }
     if id == "ui.header_style" {
         return Some(crate::track_header_compact::command(app, p));
+    }
+    if id == "ui.transport_position" {
+        return Some(crate::transport_bar::command(app, p));
     }
     if let Some(r) = crate::midi_editor_state::run_ui_command(app, id, p) {
         return Some(r);

@@ -100,14 +100,21 @@ pub const LANE_H: f32 = 46.0;
 
 pub fn track_height(t: &Track) -> f32 {
     let alt = if t.view == "playlists" { t.playlists.len().saturating_sub(1) as f32 * LANE_H } else { 0.0 };
-    t.height.points() + alt
+    t.height.points() + alt + crate::auto_lanes_ui::total_height(t)
 }
 
 pub fn show(app: &mut SoundApp, ui: &mut Ui) {
     let t = Tokens::current();
+    crate::auto_lanes_ui::follow_update(app, ui.ctx());
     drive_drag(app, ui.ctx());
     egui::Panel::top("edit_toolbar").exact_size(toolbar::HEIGHT).frame(egui::Frame::NONE.fill(t.toolbar_bg)).show(ui, |ui| toolbar::show(app, ui));
     egui::Panel::bottom("edit_status").exact_size(22.0).frame(egui::Frame::NONE.fill(t.toolbar_bg)).show(ui, |ui| status_bar(app, ui));
+    if app.ui.transport_position == crate::transport_bar::TransportPosition::Bottom {
+        egui::Panel::bottom("transport_bar")
+            .exact_size(crate::transport_bar::HEIGHT)
+            .frame(egui::Frame::NONE.fill(t.toolbar_bg))
+            .show(ui, |ui| crate::transport_bar::show(app, ui));
+    }
     egui::Panel::bottom("lower_dock_tabs").exact_size(22.0).frame(egui::Frame::NONE.fill(t.panel_bg2)).show(ui, |ui| dock_tabs(app, ui));
     if app.ui.show_universe {
         egui::Panel::top("universe").exact_size(64.0).frame(egui::Frame::NONE.fill(Tokens::current().universe_bg)).show(ui, |ui| universe(app, ui));
@@ -814,6 +821,9 @@ fn track_row(app: &mut SoundApp, ui: &mut Ui, id: TrackId, row: Rect, tl: Rect, 
     let s = app.engine.session_arc();
     let Some(track) = s.track(id) else { return };
     let selected = s.edit.selected_tracks.contains(&id);
+    // The automation lanes sit under the track's own rows; everything below draws in the top part.
+    let full_row = row;
+    let row = Rect::from_min_max(row.min, pos2(row.max.x, row.max.y - crate::auto_lanes_ui::total_height(track)));
     let head = Rect::from_min_max(row.min, pos2(row.min.x + HEADER_W, row.max.y));
     let (head_bg, lane_bg) = crate::theme::track_backgrounds(track.color, selected, app.ui.track_tint);
     let mut x = head.max.x;
@@ -870,6 +880,7 @@ fn track_row(app: &mut SoundApp, ui: &mut Ui, id: TrackId, row: Rect, tl: Rect, 
     if track.view == "playlists" {
         playlist_lanes(app, ui, track, row, main_h, tl);
     }
+    crate::auto_lanes_ui::show(app, ui, track, full_row, tl, selected);
 }
 
 /// Alternate playlists as lanes under the main one; clicking a clip promotes it (comping).
@@ -1462,6 +1473,12 @@ pub(crate) fn track_context_menu(app: &mut SoundApp, ui: &mut Ui, id: TrackId) {
         if selected.contains(&id) { selected.iter().map(|track| track.0).collect() } else { vec![tid] }
     };
     ui.menu_button("Add Track", |ui| crate::track_add_menu::add_track_items(app, ui, Some(id)));
+    if ui.button("Show Automation").clicked() {
+        if let Err(e) = app.run("automation.lane_show", json!({"track": tid})) {
+            app.ui.status = e;
+        }
+        ui.close();
+    }
     ui.separator();
     for (label, cmd) in items {
         if ui.button(label).clicked() {
@@ -1514,7 +1531,7 @@ pub(crate) fn track_context_menu(app: &mut SoundApp, ui: &mut Ui, id: TrackId) {
     });
 }
 
-fn grid_lines(painter: &egui::Painter, s: &Session, tl: Rect, lane: Rect) {
+pub(crate) fn grid_lines(painter: &egui::Painter, s: &Session, tl: Rect, lane: Rect) {
     let t = Tokens::current();
     let view = Range::new(sample_at(s, tl, tl.min.x).max(0), sample_at(s, tl, tl.max.x));
     let sr = s.sample_rate;
@@ -1841,14 +1858,10 @@ fn crossfade_partner<'a>(track: &'a Track, clip: &Clip) -> Option<&'a Clip> {
     p.clips.get(i.checked_sub(1)?).filter(|c| c.end() > clip.start)
 }
 
-fn draw_automation(painter: &egui::Painter, s: &Session, track: &Track, p: &AutoParam, tl: Rect, lane: Rect) {
+pub(crate) fn draw_automation(painter: &egui::Painter, s: &Session, track: &Track, p: &AutoParam, tl: Rect, lane: Rect) {
     let t = Tokens::current();
     let range = lane_range(track, p);
-    let def = match p {
-        AutoParam::Volume => track.mixer.volume_db,
-        AutoParam::Pan(i) => track.mixer.pan.get(usize::from(*i)).copied().unwrap_or(0.0),
-        _ => 0.0,
-    };
+    let def = crate::auto_lanes_ui::static_value(track, p);
     let yv = |v: f32| auto_y(lane, range, v);
     let lanes = track.lane(p);
     let pts: Vec<(f32, f32)> = match lanes {
@@ -1876,11 +1889,17 @@ fn draw_automation(painter: &egui::Painter, s: &Session, track: &Track, p: &Auto
             }
         }
     }
-    painter.text(pos2(lane.min.x + 6.0, lane.min.y + 9.0), Align2::LEFT_CENTER, p.label(), regular(10.0), t.text_dim);
+    painter.text(
+        pos2(lane.min.x + 6.0, lane.min.y + 9.0),
+        Align2::LEFT_CENTER,
+        crate::auto_lanes_ui::param_label(track, p),
+        regular(10.0),
+        t.text_dim,
+    );
 }
 
 /// The values an automation lane spans, bottom to top.
-fn lane_range(track: &Track, p: &AutoParam) -> (f32, f32) {
+pub(crate) fn lane_range(track: &Track, p: &AutoParam) -> (f32, f32) {
     if matches!(p, AutoParam::Volume | AutoParam::SendLevel(_)) {
         (-60.0, 12.0)
     } else if matches!(p, AutoParam::Plugin { .. }) {
@@ -1896,7 +1915,7 @@ fn auto_y(lane: Rect, (lo, hi): (f32, f32), v: f32) -> f32 {
     lane.max.y - 4.0 - k * (lane.height() - 8.0)
 }
 
-fn auto_value(lane: Rect, (lo, hi): (f32, f32), y: f32) -> f32 {
+pub(crate) fn auto_value(lane: Rect, (lo, hi): (f32, f32), y: f32) -> f32 {
     let k = ((lane.max.y - 4.0 - y) / (lane.height() - 8.0)).clamp(0.0, 1.0);
     lo + (hi - lo) * k
 }
@@ -1907,7 +1926,7 @@ fn shown_automation(track: &Track) -> Option<AutoParam> {
 }
 
 /// The drawn breakpoint nearest `pos`, within grabbing distance.
-fn breakpoint_at(s: &Session, tl: Rect, lane: Rect, track: &Track, p: &AutoParam, pos: Pos2) -> Option<Samples> {
+pub(crate) fn breakpoint_at(s: &Session, tl: Rect, lane: Rect, track: &Track, p: &AutoParam, pos: Pos2) -> Option<Samples> {
     let range = lane_range(track, p);
     let dist = |at: Samples, v: f32| pos2(x_of(s, tl, at), auto_y(lane, range, v)).distance(pos);
     track
@@ -1933,7 +1952,7 @@ fn plugin_range(track: &Track, p: &AutoParam) -> (f32, f32) {
 
 // ---- interaction -----------------------------------------------------------------------------
 
-fn snap(s: &Session, at: Samples) -> Samples {
+pub(crate) fn snap(s: &Session, at: Samples) -> Samples {
     let on = s.edit.edit_mode.is_grid() || s.edit.flag(ops::SNAP_TO_GRID);
     if on { s.edit.grid.snap(at, s.sample_rate, &s.tempo, s.frame_rate) } else { at }
 }
@@ -2875,6 +2894,8 @@ mod tests {
         let mut app = SoundApp::new(engine, None, crate::Services::default());
         // These tests drive the classic header's controls by position.
         app.ui.header_style = crate::track_header_compact::HeaderStyle::Classic;
+        // The drag-scroll tests measure a timeline that ends at the dock tabs, as with the transport on top.
+        app.ui.transport_position = crate::transport_bar::TransportPosition::Top;
         let builder = Harness::builder().with_size(vec2(1400.0, 900.0)).with_step_dt(1.0 / 60.0);
         let builder = if std::env::var_os("SOUNDCRAFT_FADE_SHOTS").is_some() { builder.wgpu() } else { builder };
         let mut h = builder.build_ui_state(
