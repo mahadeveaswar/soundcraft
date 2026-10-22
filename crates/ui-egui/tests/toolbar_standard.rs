@@ -135,3 +135,82 @@ fn a_narrow_window_still_draws_and_keeps_the_essential_keys() {
     h.get_by_label_contains("Snap to grid");
     h.get_by_label_contains("Zoom out");
 }
+
+fn track_id(h: &Harness<SoundApp>, name: &str) -> u64 {
+    h.state().engine.session().track_by_name(name).unwrap().id.0
+}
+
+fn all_ids(h: &Harness<SoundApp>) -> Vec<u64> {
+    h.state().engine.session().tracks.iter().map(|t| t.id.0).collect()
+}
+
+fn modes(h: &Harness<SoundApp>) -> Vec<(String, soundcraft_model::AutomationMode)> {
+    h.state().engine.session().tracks.iter().map(|t| (t.name.clone(), t.mixer.automation_mode)).collect()
+}
+
+#[test]
+fn the_m_key_clears_mutes_and_mutes_the_selection_when_none_are_muted() {
+    let mut h = harness(1800.0, ToolbarStyle::Standard);
+    let (kick, bass) = (track_id(&h, "Kick"), track_id(&h, "Bass"));
+    h.state_mut().engine.execute("mix.mute", &json!({"tracks": [kick, bass], "value": true})).unwrap();
+    h.run_steps(2);
+    h.get_by_label_contains("Mute: clear all mutes").click();
+    h.run_steps(2);
+    assert!(h.state().engine.session().tracks.iter().all(|t| !t.mixer.mute), "all mutes cleared");
+
+    h.state_mut().engine.execute("edit.select", &json!({"tracks": [kick]})).unwrap();
+    h.run_steps(2);
+    h.get_by_label_contains("Mute: clear all mutes").click();
+    h.run_steps(2);
+    let s = h.state().engine.session();
+    assert!(s.track_by_name("Kick").unwrap().mixer.mute);
+    assert!(!s.track_by_name("Bass").unwrap().mixer.mute, "only the selection");
+}
+
+#[test]
+fn the_s_key_clears_solos() {
+    let mut h = harness(1800.0, ToolbarStyle::Standard);
+    let kick = track_id(&h, "Kick");
+    h.state_mut().engine.execute("mix.solo", &json!({"tracks": [kick], "value": true})).unwrap();
+    h.run_steps(2);
+    h.get_by_label_contains("Solo: clear all solos").click();
+    h.run_steps(2);
+    assert!(h.state().engine.session().tracks.iter().all(|t| !t.mixer.solo));
+}
+
+#[test]
+fn r_and_w_set_the_mode_on_the_selection_and_modifier_click_sets_all() {
+    use soundcraft_model::AutomationMode::{Off, Read, Write};
+    let mut h = harness(1800.0, ToolbarStyle::Standard);
+    let kick = track_id(&h, "Kick");
+    let ids = all_ids(&h);
+    h.state_mut().engine.execute("mix.automation_mode", &json!({"tracks": ids, "mode": "off"})).unwrap();
+    h.state_mut().engine.execute("edit.select", &json!({"tracks": [kick]})).unwrap();
+    h.run_steps(2);
+    h.get_by_label_contains("Read automation").click();
+    h.run_steps(2);
+    for (name, mode) in modes(&h) {
+        assert_eq!(mode, if name == "Kick" { Read } else { Off }, "{name}");
+    }
+    h.get_by_label_contains("Write automation").click_modifiers(egui::Modifiers::COMMAND);
+    h.run_steps(2);
+    assert!(modes(&h).iter().all(|(_, m)| *m == Write), "modifier-click applies to every track");
+}
+
+#[test]
+fn the_automation_combo_shows_the_selection_and_applies_a_mode() {
+    use soundcraft_model::AutomationMode::{Off, Touch};
+    let mut h = harness(1800.0, ToolbarStyle::Standard);
+    let kick = track_id(&h, "Kick");
+    let ids = all_ids(&h);
+    h.state_mut().engine.execute("mix.automation_mode", &json!({"tracks": ids, "mode": "off"})).unwrap();
+    h.state_mut().engine.execute("edit.select", &json!({"tracks": [kick]})).unwrap();
+    h.run_steps(2);
+    h.get_by_label_contains("Automation mode of the selected tracks").click();
+    h.run_steps(3);
+    h.get_by_label("Touch").click();
+    h.run_steps(2);
+    for (name, mode) in modes(&h) {
+        assert_eq!(mode, if name == "Kick" { Touch } else { Off }, "{name}");
+    }
+}
