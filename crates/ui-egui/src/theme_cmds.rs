@@ -213,6 +213,11 @@ fn dirty(app: &SoundApp) -> bool {
     }
 }
 
+/// Whether the working theme has unsaved changes (the Settings window's Revert).
+pub fn is_dirty(app: &SoundApp) -> bool {
+    dirty(app)
+}
+
 fn hexes(doc: &ThemeDoc) -> Vec<String> {
     doc.track_palette.clone()
 }

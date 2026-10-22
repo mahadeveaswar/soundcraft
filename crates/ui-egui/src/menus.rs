@@ -54,7 +54,8 @@ pub const UI_COMMANDS: &[(&str, &str, &str, Option<&str>)] = &[
     ("window.config_update", "Update Active Configuration", "Window > Configurations > Update Active Configuration", None),
     ("window.config_auto_update", "Auto-Update Active Configuration", "Window > Configurations > Auto-Update Active Configuration", None),
     ("window.renderer", "Renderer", "Window > Renderer", None),
-    ("window.ui_customization", "UI Customization", "Window > UI Customization", None),
+    ("window.settings", "Settings", "Window > Settings...", None),
+    ("window.ui_customization", "Appearance Settings", "", None),
     ("window.arrange_tile", "Tile", "Window > Arrange > Tile", None),
     ("window.arrange_tile_h", "Tile Horizontal", "Window > Arrange > Tile Horizontal", None),
     ("window.arrange_tile_v", "Tile Vertical", "Window > Arrange > Tile Vertical", None),
@@ -78,6 +79,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str, Option<&str>)] = &[
     ("ui.new_tracks_dialog", "New Tracks…", "", None),
     ("ui.bounce_dialog", "Bounce Mix…", "", None),
     ("ui.set", "Set UI State", "", None),
+    ("ui.prefs", "Interface Preferences", "", None),
     ("ui.theme", "Appearance", "", None),
     ("ui.theme_get", "Get Theme", "", None),
     ("ui.theme_list", "List Themes", "", None),
@@ -455,7 +457,7 @@ fn checked_state(app: &SoundApp, path: &str, id: Option<&str>) -> bool {
         Some("window.inspector") => app.ui.show_inspector,
         Some("window.narrow_mix") => app.ui.narrow_mix,
         Some("window.renderer") => app.extra.show_renderer,
-        Some("window.ui_customization") => app.extra.show_ui_customization,
+        Some("window.settings") | Some("window.ui_customization") => app.extra.show_settings,
         Some("window.config_auto_update") => app.extra.auto_update_config,
         Some("view.mix_section") => path.rsplit(" > ").next().map(mix_section_id).is_some_and(|s| app.ui.mix_views.iter().any(|v| v == s)),
         _ => false,
@@ -521,6 +523,7 @@ fn params_for(path: &str, id: &str) -> Value {
 /// Menu items that open a SoundCraft window when clicked (programmatic calls still run the command).
 const MENU_WINDOWS: &[(&str, &str)] = &[
     ("Window > Tracks and Groups", "window.track_list"),
+    ("Setup > Preferences...", "window.settings"),
     ("Setup > Appearance", "window.ui_customization"),
     ("Setup > Hardware...", "window.playback_engine"),
     ("Setup > Playback Engine...", "window.playback_engine"),
@@ -551,6 +554,10 @@ pub fn live_label(app: &SoundApp, id: Option<&str>) -> Option<String> {
 
 /// Menu-style invocation: may open a dialog.
 pub fn invoke_menu(app: &mut SoundApp, id: &str, path: &str) {
+    if path == "Setup > Preferences..." {
+        // Scripts get the edit state from this command; the menu item also opens the Settings window.
+        let _ = app.run("setup.preferences", json!({}));
+    }
     if let Some((_, w)) = MENU_WINDOWS.iter().find(|(p, _)| *p == path)
         && w.starts_with("window.")
     {
@@ -605,6 +612,9 @@ pub fn run_ui_command(app: &mut SoundApp, id: &str, p: &Value) -> Option<Result<
     }
     if id.starts_with("ui.theme_") {
         return Some(crate::theme_cmds::run(app, id, p));
+    }
+    if matches!(id, "ui.prefs" | "window.settings" | "window.ui_customization") {
+        return Some(crate::settings_cmds::run(app, id, p));
     }
     if id == "ui.header_style" {
         return Some(crate::track_header_compact::command(app, p));

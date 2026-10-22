@@ -45,6 +45,10 @@ pub mod recovery;
 pub mod sampler_window;
 pub mod score_editor;
 pub mod selection_strip;
+pub mod settings_appearance;
+pub mod settings_cmds;
+pub mod settings_tracks;
+pub mod settings_window;
 pub mod shortcuts;
 pub mod spot;
 pub mod template_ui;
@@ -197,6 +201,10 @@ pub struct UiState {
     pub window_size: [f32; 2],
     pub window_maximized: bool,
     pub ui_scale: f32,
+    /// Settings > General: no UI animation (`ui.prefs`).
+    pub reduce_motion: bool,
+    /// Settings > General: show hover tooltips (`ui.prefs`).
+    pub tooltips: bool,
 }
 
 impl Default for UiState {
@@ -276,6 +284,8 @@ impl Default for UiState {
             window_size: [1600.0, 1000.0],
             window_maximized: false,
             ui_scale: 1.0,
+            reduce_motion: false,
+            tooltips: true,
         }
     }
 }

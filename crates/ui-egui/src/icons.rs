@@ -334,6 +334,23 @@ pub fn draw(painter: &Painter, r: Rect, name: &str, c: Color32) {
             painter.add(Shape::convex_polygon(vec![p(r, 0.66, 0.14), p(r, 0.86, 0.34), p(r, 0.4, 0.8), p(r, 0.2, 0.6)], c, Stroke::NONE));
             painter.add(Shape::convex_polygon(vec![p(r, 0.18, 0.64), p(r, 0.36, 0.82), p(r, 0.1, 0.9)], c, Stroke::NONE));
         }
+        "warning" => {
+            // A triangle with an exclamation mark.
+            painter.add(Shape::closed_line(vec![p(r, 0.5, 0.12), p(r, 0.92, 0.84), p(r, 0.08, 0.84)], s));
+            painter.line_segment([p(r, 0.5, 0.38), p(r, 0.5, 0.62)], s);
+            painter.circle_filled(p(r, 0.5, 0.74), s.width * 0.6, c);
+        }
+        "reset" => {
+            // A circular arrow: three quarters of a ring with an arrow head.
+            let arc: Vec<Pos2> = (0..=14)
+                .map(|i| {
+                    let a = -1.2 + 4.9 * i as f32 / 14.0;
+                    p(r, 0.5 + 0.3 * a.cos(), 0.5 + 0.3 * a.sin())
+                })
+                .collect();
+            painter.add(Shape::line(arc, s));
+            painter.add(Shape::convex_polygon(vec![p(r, 0.62, 0.12), p(r, 0.86, 0.3), p(r, 0.58, 0.34)], c, Stroke::NONE));
+        }
         _ => {
             painter.rect_stroke(r.shrink(r.width() * 0.25), 1.0, s, egui::StrokeKind::Middle);
         }

@@ -498,7 +498,7 @@ Window > Machine Track Arming
 Window > Video Universe
 Window > Video
 Window > Color Palette
-Window > UI Customization
+Window > Settings...
 Window > Metadata Inspector
 Window > Undo History
 Window > Transcript
