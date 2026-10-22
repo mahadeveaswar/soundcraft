@@ -804,8 +804,8 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
         ui.painter().with_clip_rect(roll).rect(
             band,
             0.0,
-            Color32::from_rgba_unmultiplied(120, 170, 255, 40),
-            Stroke::new(1.0, Color32::from_rgb(120, 170, 255)),
+            Tokens::current().select_box_fill,
+            Stroke::new(1.0, Tokens::current().select_box_edge),
             StrokeKind::Inside,
         );
         if resp.drag_stopped() {
@@ -997,7 +997,7 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
     // Scrollbars over the roll's right and bottom edges. Drag (or click) a track to move the view.
     let bar_w = 9.0;
     let sb_track = ui.visuals().extreme_bg_color.gamma_multiply(0.6);
-    let sb_thumb = Color32::from_rgb(110, 110, 120);
+    let sb_thumb = Tokens::current().scrollbar_thumb;
     let vtrack = Rect::from_min_max(pos2(roll.max.x - bar_w, roll.min.y), pos2(roll.max.x, roll.max.y - bar_w));
     let content_h = 128.0 * row_h;
     let v_range = (content_h - roll.height()).max(0.0);
@@ -1157,7 +1157,7 @@ fn playhead(ui: &Ui, x: f32, y0: f32, y1: f32, min_x: f32, max_x: f32) {
     if !(min_x..=max_x).contains(&x) {
         return;
     }
-    let color = Color32::from_rgb(255, 205, 80);
+    let color = Tokens::current().roll_accent;
     let p = ui.painter();
     p.line_segment([pos2(x, y0), pos2(x, y1)], Stroke::new(1.5, color));
     p.add(egui::Shape::convex_polygon(vec![pos2(x - 4.0, y0), pos2(x + 4.0, y0), pos2(x, y0 + 6.0)], color, Stroke::NONE));

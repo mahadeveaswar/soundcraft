@@ -52,7 +52,7 @@ pub fn paint_note(p: &Painter, r: Rect, pitch: u8, velocity: u8, selected: bool,
         let ink = if muted {
             fill.gamma_multiply(0.4)
         } else if selected && single.is_some() {
-            Color32::from_rgb(20, 20, 20)
+            Tokens::current().ink_dark
         } else {
             Color32::WHITE
         };

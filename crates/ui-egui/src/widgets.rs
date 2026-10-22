@@ -126,7 +126,7 @@ pub fn text_toggle(ui: &mut Ui, size: egui::Vec2, text: &str, on: bool, on_color
 /// Record-enable button (red dot); the caller owns track arming and command dispatch.
 pub fn rec_toggle(ui: &mut Ui, size: egui::Vec2, on: bool, tip: &str) -> Response {
     let t = Tokens::current();
-    let style = button_style(t.rec, Color32::from_rgb(218, 112, 106), 2);
+    let style = button_style(t.rec, Tokens::current().rec_btn_hi, 2);
     let resp = IconButton::new(tip, size, &style).selected(on).single_shape_frame().show(ui, |ui, r, tint| {
         key_light(ui.painter(), r.shrink(1.0));
         let rad = size.y * 0.24;
@@ -138,7 +138,7 @@ pub fn rec_toggle(ui: &mut Ui, size: egui::Vec2, on: bool, tip: &str) -> Respons
                 Rect::from_center_size(r.center(), Vec2::splat(2.0 * rad)),
                 2.0 * rad,
                 tint,
-                Color32::from_rgb(176, 76, 72),
+                Tokens::current().rec_btn_lo,
             );
         }
         ui.painter().circle_stroke(r.center(), rad, Stroke::new(1.0, Color32::from_black_alpha(90)));
@@ -398,20 +398,20 @@ pub fn surround_panner(ui: &mut Ui, size: f32, speakers: &[PannerSpeaker], puck:
     let c = r.center();
     let to_screen = |x: f32, y: f32| pos2(c.x + x * half, c.y - y * half);
     let painter = ui.painter_at(r.expand(1.0));
-    painter.rect(r, CornerRadius::same(2), Color32::from_rgb(14, 18, 22), Stroke::new(1.0, Color32::from_rgb(70, 74, 80)), StrokeKind::Inside);
-    let grid = Stroke::new(1.0, Color32::from_rgb(38, 44, 50));
+    painter.rect(r, CornerRadius::same(2), Tokens::current().inset_bg, Stroke::new(1.0, Tokens::current().scope_border), StrokeKind::Inside);
+    let grid = Stroke::new(1.0, Tokens::current().scope_grid);
     painter.line_segment([to_screen(-1.0, 0.0), to_screen(1.0, 0.0)], grid);
     painter.line_segment([to_screen(0.0, -1.0), to_screen(0.0, 1.0)], grid);
     painter.rect_stroke(Rect::from_two_pos(to_screen(-1.0, -1.0), to_screen(1.0, 1.0)), 0.0, grid, StrokeKind::Middle);
     // "Front" marker.
-    painter.line_segment([pos2(c.x - 5.0, r.min.y + 2.0), pos2(c.x + 5.0, r.min.y + 2.0)], Stroke::new(2.0, Color32::from_rgb(90, 110, 130)));
+    painter.line_segment([pos2(c.x - 5.0, r.min.y + 2.0), pos2(c.x + 5.0, r.min.y + 2.0)], Stroke::new(2.0, Tokens::current().scope_axis));
     for s in speakers {
         let (x, y) = if s.height { (s.x * 0.55, s.y * 0.55) } else { (s.x, s.y) };
         let p = to_screen(x, y);
         if s.height {
-            painter.circle_stroke(p, 2.5, Stroke::new(1.0, Color32::from_rgb(150, 150, 170)));
+            painter.circle_stroke(p, 2.5, Stroke::new(1.0, Tokens::current().scope_dot_ring));
         } else {
-            painter.circle_filled(p, 3.0, Color32::from_rgb(170, 170, 176));
+            painter.circle_filled(p, 3.0, Tokens::current().scope_dot);
         }
         if size >= 70.0 && !s.height {
             let inward = vec2(-(x.signum() * if x.abs() > 0.5 { 1.0 } else { 0.0 }), if y.abs() > 0.5 { y.signum() } else { 0.0 });
@@ -443,7 +443,7 @@ pub fn surround_panner(ui: &mut Ui, size: f32, speakers: &[PannerSpeaker], puck:
         _ => divergence,
     };
     if div > 0.01 {
-        painter.circle(pp, 5.0 + div * half, Color32::from_rgba_unmultiplied(80, 160, 230, 28), Stroke::new(1.0, Color32::from_rgb(70, 130, 190)));
+        painter.circle(pp, 5.0 + div * half, Tokens::current().pan_halo, Stroke::new(1.0, Tokens::current().pan_halo_edge));
     }
     painter.circle(pp, 5.0, t.counter_text, Stroke::new(1.0, Color32::BLACK));
     let tip = "Surround pan: drag the puck · double-click: front centre · Alt-drag: divergence";
@@ -457,7 +457,7 @@ pub fn surround_panner(ui: &mut Ui, size: f32, speakers: &[PannerSpeaker], puck:
         let (sr, sresp) = ui.allocate_exact_size(vec2(size, 11.0), Sense::click_and_drag());
         let track = Rect::from_min_max(pos2(sr.min.x + 16.0, sr.center().y - 2.0), pos2(sr.max.x - 2.0, sr.center().y + 2.0));
         ui.painter().text(pos2(sr.min.x + 1.0, sr.center().y), Align2::LEFT_CENTER, label, regular(8.0), t.text_dim);
-        ui.painter().rect_filled(track, 1.0, Color32::from_rgb(24, 26, 30));
+        ui.painter().rect_filled(track, 1.0, Tokens::current().slider_track);
         ui.painter().rect_filled(
             Rect::from_min_max(track.min, pos2(track.min.x + track.width() * v.clamp(0.0, 1.0), track.max.y)),
             1.0,

@@ -578,7 +578,7 @@ fn plugin_windows(app: &mut SoundApp, ctx: &egui::Context) {
 fn eq_curve(ui: &mut Ui, id: &str, ins: &soundcraft_model::Insert) {
     let t = Tokens::current();
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width().max(300.0), 110.0), Sense::hover());
-    ui.painter().rect_filled(r, 4.0, Color32::from_rgb(14, 18, 22));
+    ui.painter().rect_filled(r, 4.0, Tokens::current().inset_bg);
     let n = 160;
     let freqs: Vec<f32> = (0..n).map(|i| 20.0 * 1000f32.powf(i as f32 / (n - 1) as f32)).collect();
     let params: Vec<(&str, f32)> = ins.params.iter().map(|(k, v)| (k.as_str(), *v)).collect();
@@ -589,7 +589,7 @@ fn eq_curve(ui: &mut Ui, id: &str, ins: &soundcraft_model::Insert) {
     };
     for db in [-12.0f32, 0.0, 12.0] {
         let y = r.center().y - db / 18.0 * r.height() * 0.5;
-        ui.painter().line_segment([pos2(r.min.x, y), pos2(r.max.x, y)], Stroke::new(1.0, Color32::from_rgb(40, 50, 60)));
+        ui.painter().line_segment([pos2(r.min.x, y), pos2(r.max.x, y)], Stroke::new(1.0, Tokens::current().inset_grid));
     }
     let pts: Vec<egui::Pos2> = resp
         .iter()

@@ -263,7 +263,7 @@ fn strip(app: &mut SoundApp, ui: &mut Ui, id: TrackId, snap: Option<&MeterSnapsh
     }
     if all || has("eq_curve") {
         let sec = Rect::from_min_size(pos2(x0, y), vec2(inner_w, 40.0));
-        ui.painter().rect_filled(sec, 2.0, Color32::from_rgb(14, 18, 22));
+        ui.painter().rect_filled(sec, 2.0, Tokens::current().inset_bg);
         let eq = track.mixer.inserts.iter().flatten().find(|i| i.plugin == "eq_7band" || i.plugin == "eq_1band");
         if let Some(ins) = eq {
             let n = 40;
@@ -285,7 +285,7 @@ fn strip(app: &mut SoundApp, ui: &mut Ui, id: TrackId, snap: Option<&MeterSnapsh
         } else {
             ui.painter().line_segment(
                 [pos2(sec.min.x + 2.0, sec.center().y), pos2(sec.max.x - 2.0, sec.center().y)],
-                Stroke::new(1.0, Color32::from_rgb(60, 70, 80)),
+                Stroke::new(1.0, Tokens::current().inset_border),
             );
         }
         y = sec.max.y + 4.0;
@@ -585,8 +585,8 @@ fn used_slot(p: &egui::Painter, r: Rect, faces: [Color32; 2], mark: Mark, name: 
         let well = level_icon(r);
         p.rect_filled(well, 1.0, Color32::BLACK);
         let inner = well.shrink(1.0);
-        p.rect_filled(inner, 0.0, Color32::from_rgb(36, 38, 8));
-        p.rect_filled(inner.with_min_y(inner.max.y - inner.height() * k.clamp(0.0, 1.0)), 0.0, Color32::from_rgb(51, 49, 11));
+        p.rect_filled(inner, 0.0, Tokens::current().hold_bg);
+        p.rect_filled(inner.with_min_y(inner.max.y - inner.height() * k.clamp(0.0, 1.0)), 0.0, Tokens::current().hold_fill);
         text.max.x = well.min.x - 1.0;
     }
     let g = p.layout_no_wrap(name.to_string(), bold(NAME_SIZE), color);

@@ -247,6 +247,42 @@ pub struct Tokens {
     pub grid_beat: Color32,
     /// Draw the beat lines even while View > Grid Lines is off.
     pub grid_beat_always: bool,
+    // Fixed colours lifted out of widget code; every palette keeps the Dark value.
+    pub inset_bg: Color32,
+    pub inset_border: Color32,
+    pub hold_bg: Color32,
+    pub hold_fill: Color32,
+    pub inset_grid: Color32,
+    pub scope_border: Color32,
+    pub scope_grid: Color32,
+    pub scope_axis: Color32,
+    pub scope_dot_ring: Color32,
+    pub scope_dot: Color32,
+    pub pan_halo: Color32,
+    pub pan_halo_edge: Color32,
+    pub slider_track: Color32,
+    pub rec_btn_hi: Color32,
+    pub rec_btn_lo: Color32,
+    pub play_on_face: Color32,
+    pub play_on_icon: Color32,
+    pub rec_on_face: Color32,
+    pub piano_key_white: Color32,
+    pub piano_key_black: Color32,
+    pub roll_key_black: Color32,
+    pub roll_key_white: Color32,
+    pub roll_key_label: Color32,
+    pub ink_dark: Color32,
+    pub select_box_fill: Color32,
+    pub select_box_edge: Color32,
+    pub scrollbar_thumb: Color32,
+    pub roll_accent: Color32,
+    pub error_text: Color32,
+    pub spot_bg: Color32,
+    pub spot_ring: Color32,
+    pub spot_ring_inner: Color32,
+    pub spot_speaker_ring: Color32,
+    pub spot_object: Color32,
+    pub spot_object_name: Color32,
 }
 
 impl Tokens {
@@ -351,6 +387,41 @@ impl Tokens {
         grid_bar: Color32::from_rgb(66, 66, 70),
         grid_beat: Color32::from_rgb(52, 52, 54),
         grid_beat_always: false,
+        inset_bg: Color32::from_rgb(14, 18, 22),
+        inset_border: Color32::from_rgb(60, 70, 80),
+        hold_bg: Color32::from_rgb(36, 38, 8),
+        hold_fill: Color32::from_rgb(51, 49, 11),
+        inset_grid: Color32::from_rgb(40, 50, 60),
+        scope_border: Color32::from_rgb(70, 74, 80),
+        scope_grid: Color32::from_rgb(38, 44, 50),
+        scope_axis: Color32::from_rgb(90, 110, 130),
+        scope_dot_ring: Color32::from_rgb(150, 150, 170),
+        scope_dot: Color32::from_rgb(170, 170, 176),
+        pan_halo: Color32::from_rgba_premultiplied(9, 18, 25, 28),
+        pan_halo_edge: Color32::from_rgb(70, 130, 190),
+        slider_track: Color32::from_rgb(24, 26, 30),
+        rec_btn_hi: Color32::from_rgb(218, 112, 106),
+        rec_btn_lo: Color32::from_rgb(176, 76, 72),
+        play_on_face: Color32::from_rgb(40, 90, 50),
+        play_on_icon: Color32::from_rgb(120, 255, 140),
+        rec_on_face: Color32::from_rgb(110, 30, 30),
+        piano_key_white: Color32::from_rgb(235, 235, 235),
+        piano_key_black: Color32::from_rgb(20, 20, 20),
+        roll_key_black: Color32::from_rgb(20, 20, 20),
+        roll_key_white: Color32::from_rgb(225, 225, 225),
+        roll_key_label: Color32::from_rgb(40, 40, 40),
+        ink_dark: Color32::from_rgb(20, 20, 20),
+        select_box_fill: Color32::from_rgba_premultiplied(19, 27, 40, 40),
+        select_box_edge: Color32::from_rgb(120, 170, 255),
+        scrollbar_thumb: Color32::from_rgb(110, 110, 120),
+        roll_accent: Color32::from_rgb(255, 205, 80),
+        error_text: Color32::from_rgb(230, 120, 100),
+        spot_bg: Color32::from_rgb(16, 19, 23),
+        spot_ring: Color32::from_rgb(60, 68, 78),
+        spot_ring_inner: Color32::from_rgb(44, 50, 58),
+        spot_speaker_ring: Color32::from_rgb(150, 160, 170),
+        spot_object: Color32::from_rgb(240, 180, 60),
+        spot_object_name: Color32::from_rgb(240, 200, 120),
     };
 
     pub const LIGHT: Tokens = Tokens {
@@ -454,6 +525,7 @@ impl Tokens {
         grid_bar: Color32::from_rgb(162, 166, 172),
         grid_beat: Color32::from_rgb(188, 191, 196),
         grid_beat_always: false,
+        ..Tokens::DARK
     };
 
     /// Midnight: near-black blue-grey panels, bright bar and beat grid, translucent clips and a
@@ -815,6 +887,32 @@ mod tests {
         assert_eq!(bar, Color32::from_rgb(200, 80, 40));
         assert_eq!(clip_outline([200, 80, 40]), Color32::from_rgb(200, 80, 40));
         apply_palette(&ctx, PALETTE_DARK);
+    }
+
+    #[test]
+    fn lifted_widget_colours_equal_the_old_literals_in_every_palette() {
+        let rgb = Color32::from_rgb;
+        for tk in [Tokens::DARK, Tokens::LIGHT, Tokens::MIDNIGHT] {
+            assert_eq!(tk.inset_bg, rgb(14, 18, 22));
+            assert_eq!(tk.inset_border, rgb(60, 70, 80));
+            assert_eq!(tk.inset_grid, rgb(40, 50, 60));
+            assert_eq!((tk.hold_bg, tk.hold_fill), (rgb(36, 38, 8), rgb(51, 49, 11)));
+            assert_eq!((tk.scope_border, tk.scope_grid, tk.scope_axis), (rgb(70, 74, 80), rgb(38, 44, 50), rgb(90, 110, 130)));
+            assert_eq!((tk.scope_dot_ring, tk.scope_dot), (rgb(150, 150, 170), rgb(170, 170, 176)));
+            assert_eq!(tk.pan_halo, Color32::from_rgba_unmultiplied(80, 160, 230, 28));
+            assert_eq!(tk.pan_halo_edge, rgb(70, 130, 190));
+            assert_eq!(tk.slider_track, rgb(24, 26, 30));
+            assert_eq!((tk.rec_btn_hi, tk.rec_btn_lo), (rgb(218, 112, 106), rgb(176, 76, 72)));
+            assert_eq!((tk.play_on_face, tk.play_on_icon, tk.rec_on_face), (rgb(40, 90, 50), rgb(120, 255, 140), rgb(110, 30, 30)));
+            assert_eq!((tk.piano_key_white, tk.piano_key_black), (rgb(235, 235, 235), rgb(20, 20, 20)));
+            assert_eq!((tk.roll_key_white, tk.roll_key_black, tk.roll_key_label), (rgb(225, 225, 225), rgb(20, 20, 20), rgb(40, 40, 40)));
+            assert_eq!(tk.ink_dark, rgb(20, 20, 20));
+            assert_eq!(tk.select_box_fill, Color32::from_rgba_unmultiplied(120, 170, 255, 40));
+            assert_eq!((tk.select_box_edge, tk.scrollbar_thumb, tk.roll_accent), (rgb(120, 170, 255), rgb(110, 110, 120), rgb(255, 205, 80)));
+            assert_eq!(tk.error_text, rgb(230, 120, 100));
+            assert_eq!((tk.spot_bg, tk.spot_ring, tk.spot_ring_inner), (rgb(16, 19, 23), rgb(60, 68, 78), rgb(44, 50, 58)));
+            assert_eq!((tk.spot_speaker_ring, tk.spot_object, tk.spot_object_name), (rgb(150, 160, 170), rgb(240, 180, 60), rgb(240, 200, 120)));
+        }
     }
 
     #[test]
