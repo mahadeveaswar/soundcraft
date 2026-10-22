@@ -150,6 +150,9 @@ pub struct Engine {
     /// The edit selection (range, tracks) before the last change, for Restore Last Selection.
     /// Kept out of the document so selecting never marks the session modified.
     pub last_selection: Option<(soundcraft_time::Range, Vec<TrackId>)>,
+    /// The live master loudness, as last fed by the playback side (`set_live_loudness`).
+    live_loudness: soundcraft_dsp::meter::LoudnessReading,
+    loudness_reset_pending: bool,
 }
 
 impl Default for Engine {
@@ -181,7 +184,29 @@ impl Engine {
             merge_hold: None,
             messages: Vec::new(),
             last_selection: None,
+            live_loudness: Default::default(),
+            loudness_reset_pending: false,
         }
+    }
+
+    /// The live master loudness the playback side last reported.
+    pub fn live_loudness(&self) -> soundcraft_dsp::meter::LoudnessReading {
+        self.live_loudness
+    }
+
+    /// Called by the app each UI frame with the playback meters' loudness reading.
+    pub fn set_live_loudness(&mut self, reading: soundcraft_dsp::meter::LoudnessReading) {
+        self.live_loudness = reading;
+    }
+
+    pub(crate) fn request_loudness_reset(&mut self) {
+        self.loudness_reset_pending = true;
+    }
+
+    /// True once after `mix.loudness_reset`: the app then calls the playback engine's
+    /// `reset_loudness`.
+    pub fn take_loudness_reset(&mut self) -> bool {
+        std::mem::take(&mut self.loudness_reset_pending)
     }
 
     pub fn session(&self) -> &Session {

@@ -20,6 +20,7 @@ mod event_more;
 mod file;
 mod health;
 mod instrument;
+mod loudness;
 mod midi;
 mod midi_audition;
 mod midi_ctrl;
@@ -153,6 +154,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(surround::specs());
         v.extend(plugin_state::specs());
         v.extend(instrument::specs());
+        v.extend(loudness::specs());
         v.extend(sampler::specs());
         v.extend(video::specs());
         v.extend(zoom_toggle::specs());
