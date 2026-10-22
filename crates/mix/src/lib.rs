@@ -235,6 +235,8 @@ struct Strip {
     chase: bool,
     /// Last value of each controller sent from track automation (`CTRL_UNKNOWN` = nothing sent).
     ctrl_sent: [i16; CTRL_SLOTS],
+    /// Controllers automation owned in the previous block (a lane that stops owning one re-chases).
+    prev_owned: [bool; CTRL_SLOTS],
     /// Send sustain off and all-controllers-reset at the next block (after a stop or reset).
     release_ctrls: bool,
     muted: bool,
@@ -322,6 +324,7 @@ impl Strip {
             live: live::LiveHeld::new(),
             chase: true,
             ctrl_sent: [CTRL_UNKNOWN; CTRL_SLOTS],
+            prev_owned: [false; CTRL_SLOTS],
             release_ctrls: false,
             muted: false,
             gr: 0.0,
@@ -1022,6 +1025,12 @@ fn process_strip(
                 }
                 if !live.monitor_only {
                     let owned = owned_ctrls(t);
+                    // A lane that stopped owning a controller (mode Off, lane cleared): chase so the
+                    // instrument returns to the clip data instead of keeping the last lane value.
+                    if strip.prev_owned.iter().zip(owned.iter()).any(|(was, now)| *was && !*now) {
+                        strip.chase = true;
+                    }
+                    strip.prev_owned = owned;
                     if std::mem::take(&mut strip.chase) {
                         chase_controllers(s, t, pos, inst, &owned, &mut strip.ctrl_sent);
                     }
@@ -2903,6 +2912,22 @@ mod tests {
     }
 
     #[test]
+    fn losing_ownership_mid_play_chases_back_to_clip_data() {
+        let clip = vec![cc_event(4, CtrlKind::Cc(11), 33)];
+        let (mut s, mut eng, heard) = ears_engine(clip, vec![(AutoParam::MidiCc(11), vec![(0, 100.0)])]);
+        render_block(&mut eng, &s, 0);
+        take(&heard);
+        render_block(&mut eng, &s, 512);
+        assert!(take(&heard).is_empty(), "steady while the lane owns the controller");
+        let tid = s.tracks.first().unwrap().id;
+        s.track_mut(tid).unwrap().mixer.automation_mode = soundcraft_model::AutomationMode::Off;
+        render_block(&mut eng, &s, 1024);
+        let got = take(&heard);
+        assert_eq!(got.first(), Some(&(0, [0xB0, 121, 0])), "{got:?}");
+        assert!(got.contains(&(0, [0xB0, 0x0B, 33])), "clip value returns: {got:?}");
+    }
+
+    #[test]
     fn reset_releases_sustain() {
         let (s, mut eng, heard) = ears_engine(vec![], vec![]);
         render_block(&mut eng, &s, 0);
@@ -2910,7 +2935,9 @@ mod tests {
         eng.reset();
         render_block(&mut eng, &s, 0);
         let got = take(&heard);
-        assert!(got.contains(&(0, [0xB0, 64, 0])), "{got:?}");
+        let sustain = got.iter().position(|m| *m == (0, [0xB0, 64, 0]));
+        let reset = got.iter().position(|m| *m == (0, [0xB0, 121, 0]));
+        assert!(sustain.is_some() && sustain <= reset, "sustain off comes first: {got:?}");
     }
 
     #[test]

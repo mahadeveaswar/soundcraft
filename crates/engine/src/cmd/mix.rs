@@ -145,7 +145,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Set MIDI Controller Value",
             [],
             None,
-            "{track?, param: cc<n>|pitch_bend|pressure, value, at?} (instrument and MIDI tracks; writes a breakpoint, clamped to the controller range)",
+            "{track?, param: cc<n>|pitch_bend|pressure, value, at? (default: the playhead)} (instrument and MIDI tracks; writes a breakpoint, clamped to the controller range)",
             has_selection,
             midi_value
         ),
@@ -566,6 +566,11 @@ fn check_tracks(e: &Engine, cmd: &str, tracks: &[TrackId], param: &AutoParam) ->
     Ok(())
 }
 
+/// The playhead while playing, else the edit insertion (what the app shows as the position).
+fn playhead(e: &Engine) -> soundcraft_time::Samples {
+    if e.transport.playing { e.transport.position } else { e.session().edit.selection.start }
+}
+
 /// Set a MIDI controller's value from a point in time on: a breakpoint in the track's lane.
 fn midi_value(e: &mut Engine, p: &Value) -> Result<Value> {
     let c = "automation.midi_value";
@@ -575,7 +580,7 @@ fn midi_value(e: &mut Engine, p: &Value) -> Result<Value> {
         return Err(bad(c, "`param` must be a MIDI controller (cc<n>|pitch_bend|pressure)"));
     }
     check_tracks(e, c, &tracks, &param)?;
-    let at = position_param(e, c, p, "at")?.unwrap_or(e.session().edit.selection.start).max(0);
+    let at = position_param(e, c, p, "at")?.unwrap_or_else(|| playhead(e)).max(0);
     let v = p.get("value").and_then(Value::as_f64).filter(|v| v.is_finite()).ok_or_else(|| bad(c, "`value` required"))? as f32;
     let (lo, hi, _) = param.range();
     let v = v.clamp(lo, hi);

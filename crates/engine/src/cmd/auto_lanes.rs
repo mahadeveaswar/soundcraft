@@ -334,6 +334,20 @@ mod tests {
     }
 
     #[test]
+    fn midi_value_defaults_to_the_playhead() {
+        let (mut e, _) = engine();
+        let m = e.session_mut().add_track(TrackKind::Instrument, ChannelFormat::Stereo, None).0;
+        e.session_mut().edit.selection.start = 5;
+        e.transport.position = 777;
+        e.execute("automation.midi_value", &json!({"track": m, "param": "cc1", "value": 9})).unwrap();
+        assert_eq!(e.session().track(TrackId(m)).unwrap().lane(&AutoParam::MidiCc(1)).unwrap().points[0].at, 5, "stopped: the insertion");
+        e.transport.playing = true;
+        e.execute("automation.midi_value", &json!({"track": m, "param": "cc1", "value": 10})).unwrap();
+        let tr = e.session().track(TrackId(m)).unwrap();
+        assert_eq!(tr.lane(&AutoParam::MidiCc(1)).unwrap().points.last().unwrap().at, 777, "playing: the playhead");
+    }
+
+    #[test]
     fn midi_value_writes_a_clamped_breakpoint() {
         let (mut e, _) = engine();
         let m = e.session_mut().add_track(TrackKind::Instrument, ChannelFormat::Stereo, None).0;

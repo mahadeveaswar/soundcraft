@@ -11,7 +11,8 @@ use crate::widgets::shade;
 use crate::{SoundApp, icons};
 use egui::{Align2, Color32, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use serde_json::json;
-use soundcraft_model::{AutoParam, AutomationMode, LANE_HEIGHT_DEFAULT, ShownLane, Track, TrackId};
+use soundcraft_model::{AutoParam, AutomationMode, LANE_HEIGHT_DEFAULT, ShownLane, Track, TrackId, TrackKind};
+use soundcraft_time::Samples;
 use std::collections::HashMap;
 
 const STRIP_W: f32 = 10.0;
@@ -78,8 +79,9 @@ pub fn header_layout(head: Rect) -> HeaderLayout {
     }
 }
 
-/// The parameter's value when it is not automated (what the fader or knob shows).
-pub fn static_value(t: &Track, p: &AutoParam) -> f32 {
+/// The parameter's value when it is not automated (what the fader or knob shows). MIDI controllers
+/// have no mixer value: they read their lane at `at` (the playhead), else the controller default.
+pub fn static_value(t: &Track, p: &AutoParam, at: Samples) -> f32 {
     let send = |i: u8| t.mixer.sends.get(usize::from(i)).and_then(Option::as_ref);
     match p {
         AutoParam::Volume => t.mixer.volume_db,
@@ -93,7 +95,24 @@ pub fn static_value(t: &Track, p: &AutoParam) -> f32 {
             ins.and_then(|i| i.params.get(param).copied().or_else(|| soundcraft_dsp::plugin_info(&i.plugin)?.param(param).map(|p| p.default)))
                 .unwrap_or(0.0)
         }
-        AutoParam::MidiCc(_) | AutoParam::PitchBend | AutoParam::ChannelPressure => p.range().2,
+        AutoParam::MidiCc(_) | AutoParam::PitchBend | AutoParam::ChannelPressure => {
+            let default = p.range().2;
+            t.lane(p).map_or(default, |l| l.value_at(at, default))
+        }
+    }
+}
+
+/// Whether a toggle parameter currently reads as on.
+pub fn toggle_on(p: &AutoParam, v: f32) -> bool {
+    if p.is_midi() { v >= 64.0 } else { v > 0.5 }
+}
+
+/// The value a toggle click writes: on is the top of a controller's range (127), 1.0 otherwise.
+pub fn toggle_value(p: &AutoParam, turn_on: bool) -> f32 {
+    match (turn_on, p.is_midi()) {
+        (false, _) => 0.0,
+        (true, true) => p.range().1,
+        (true, false) => 1.0,
     }
 }
 
@@ -127,6 +146,8 @@ fn step_of(t: &Track, p: &AutoParam, range: (f32, f32)) -> f32 {
     match p {
         AutoParam::Volume | AutoParam::SendLevel(_) => 0.5,
         AutoParam::Pan(_) | AutoParam::SendPan(_) => 0.05,
+        AutoParam::PitchBend => 128.0,
+        AutoParam::MidiCc(_) | AutoParam::ChannelPressure => 1.0,
         AutoParam::Plugin { .. }
             if plugin_param(t, p).is_some_and(|i| matches!(i.unit, soundcraft_dsp::Unit::Choice | soundcraft_dsp::Unit::Toggle)) =>
         {
@@ -137,7 +158,7 @@ fn step_of(t: &Track, p: &AutoParam, range: (f32, f32)) -> f32 {
 }
 
 /// The command that sets a parameter's fixed value.
-fn set_command(id: TrackId, p: &AutoParam, v: f32) -> (&'static str, serde_json::Value) {
+fn set_command(id: TrackId, p: &AutoParam, v: f32, at: Samples) -> (&'static str, serde_json::Value) {
     match p {
         AutoParam::Volume => ("mix.volume", json!({"track": id.0, "db": v})),
         AutoParam::Pan(i) => ("mix.pan", json!({"track": id.0, "pan": v, "index": i})),
@@ -147,7 +168,7 @@ fn set_command(id: TrackId, p: &AutoParam, v: f32) -> (&'static str, serde_json:
         AutoParam::SendMute(i) => ("mix.send_level", json!({"track": id.0, "slot": i, "mute": v > 0.5})),
         AutoParam::Plugin { slot, param } => ("mix.insert_param", json!({"track": id.0, "slot": slot, "param": param, "value": v})),
         AutoParam::MidiCc(_) | AutoParam::PitchBend | AutoParam::ChannelPressure => {
-            ("automation.midi_value", json!({"track": id.0, "param": p.id(), "value": v}))
+            ("automation.midi_value", json!({"track": id.0, "param": p.id(), "value": v, "at": at}))
         }
     }
 }
@@ -162,6 +183,7 @@ pub fn track_params(t: &Track) -> Vec<(AutoParam, String)> {
         v.push((AutoParam::Pan(i as u8), if i == 0 { "Pan".to_string() } else { "Pan 2".to_string() }));
     }
     v.push((AutoParam::Mute, "Mute".to_string()));
+    v.extend(midi_entries(t));
     for (i, s) in t.mixer.sends.iter().enumerate().take(10) {
         if s.is_some() {
             let l = soundcraft_model::slot_letter(i as u8);
@@ -171,6 +193,35 @@ pub fn track_params(t: &Track) -> Vec<(AutoParam, String)> {
         }
     }
     v
+}
+
+/// The controllers a MIDI-capable track offers in the "MIDI Controllers" section (instrument and
+/// MIDI tracks only): modulation, expression, sustain, pitch bend, channel pressure.
+pub fn midi_entries(t: &Track) -> Vec<(AutoParam, String)> {
+    if !matches!(t.kind, TrackKind::Instrument | TrackKind::Midi) {
+        return Vec::new();
+    }
+    [AutoParam::MidiCc(1), AutoParam::MidiCc(11), AutoParam::MidiCc(64), AutoParam::PitchBend, AutoParam::ChannelPressure]
+        .into_iter()
+        .map(|p| {
+            let l = p.label();
+            (p, l)
+        })
+        .collect()
+}
+
+/// The "All Controllers" submenu: CC0 to CC127 with generic names (empty on tracks without MIDI).
+pub fn all_controllers(t: &Track) -> Vec<(AutoParam, String)> {
+    if !matches!(t.kind, TrackKind::Instrument | TrackKind::Midi) {
+        return Vec::new();
+    }
+    (0..=127u8)
+        .map(|n| {
+            let p = AutoParam::MidiCc(n);
+            let l = p.label();
+            (p, l)
+        })
+        .collect()
 }
 
 /// `Plugin - Param` entries for the track's inserts, ordered by slot.
@@ -236,7 +287,8 @@ fn all_values(t: &Track) -> Vec<(AutoParam, f32)> {
         .into_iter()
         .chain(plugin_entries(t))
         .map(|(p, _)| {
-            let v = static_value(t, &p);
+            // Position 0 keeps MIDI lanes steady during playback (follow only reacts to edits).
+            let v = static_value(t, &p, 0);
             (p, v)
         })
         .collect()
@@ -458,11 +510,13 @@ fn param_menu(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: &ShownLane, 
         ui.separator();
         let q: String = ui.ctx().data(|d| d.get_temp(query_id).unwrap_or_default());
         let plugins = order_by_recent(plugin_entries(track), &recent_params(ui.ctx(), track.id));
-        let builtin = track_params(track);
+        let (midi, builtin): (Vec<_>, Vec<_>) = track_params(track).into_iter().partition(|(p, _)| p.is_midi());
+        let all_cc = all_controllers(track);
         let mut chosen = None;
         egui::ScrollArea::vertical().max_height(280.0).show(ui, |ui| {
             let plug = filter_entries(&plugins, &q);
             let built = filter_entries(&builtin, &q);
+            let mids = filter_entries(&midi, &q);
             for (p, l) in &plug {
                 if ui.selectable_label(*p == lane.param, l).clicked() {
                     chosen = Some(p.clone());
@@ -476,7 +530,39 @@ fn param_menu(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: &ShownLane, 
                     chosen = Some(p.clone());
                 }
             }
-            if plug.is_empty() && built.is_empty() {
+            if !mids.is_empty() {
+                if !plug.is_empty() || !built.is_empty() {
+                    ui.separator();
+                }
+                ui.label(egui::RichText::new("MIDI Controllers").color(Tokens::current().text_dim).small());
+                for (p, l) in &mids {
+                    if ui.selectable_label(*p == lane.param, l).clicked() {
+                        chosen = Some(p.clone());
+                    }
+                }
+            }
+            if !all_cc.is_empty() {
+                if q.trim().is_empty() {
+                    ui.menu_button("All Controllers", |ui| {
+                        egui::ScrollArea::vertical().max_height(280.0).show(ui, |ui| {
+                            for (p, l) in &all_cc {
+                                if ui.selectable_label(*p == lane.param, l).clicked() {
+                                    chosen = Some(p.clone());
+                                }
+                            }
+                        });
+                    });
+                } else {
+                    // A search looks through every controller too (the five above are not repeated).
+                    for (p, l) in filter_entries(&all_cc, &q).into_iter().filter(|(p, _)| !midi.iter().any(|(m, _)| m == p)) {
+                        if ui.selectable_label(*p == lane.param, l).clicked() {
+                            chosen = Some(p.clone());
+                        }
+                    }
+                }
+            }
+            let nothing = plug.is_empty() && built.is_empty() && mids.is_empty() && (all_cc.is_empty() || filter_entries(&all_cc, &q).is_empty());
+            if nothing {
                 ui.label(egui::RichText::new("No matching parameter").color(Tokens::current().text_dim));
             }
         });
@@ -491,10 +577,13 @@ fn value_box(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: &ShownLane, i
     let t = Tokens::current();
     let id = track.id;
     let p = ui.painter().with_clip_rect(r.intersect(ui.clip_rect()));
-    let v = static_value(track, &lane.param);
+    // A drag keeps the position it started at, so a moving playhead does not scatter breakpoints.
+    let drag_key = ui.id().with(("lane_val_at", id.0, index));
+    let at = ui.data(|d| d.get_temp::<Samples>(drag_key)).unwrap_or_else(|| app.position());
+    let v = static_value(track, &lane.param, at);
     if is_toggle(track, &lane.param) {
         // A power-style toggle for on/off parameters.
-        let on = v > 0.5;
+        let on = toggle_on(&lane.param, v);
         let resp = ui.interact(r, ui.id().with(("lane_val", id.0, index)), Sense::click());
         p.rect(r, 3.0, if on { t.accent } else { t.button }, Stroke::new(1.0, t.border), StrokeKind::Inside);
         let c = r.center();
@@ -503,7 +592,7 @@ fn value_box(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: &ShownLane, i
         p.circle_stroke(c, rad, Stroke::new(1.4, col));
         p.line_segment([c + vec2(0.0, -rad - 1.0), c + vec2(0.0, -1.0)], Stroke::new(1.6, col));
         if resp.on_hover_text(value_text(track, &lane.param, v)).clicked() {
-            set_value(app, track, &lane.param, if on { 0.0 } else { 1.0 }, false);
+            set_value(app, track, &lane.param, toggle_value(&lane.param, !on), at, false);
         }
         return;
     }
@@ -520,14 +609,18 @@ fn value_box(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: &ShownLane, i
         t.counter_text,
     );
     let resp = ui.interact(field, ui.id().with(("lane_val", id.0, index)), Sense::click_and_drag());
+    if resp.drag_started() {
+        ui.data_mut(|d| d.insert_temp(drag_key, at));
+    }
     if resp.dragged() {
         let per_px = (range.1 - range.0) / 200.0 * if ui.input(|i| i.modifiers.shift) { 0.1 } else { 1.0 };
         let dy = -resp.drag_delta().y;
         if dy != 0.0 {
-            set_value(app, track, &lane.param, (v + dy * per_px).clamp(range.0, range.1), true);
+            set_value(app, track, &lane.param, (v + dy * per_px).clamp(range.0, range.1), at, true);
         }
     }
     if resp.drag_stopped() {
+        ui.data_mut(|d| d.remove::<Samples>(drag_key));
         app.engine.end_merge();
     }
     if resp.hovered() {
@@ -546,13 +639,13 @@ fn value_box(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: &ShownLane, i
         p.add(egui::Shape::convex_polygon(vec![c + vec2(-3.5, b * 0.6), c + vec2(3.5, b * 0.6), c + vec2(0.0, a * 0.6)], col, Stroke::NONE));
         if resp.clicked() {
             let next = (v + if up { step } else { -step }).clamp(range.0, range.1);
-            set_value(app, track, &lane.param, next, false);
+            set_value(app, track, &lane.param, next, at, false);
         }
     }
 }
 
-fn set_value(app: &mut SoundApp, track: &Track, p: &AutoParam, v: f32, merged: bool) {
-    let (cmd, params) = set_command(track.id, p, v);
+fn set_value(app: &mut SoundApp, track: &Track, p: &AutoParam, v: f32, at: Samples, merged: bool) {
+    let (cmd, params) = set_command(track.id, p, v, at);
     if merged {
         let key = format!("lane_value:{}:{}", track.id.0, p.id());
         let _ = app.engine.execute_merged(cmd, &params, &key);
@@ -733,6 +826,63 @@ mod tests {
         assert_eq!(changed_param(&before, 1, &now), None);
         before.insert((1, AutoParam::Pan(0)), 0.5);
         assert_eq!(changed_param(&before, 1, &now), Some(AutoParam::Pan(0)));
+    }
+
+    fn instrument() -> Track {
+        Track::new(TrackId(2), "I", TrackKind::Instrument, ChannelFormat::Stereo, [1, 2, 3])
+    }
+
+    #[test]
+    fn midi_controllers_only_on_instrument_and_midi_tracks() {
+        assert!(track_params(&track()).iter().all(|(p, _)| !p.is_midi()), "audio track has no MIDI entries");
+        assert!(all_controllers(&track()).is_empty());
+        let ids: Vec<String> = track_params(&instrument()).into_iter().filter(|(p, _)| p.is_midi()).map(|(p, _)| p.id()).collect();
+        assert_eq!(ids, ["cc1", "cc11", "cc64", "pitch_bend", "pressure"]);
+        assert_eq!(all_controllers(&instrument()).len(), 128);
+        let mut midi_track = instrument();
+        midi_track.kind = TrackKind::Midi;
+        assert_eq!(midi_entries(&midi_track).len(), 5);
+        assert!(all_values(&instrument()).iter().any(|(p, _)| *p == AutoParam::MidiCc(64)), "follow sees MIDI params");
+    }
+
+    #[test]
+    fn controller_search_matches_names_and_numbers() {
+        let e = track_params(&instrument());
+        assert_eq!(filter_entries(&e, "sus").len(), 1);
+        assert_eq!(filter_entries(&e, "11").len(), 1);
+        assert_eq!(filter_entries(&all_controllers(&instrument()), "sus").iter().map(|(p, _)| p.id()).collect::<Vec<_>>(), ["cc64"]);
+    }
+
+    #[test]
+    fn static_value_reads_the_lane_for_midi_controllers() {
+        let mut t = instrument();
+        let cc = AutoParam::MidiCc(11);
+        assert_eq!(static_value(&t, &cc, 500), 127.0, "no lane: the controller default");
+        t.lane_mut(&cc).set_point(0, 0.0);
+        t.lane_mut(&cc).set_point(1000, 100.0);
+        assert!((static_value(&t, &cc, 500) - 50.0).abs() < 1e-3, "reads the lane at the position");
+        assert_eq!(static_value(&t, &cc, 5000), 100.0);
+        let bend = AutoParam::PitchBend;
+        t.lane_mut(&bend).set_point(0, -4000.0);
+        assert_eq!(static_value(&t, &bend, 0), -4000.0);
+    }
+
+    #[test]
+    fn midi_toggles_write_zero_or_one_twenty_seven() {
+        let sus = AutoParam::MidiCc(64);
+        assert!(is_toggle(&instrument(), &sus));
+        assert_eq!(toggle_value(&sus, true), 127.0);
+        assert_eq!(toggle_value(&sus, false), 0.0);
+        assert_eq!(toggle_value(&AutoParam::Mute, true), 1.0);
+        let mut t = instrument();
+        assert!(!toggle_on(&sus, static_value(&t, &sus, 0)));
+        t.lane_mut(&sus).set_point(0, 127.0);
+        assert!(toggle_on(&sus, static_value(&t, &sus, 10)));
+        t.lane_mut(&sus).set_point(0, 63.0);
+        assert!(!toggle_on(&sus, 63.0), "below 64 is off, as the mixer reads it");
+        let (cmd, p) = set_command(t.id, &sus, 127.0, 4800);
+        assert_eq!((cmd, p["at"].as_i64(), p["value"].as_f64()), ("automation.midi_value", Some(4800), Some(127.0)));
+        assert_eq!(step_of(&t, &AutoParam::MidiCc(1), (0.0, 127.0)), 1.0);
     }
 
     #[test]

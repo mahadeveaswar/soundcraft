@@ -4,7 +4,7 @@ use egui::{Event, Modifiers, PointerButton, Pos2, Rect, pos2, vec2};
 use egui_kittest::Harness;
 use serde_json::json;
 use soundcraft_model::{AutoParam, TrackId};
-use soundcraft_ui_egui::auto_lanes_ui::{lane_geometry, total_height};
+use soundcraft_ui_egui::auto_lanes_ui::{header_layout, lane_geometry, total_height};
 use soundcraft_ui_egui::{Services, SoundApp};
 
 fn harness() -> Harness<'static, SoundApp> {
@@ -170,4 +170,28 @@ fn old_sessions_without_lanes_draw_normally() {
     let h = harness();
     assert!(h.state().engine.session().tracks.iter().all(|t| t.shown_lanes.is_empty()));
     assert!(h.state().edit_layout.rows.len() >= 8);
+}
+
+#[test]
+fn the_sustain_toggle_writes_127_and_0() {
+    let mut h = harness();
+    let t = id(&h, "Keys").0;
+    h.state_mut().run("automation.lane_show", json!({"track": t, "param": "cc64"})).unwrap();
+    h.run_steps(4);
+    let track = h.state().engine.session().track(TrackId(t)).unwrap().clone();
+    let row = h.state().edit_layout.rows.iter().find(|(i, _)| *i == t).unwrap().1;
+    let tl = h.state().edit_layout.timeline;
+    let geom = lane_geometry(Rect::from_min_max(pos2(row[0], row[1]), pos2(row[2], row[3])), tl[0], &track)[0];
+    let value = header_layout(geom.header).value;
+    let cc64 = AutoParam::MidiCc(64);
+    let last = |h: &Harness<SoundApp>| {
+        h.state().engine.session().track(TrackId(t)).unwrap().lane(&cc64).map(|l| l.points.iter().map(|p| p.value).collect::<Vec<_>>())
+    };
+    click(&mut h, value.center(), PointerButton::Primary);
+    assert_eq!(last(&h), Some(vec![127.0]), "first click turns sustain on");
+    click(&mut h, value.center(), PointerButton::Primary);
+    assert_eq!(last(&h), Some(vec![0.0]), "second click turns it off at the same position");
+    // Audio tracks keep refusing MIDI lanes.
+    let kick = id(&h, "Kick");
+    assert!(h.state_mut().run("automation.lane_show", json!({"track": kick.0, "param": "cc64"})).is_err());
 }

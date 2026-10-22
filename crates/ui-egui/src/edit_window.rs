@@ -1909,7 +1909,7 @@ fn crossfade_partner<'a>(track: &'a Track, clip: &Clip) -> Option<&'a Clip> {
 pub(crate) fn draw_automation(painter: &egui::Painter, s: &Session, track: &Track, p: &AutoParam, tl: Rect, lane: Rect) {
     let t = Tokens::current();
     let range = lane_range(track, p);
-    let def = crate::auto_lanes_ui::static_value(track, p);
+    let def = crate::auto_lanes_ui::static_value(track, p, 0);
     let yv = |v: f32| auto_y(lane, range, v);
     let lanes = track.lane(p);
     let pts: Vec<(f32, f32)> = match lanes {
@@ -1919,6 +1919,12 @@ pub(crate) fn draw_automation(painter: &egui::Painter, s: &Session, track: &Trac
             for pt in &l.points {
                 let x = x_of(s, tl, pt.at);
                 if x > lane.min.x && x < lane.max.x {
+                    // Stepped parameters (mute, switches) hold their value until the next point.
+                    if p.stepped()
+                        && let Some(&(_, y)) = v.last()
+                    {
+                        v.push((x, y));
+                    }
                     v.push((x, yv(pt.value)));
                 }
             }
