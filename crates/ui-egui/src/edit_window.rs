@@ -526,7 +526,10 @@ fn draw_rulers(app: &mut SoundApp, ui: &mut Ui, area: Rect, tl: Rect, rulers: &[
         let lab = Rect::from_min_max(pos2(area.min.x, y0), pos2(area.min.x + app.edit_layout.header_base.max(1.0), y0 + h));
         y0 += h;
         let painter = ui.painter().with_clip_rect(row);
-        ui.painter().text(pos2(lab.max.x - 12.0, lab.center().y), Align2::RIGHT_CENTER, ruler_label(id), bold(11.0), t.ruler_text);
+        let font = bold(11.0);
+        let text_w = |txt: &str| ui.painter().layout_no_wrap(txt.to_owned(), font.clone(), t.ruler_text).size().x;
+        let (label, right) = fit_ruler_label(ruler_label(id), lab.min.x, lab.max.x, y0 - h - area.min.y, h, text_w);
+        ui.painter().text(pos2(right, lab.center().y), Align2::RIGHT_CENTER, label, font.clone(), t.ruler_text);
         let fmt = TimeFormat::from_id(id);
         match id.as_str() {
             "tempo" => {
@@ -805,9 +808,39 @@ fn column_titles(ui: &Ui, rulers: Rect, cols: &[Column], base: f32) {
     }
 }
 
+/// The Views button's rect, relative to the top-left corner of the ruler area.
+fn views_rect_rel() -> Rect {
+    Rect::from_min_size(pos2(6.0, 5.0), vec2(50.0, 18.0))
+}
+
+/// The text and right edge (x, same space as `lab_min_x`) for a ruler label that never touches the
+/// Views button: the usual 12 pt margin if it fits, else a 4 pt margin, else the text is cut with
+/// an ellipsis. `row_top_rel` is the ruler row's top relative to the ruler area, `text_w` measures.
+fn fit_ruler_label(text: &str, lab_min_x: f32, lab_max_x: f32, row_top_rel: f32, row_h: f32, text_w: impl Fn(&str) -> f32) -> (String, f32) {
+    let btn = views_rect_rel();
+    let hits_button = row_top_rel < btn.max.y && row_top_rel + row_h > btn.min.y;
+    let left = if hits_button { lab_min_x + btn.max.x + 4.0 } else { lab_min_x + 2.0 };
+    for margin in [12.0, 4.0] {
+        let right = lab_max_x - margin;
+        if right - text_w(text) >= left {
+            return (text.to_owned(), right);
+        }
+    }
+    let right = lab_max_x - 4.0;
+    let mut chars: Vec<char> = text.chars().collect();
+    while !chars.is_empty() {
+        chars.pop();
+        let cut: String = chars.iter().collect::<String>() + "\u{2026}";
+        if right - text_w(&cut) >= left {
+            return (cut, right);
+        }
+    }
+    (String::new(), right)
+}
+
 /// The Edit window view selector: which columns sit beside the track headers.
 fn views_button(app: &mut SoundApp, ui: &mut Ui, rulers: Rect) {
-    let r = Rect::from_min_size(rulers.min + vec2(6.0, 5.0), vec2(50.0, 18.0));
+    let r = views_rect_rel().translate(rulers.min.to_vec2());
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
     let resp = crate::widgets::selector_box(&mut child, r.width(), r.height(), "Views", Tokens::current().text);
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, child.is_enabled(), "Views"));
@@ -4112,6 +4145,61 @@ mod tests {
             click_with(&mut h, b, egui::Modifiers::ALT);
             assert_eq!(volume_points(&h, track), before[..1], "{tool}");
             assert_eq!(h.state().engine.session().track(track).unwrap().clips(), clips.as_slice(), "{tool}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod ruler_label_tests {
+    use super::*;
+
+    fn fake_w(t: &str) -> f32 {
+        t.chars().count() as f32 * 6.4
+    }
+
+    #[test]
+    fn labels_never_overlap_the_views_button_at_any_width() {
+        let btn = views_rect_rel();
+        let ids = [
+            "bars_beats",
+            "min_secs",
+            "timecode",
+            "feet_frames",
+            "samples",
+            "tempo",
+            "meter",
+            "markers",
+            "key",
+            "chords",
+            "timecode2",
+            "markers2",
+            "markers3",
+        ];
+        let mut w = 112.0;
+        while w <= 640.0 {
+            for id in ids {
+                for k in 0..4 {
+                    let top = 3.0 + k as f32 * RULER_H;
+                    let (txt, right) = fit_ruler_label(ruler_label(id), 0.0, w, top, RULER_H, fake_w);
+                    if txt.is_empty() {
+                        continue;
+                    }
+                    let label = Rect::from_min_max(pos2(right - fake_w(&txt), top), pos2(right, top + RULER_H));
+                    assert!(!label.intersects(btn), "{id} row {k} width {w}: {label:?} vs {btn:?}");
+                    assert!(label.min.x >= 0.0 && right <= w, "{id} outside the column at {w}");
+                }
+            }
+            w += 4.0;
+        }
+    }
+
+    #[test]
+    fn default_width_layout_is_unchanged() {
+        for (id, k) in [("bars_beats", 0), ("min_secs", 1), ("tempo", 2), ("meter", 3), ("markers", 4)] {
+            let top = 3.0 + k as f32 * RULER_H;
+            let (txt, right) = fit_ruler_label(ruler_label(id), 0.0, HEADER_W, top, RULER_H, fake_w);
+            assert_eq!(txt, ruler_label(id));
+            assert_eq!(right, HEADER_W - 12.0);
         }
     }
 }

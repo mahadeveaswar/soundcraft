@@ -95,4 +95,14 @@ mod tests {
         assert_eq!(clamp(300.0, 100.0, false), MIN_COMPACT);
         assert_eq!(clamp(f32::NAN, 2000.0, false), HEADER_W);
     }
+
+    #[test]
+    fn stored_default_and_the_constant_give_bit_identical_widths() {
+        for classic in [false, true] {
+            for canvas in [900.0_f32, 1600.0, 3000.0] {
+                let stored = 136.0_f64 as f32; // what `ui.header_width {value: 136}` stores
+                assert_eq!(clamp(stored, canvas, classic).to_bits(), clamp(HEADER_W, canvas, classic).to_bits());
+            }
+        }
+    }
 }
