@@ -281,6 +281,11 @@ fn ripple(s: &mut Session, track: TrackId, from: Samples, by: Samples) -> (Sampl
     moved
 }
 
+/// Parameters of the track's locked automation lanes: bulk edits skip these.
+pub(crate) fn locked_params(t: &Track) -> Vec<AutoParam> {
+    t.shown_lanes.iter().filter(|l| l.locked).map(|l| l.param.clone()).collect()
+}
+
 /// Automation Follows Edit for a Shuffle ripple (`moved` from [`ripple`]): the points from `from`
 /// up to the lock move with the clips, and when material closes up the points in the span that
 /// goes away go too.
@@ -289,7 +294,8 @@ fn follow_automation(s: &mut Session, track: TrackId, from: Samples, (by, lock):
         return;
     }
     let Some(t) = s.track_mut(track) else { return };
-    for l in &mut t.automation {
+    let locked = locked_params(t);
+    for l in t.automation.iter_mut().filter(|l| !locked.contains(&l.param)) {
         if by < 0 {
             l.clear_range(from.saturating_add(by), from);
         }
@@ -308,7 +314,8 @@ fn take_automation(s: &mut Session, track: TrackId, start: Samples, end: Samples
         return out;
     }
     let Some(t) = s.track_mut(track) else { return out };
-    for l in &mut t.automation {
+    let locked = locked_params(t);
+    for l in t.automation.iter_mut().filter(|l| !locked.contains(&l.param)) {
         let taken = l.points.iter().filter(|p| p.at >= start && p.at < end);
         out.extend(taken.map(|p| (l.param.clone(), AutomationPoint { at: p.at.saturating_sub(origin), value: p.value })));
         l.clear_range(start, end);
@@ -318,7 +325,8 @@ fn take_automation(s: &mut Session, track: TrackId, start: Samples, end: Samples
 
 fn put_automation(s: &mut Session, track: TrackId, origin: Samples, points: &[(AutoParam, AutomationPoint)]) {
     let Some(t) = s.track_mut(track) else { return };
-    for (param, p) in points {
+    let locked = locked_params(t);
+    for (param, p) in points.iter().filter(|(param, _)| !locked.contains(param)) {
         t.lane_mut(param).set_point(origin.saturating_add(p.at), p.value);
     }
 }
