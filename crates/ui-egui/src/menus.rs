@@ -75,6 +75,19 @@ pub const UI_COMMANDS: &[(&str, &str, &str, Option<&str>)] = &[
     ("ui.bounce_dialog", "Bounce Mix…", "", None),
     ("ui.set", "Set UI State", "", None),
     ("ui.theme", "Appearance", "", None),
+    ("ui.theme_get", "Get Theme", "", None),
+    ("ui.theme_list", "List Themes", "", None),
+    ("ui.theme_set_color", "Set Theme Colour", "", None),
+    ("ui.theme_set_param", "Set Theme Setting", "", None),
+    ("ui.theme_set_track_color", "Set Default Track Colour", "", None),
+    ("ui.theme_reset", "Reset Theme", "", None),
+    ("ui.theme_load", "Load Theme", "", None),
+    ("ui.theme_save", "Save Theme", "", None),
+    ("ui.theme_rename", "Rename Theme", "", None),
+    ("ui.theme_delete", "Delete Theme", "", None),
+    ("ui.theme_duplicate", "Duplicate Theme", "", None),
+    ("ui.theme_export", "Export Theme", "", None),
+    ("ui.theme_import", "Import Theme", "", None),
     ("ui.menu_layout", "Menu Layout", "", None),
     ("ui.toolbar_style", "Toolbar Style", "", None),
     ("ui.header_style", "Track Header Style", "", None),
@@ -567,6 +580,9 @@ pub fn run_ui_command(app: &mut SoundApp, id: &str, p: &Value) -> Option<Result<
     if matches!(id, "ui.dock" | "ui.dock.reset") {
         return Some(crate::docking::command(app, id == "ui.dock.reset", p));
     }
+    if id.starts_with("ui.theme_") {
+        return Some(crate::theme_cmds::run(app, id, p));
+    }
     if id == "ui.header_style" {
         return Some(crate::track_header_compact::command(app, p));
     }
@@ -750,7 +766,7 @@ pub fn run_ui_command(app: &mut SoundApp, id: &str, p: &Value) -> Option<Result<
             let Some(mode) = crate::theme::ThemeMode::parse(mode) else {
                 return Some(Err(format!("unknown theme `{mode}` (system, light, dark or midnight)")));
             };
-            app.ui.theme = mode;
+            crate::theme_cmds::select_builtin(app, mode);
             json!({"mode": mode.id()})
         }
         "ui.set" => match serde_json::to_value(&app.ui) {

@@ -37,7 +37,7 @@ pub fn draw(ui: &Ui, ruler: Rect, roll: Rect, s: &Session, clip: &RulerClip, x_o
         let band = Rect::from_min_max(pos2(x0, band_y.min.y + 1.0), pos2(x1, band_y.max.y));
         rp.rect_filled(band, 0.0, clip.color.gamma_multiply(0.8));
         let ink =
-            if clip.color.r() as u32 + clip.color.g() as u32 + clip.color.b() as u32 > 420 { Color32::from_rgb(20, 20, 20) } else { Color32::WHITE };
+            if clip.color.r() as u32 + clip.color.g() as u32 + clip.color.b() as u32 > 420 { Tokens::current().ink_dark } else { Color32::WHITE };
         rp.with_clip_rect(band).text(pos2(band.min.x + 4.0, band.center().y), Align2::LEFT_CENTER, clip.name, bold(9.5), ink);
     }
     let numbers_y = ruler.min.y + BAND_H + (ruler.height() - BAND_H) / 2.0;

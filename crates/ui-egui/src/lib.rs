@@ -43,6 +43,8 @@ pub mod score_editor;
 pub mod shortcuts;
 pub mod spot;
 pub mod theme;
+pub mod theme_cmds;
+pub mod theme_doc;
 pub mod toolbar;
 pub mod toolbar_layout;
 mod toolbar_standard;
@@ -149,6 +151,10 @@ pub struct UiState {
     pub configurations: Vec<(String, Value)>,
     /// Appearance (`ui.theme`): dark by default, light or follow the system on request.
     pub theme: theme::ThemeMode,
+    /// Name of the active theme (a built-in or a saved user theme), if any.
+    pub theme_name: Option<String>,
+    /// The working copy of the active custom theme, so unsaved edits survive a restart.
+    pub custom_theme: Option<theme_doc::ThemeDoc>,
     /// Edit-window track header look (`ui.header_style`): compact by default, classic on request.
     pub header_style: track_header_compact::HeaderStyle,
     /// Width of the Edit window's track header column in points (`ui.header_width`).
@@ -237,6 +243,8 @@ impl Default for UiState {
             workspace_dir: String::new(),
             configurations: Vec::new(),
             theme: theme::ThemeMode::Dark,
+            theme_name: None,
+            custom_theme: None,
             header_style: track_header_compact::HeaderStyle::default(),
             header_w: edit_window::HEADER_W,
             toolbar_style: toolbar_layout::ToolbarStyle::default(),
@@ -263,6 +271,8 @@ pub struct Services {
     pub pick_folder: Option<Box<dyn Fn(&str) -> Option<String>>>,
     /// Free space in bytes on the volume holding a path (set by the desktop app; absent in tests and on the web).
     pub free_space: Option<Box<dyn Fn(&std::path::Path) -> Option<u64>>>,
+    /// Folder of the user's theme files (`themes/*.json`); `None` keeps user themes in memory only.
+    pub themes_dir: Option<std::path::PathBuf>,
 }
 
 /// File-system-safe folder name for a plugin id (`clap:com.x.y` → `clap_com.x.y`).
@@ -376,7 +386,8 @@ pub struct SoundApp {
     fonts_ready: bool,
     fonts_installed: bool,
     /// The palette last applied to the context (light?), so visuals are set only on a change.
-    theme_applied: Option<u8>,
+    theme_applied: Option<(u8, u32)>,
+    pub(crate) theme_state: theme_cmds::ThemeState,
     /// Last panel host context, used to cancel renderer-owned gestures on explicit replacement.
     pub(crate) docking_context: Option<egui::Context>,
     /// Transport simulation when there is no player (tests, offscreen renders).
@@ -460,6 +471,7 @@ impl SoundApp {
             fonts_ready: false,
             fonts_installed: false,
             theme_applied: None,
+            theme_state: theme_cmds::ThemeState::default(),
             docking_context: None,
             sim: None,
             record_hint: None,
@@ -1227,10 +1239,12 @@ impl SoundApp {
                 ctx.request_repaint();
             }
         }
+        theme_cmds::frame(self);
         let palette = theme::wants_palette(ctx, self.ui.theme);
-        if self.theme_applied != Some(palette) || theme::palette() != palette {
+        let applied = (palette, if palette == theme::PALETTE_CUSTOM { theme::custom_generation() } else { 0 });
+        if self.theme_applied != Some(applied) || theme::palette() != palette {
             theme::apply_palette(ctx, palette);
-            self.theme_applied = Some(palette);
+            self.theme_applied = Some(applied);
         }
         let now = ctx.input(|i| i.time);
         let dt = self.last_frame.replace(now).map_or(1.0 / 60.0, |t| (now - t) as f32).clamp(0.0, 0.25);

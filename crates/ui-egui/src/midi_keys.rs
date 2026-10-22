@@ -5,8 +5,6 @@ use crate::theme::{Tokens, regular};
 use egui::{Align2, Color32, Painter, Rect, pos2, vec2};
 use soundcraft_midi::Note;
 
-const ACCENT: Color32 = Color32::from_rgb(255, 205, 80);
-
 /// Which of the 128 pitches have a note sounding at `tick` (a note sounds from its start up to
 /// but not including its end).
 pub fn active_pitches(notes: &[Note], tick: i64) -> [bool; 128] {
@@ -29,21 +27,21 @@ pub const OUT_OF_SCALE: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 96);
 pub fn row_fill(black: bool, active: bool) -> Color32 {
     let t = Tokens::current();
     let base = if black { t.roll_row_black } else { t.roll_row_white };
-    if active { base.lerp_to_gamma(ACCENT, 0.16) } else { base }
+    if active { base.lerp_to_gamma(Tokens::current().roll_accent, 0.16) } else { base }
 }
 
 /// One key of the gutter at vertical position `y`. `key_w` is the full gutter width.
 pub fn draw_key(p: &Painter, gutter_left: f32, key_w: f32, y: f32, row_h: f32, pitch: i32, black: bool, active: bool) {
     let key = Rect::from_min_size(pos2(gutter_left, y), vec2(key_w - 2.0, row_h - 1.0));
-    let base = if black { Color32::from_rgb(20, 20, 20) } else { Color32::from_rgb(225, 225, 225) };
-    p.rect_filled(key, 1.0, if active { base.lerp_to_gamma(ACCENT, 0.85) } else { base });
+    let base = if black { Tokens::current().roll_key_black } else { Tokens::current().roll_key_white };
+    p.rect_filled(key, 1.0, if active { base.lerp_to_gamma(Tokens::current().roll_accent, 0.85) } else { base });
     if pitch.rem_euclid(12) == 0 && (0..=127).contains(&pitch) && row_h >= 7.0 {
         p.text(
             pos2(key.max.x - 3.0, key.center().y),
             Align2::RIGHT_CENTER,
             soundcraft_midi::note_name(pitch as u8),
             regular(8.0),
-            Color32::from_rgb(40, 40, 40),
+            Tokens::current().roll_key_label,
         );
     }
 }

@@ -259,7 +259,7 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui, rect: Rect, cid: ClipId, notes: &[N
         app.midi.info_error = error;
     }
     if let Some(e) = &app.midi.info_error {
-        child.label(egui::RichText::new(e).size(10.0).color(egui::Color32::from_rgb(230, 120, 100)));
+        child.label(egui::RichText::new(e).size(10.0).color(Tokens::current().error_text));
     }
 }
 

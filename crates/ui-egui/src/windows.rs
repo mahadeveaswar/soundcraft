@@ -2,7 +2,7 @@
 
 use crate::SoundApp;
 use crate::theme::{Tokens, mono, rgb};
-use egui::{Color32, Sense, vec2};
+use egui::{Sense, vec2};
 use serde_json::json;
 use soundcraft_model::{AutomationMode, ClipContent};
 use soundcraft_playback::AudioConfig;
@@ -279,7 +279,7 @@ fn midi_keyboard(app: &mut SoundApp, ctx: &egui::Context) {
         for p in base..base + 48 {
             if !matches!(p % 12, 1 | 3 | 6 | 8 | 10) {
                 let kr = egui::Rect::from_min_size(egui::pos2(r.min.x + wi as f32 * w, r.min.y), vec2(w - 1.0, r.height()));
-                ui.painter().rect_filled(kr, 2.0, Color32::from_rgb(235, 235, 235));
+                ui.painter().rect_filled(kr, 2.0, Tokens::current().piano_key_white);
                 if resp.clicked() && pos.is_some_and(|q| kr.contains(q)) {
                     clicked = Some(p);
                 }
@@ -290,7 +290,7 @@ fn midi_keyboard(app: &mut SoundApp, ctx: &egui::Context) {
         for p in base..base + 48 {
             if matches!(p % 12, 1 | 3 | 6 | 8 | 10) {
                 let kr = egui::Rect::from_min_size(egui::pos2(r.min.x + wi as f32 * w - w * 0.3, r.min.y), vec2(w * 0.6, r.height() * 0.6));
-                ui.painter().rect_filled(kr, 2.0, Color32::from_rgb(20, 20, 20));
+                ui.painter().rect_filled(kr, 2.0, Tokens::current().piano_key_black);
                 if resp.clicked() && pos.is_some_and(|q| kr.contains(q)) {
                     clicked = Some(p);
                 }
