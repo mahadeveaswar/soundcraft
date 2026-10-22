@@ -112,6 +112,9 @@ where things are.
   crossfades in five shapes, drawn straight from the clip corners; playlists with comping lanes;
   clip gain lines; edit groups; single-key Commands Focus shortcuts; trackpad scrolling that
   follows your fingers and pinch-to-zoom around the pointer; undo for everything.
+- **Looks:** an 84-colour track palette (with recent colours and hex entry), glossy rounded clips and
+  track headers with a Settings switch and corner radius, a per-track Inspector, and a bottom
+  Mixer pane that shares the lower zone with the MIDI editor as Editor / Mixer tabs.
 - **Mixing:** fader and pan with automation, pre/post sends, busses, aux inputs, master faders,
   VCA masters, routing folders, solo modes, mute and solo groups, phase invert and trim, clip
   effects, and automatic plugin delay compensation.

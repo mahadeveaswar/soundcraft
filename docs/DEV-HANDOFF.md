@@ -33,13 +33,12 @@ open questions for the user: <list>
 ```
 Current entry:
 ```
-last put-down: 2026-10-22, on windows
-branches pushed: custom-windows and custom-release at 054045f (the last commit before this state block; a docs commit may sit on top)
-tests run on that machine: ui-egui 407 passed, engine 344 passed (the test process then exits with an access violation: known Windows flake), model 38 passed, mix and playback passed earlier in the day, cargo xtask layers ok, fmt and clippy -D warnings clean, name check clean. Known timing flakes: engine autosave test and ui recovery test (pass when re-run alone).
-not verified on macOS: everything at runtime. First compile on macOS, Retina rendering, CoreAudio, note audition and sound, the native menu bar, Audio Unit and VST3 hosting, Cmd and Option labels, trackpad gestures, file dialogs, autosave folder.
-not independently reviewed yet: batches 4 to 7 (Midnight theme, compact header, bottom transport bar, automation lanes, centred transport layout, master panel, resizable header). An Opus review and 37 documentation fixes are the first tasks on the Mac (see ROADMAP.md and DOC-AUDIT.md in the notes repository).
-in progress / next tasks: nothing in progress. Next: top bar and menus (TB-1..9, native menu layer best done on the Mac), the User Interface colour window (U1..U6), then templates and the main-window Track Inspector. Details: ORCHESTRATION.md and ROADMAP.md in the notes repository.
-open questions for the user: none pending except deleting the old remote `custom` branch (confirmed at the push).
+last put-down: 2026-10-22, on macos (session: Inspector, track palette, glossy clips, Mixer pane)
+branches pushed: nothing pushed from this session. Work is on the local topic branch mac/p10-b (based on custom-mac; code commit b3c098e plus a docs commit on top), to be merged into custom-mac by the owner.
+tests run on that machine: cargo test --workspace --no-fail-fast 1554 passed, 0 failed; fmt, clippy -D warnings, cargo xtask layers and cargo xtask parity (77.5 %, 397/512) clean; name check clean. Headless kittest and unit tests only: the app was never launched.
+not verified in the real app: gloss and corner look in Dark, Light and Midnight at small and large track heights and zoomed far out; selected and muted clip readability; no gaps between adjacent rounded clips; palette popup and its Apply to clips button; Colour... header menu item; Inspector at 220 pt width and inline rename focus; Mixer pane tabbed with the MIDI editor (resize, 60+ track horizontal scroll, meters animating, compact mode, selection sync); frame time with about 1000 visible clips (more than 1 ms worse than before is a fail). Not verified on Windows: everything at runtime.
+in progress / next tasks: nothing in progress. Next: review of the P10 work, then the later items (Inspector EQ curve view, MIDI track transpose/velocity/channel, Mixer pane inside the Mix window workspace, side-by-side Editor and Mixer docking). Details in the notes repository (plans/status/RESUME-NEXT.md, plans/MAC-VERIFY.md, plans/10-track-inspector-palette-gloss-plan.md).
+open questions for the user: none pending.
 ```
 
 ## 3. Put-down checklist (the machine you are leaving)
@@ -92,3 +91,4 @@ Merge a platform branch into `custom-release` only when all hold, then tag it:
 
 ## 9. Session format compatibility
 - Sessions that contain MIDI controller automation lanes (MC1: `cc0`..`cc127`, `pitch_bend`, `pressure`) do not open in a build without commit 831ce28, because the older `AutoParam` enum rejects the unknown lane ids. Pull `custom-release` on the other machine before opening such a session there.
+- The colour palette, the Inspector, the gloss tokens (`clip_gloss`, `clip_corner`, `header_corner`) and the Mixer pane (`show_mixer_panel`, `mixer_compact`, dock panel `mixer`) change no saved session format: track and clip colours stay plain RGB, and the new UI preference fields (`recent_track_colors`, `inspector_collapsed`, `show_inspector`, `show_mixer_panel`, `mixer_compact`) are serde defaults, so older preference files still load. A UI preference file saved with the `mixer` panel in its layout was not tried in an older build (unverified).

@@ -76,7 +76,7 @@ fn waveforms(ctx: &egui::Context, app: &mut SoundApp, name: &str, below: f32) ->
     let row = app.edit_layout.rows.iter().find(|(i, _)| *i == id).unwrap().1;
     let [x0, _, x1, _] = app.edit_layout.timeline;
     let lane = Rect::from_min_max(egui::pos2(x0, row[1] + below), egui::pos2(x1, row[3]));
-    shapes.iter().filter(|c| matches!(&c.shape, Shape::Mesh(m) if m.vertices.iter().any(|v| lane.contains(v.pos)))).count()
+    shapes.iter().filter(|c| matches!(&c.shape, Shape::Mesh(m) if !soundcraft_ui_egui::clip_paint::is_gloss_mesh(m) && m.vertices.iter().any(|v| lane.contains(v.pos)))).count()
 }
 
 #[test]

@@ -20,6 +20,7 @@ pub enum Panel {
     Meter,
     Loudness,
     Inspector,
+    Mixer,
 }
 
 impl Panel {
@@ -35,6 +36,7 @@ impl Panel {
         Self::Meter,
         Self::Loudness,
         Self::Inspector,
+        Self::Mixer,
     ];
     pub fn id(self) -> &'static str {
         match self {
@@ -49,6 +51,7 @@ impl Panel {
             Self::Meter => "meter",
             Self::Loudness => "loudness",
             Self::Inspector => "inspector",
+            Self::Mixer => "mixer",
         }
     }
     pub fn label(self) -> &'static str {
@@ -64,6 +67,7 @@ impl Panel {
             Self::Meter => "Meters",
             Self::Loudness => "Loudness",
             Self::Inspector => "Inspector",
+            Self::Mixer => "Mixer",
         }
     }
     /// The `zone` name of `ui.dock` `move` that puts the panel back on its default side.
@@ -81,11 +85,19 @@ impl Panel {
             Self::Canvas => Zone::Right,
             Self::Tracks => Zone::Left,
             Self::Clips => Zone::Right,
-            Self::Midi => Zone::Bottom,
+            Self::Midi | Self::Mixer => Zone::Bottom,
             Self::Memory => Zone::Bottom,
             Self::History => Zone::Right,
             Self::Master | Self::Meter | Self::Loudness => Zone::Right,
             Self::Visibility | Self::Inspector => Zone::Left,
+        }
+    }
+    /// The panel this one shares the lower zone with as an exclusive tab.
+    pub(crate) fn lower_partner(self) -> Option<Self> {
+        match self {
+            Self::Midi => Some(Self::Mixer),
+            Self::Mixer => Some(Self::Midi),
+            _ => None,
         }
     }
     fn parse(id: &str) -> Result<Self, String> {
@@ -188,9 +200,11 @@ impl Workspace {
         self.validate()?;
         if self.layout.contains(&Panel::Clips)
             || self.layout.contains(&Panel::Midi)
-            || [Panel::Master, Panel::Visibility, Panel::Meter, Panel::Loudness, Panel::Inspector].iter().any(|p| self.layout.contains(p))
+            || [Panel::Master, Panel::Visibility, Panel::Meter, Panel::Loudness, Panel::Inspector, Panel::Mixer]
+                .iter()
+                .any(|p| self.layout.contains(p))
         {
-            return Err("Clips, MIDI, Master, Visibility, Meter, Loudness and Inspector panels belong to the Edit window".into());
+            return Err("Clips, MIDI, Master, Visibility, Meter, Loudness, Inspector and Mixer panels belong to the Edit window".into());
         }
         Ok(())
     }
@@ -229,6 +243,20 @@ impl Workspace {
             // The other members of a floating group may have been closed too.
             saved.anchor = None;
             saved.placement = Placement::Tab { before: None };
+        }
+        // The Editor and the Mixer share the lower zone as exclusive tabs: opening one joins the
+        // other's tab group and shows it in place of the other.
+        if let Some(other) = panel.lower_partner()
+            && next.layout.contains(&other)
+            && !next.layout.floating.iter().any(|group| group.panels.contains(&other))
+        {
+            next.layout
+                .apply_with_permissions(Action::OpenAt { panel, anchor: other, placement: Placement::Tab { before: None } }, permissions)
+                .and_then(|()| next.layout.apply_with_permissions(Action::Activate { panel }, permissions))
+                .map_err(|error| error.to_string())?;
+            next.validate()?;
+            *self = next;
+            return Ok(());
         }
         let restored = location.as_ref().is_some_and(|location| next.layout.restore(panel, location).is_ok());
         if !restored {
@@ -345,6 +373,7 @@ fn sync(workspace: &mut Workspace, app: &crate::SoundApp, edit: bool) -> Result<
         workspace.set_visible(Panel::Meter, app.ui.show_meter_panel)?;
         workspace.set_visible(Panel::Loudness, app.ui.show_loudness_panel)?;
         workspace.set_visible(Panel::Inspector, app.ui.show_inspector)?;
+        workspace.set_visible(Panel::Mixer, app.ui.show_mixer_panel)?;
     }
     Ok(())
 }
@@ -361,6 +390,7 @@ fn publish_visibility(app: &mut crate::SoundApp, workspace: &Workspace, edit: bo
         app.ui.show_meter_panel = workspace.layout.contains(&Panel::Meter);
         app.ui.show_loudness_panel = workspace.layout.contains(&Panel::Loudness);
         app.ui.show_inspector = workspace.layout.contains(&Panel::Inspector);
+        app.ui.show_mixer_panel = workspace.layout.contains(&Panel::Mixer);
     }
 }
 
@@ -400,11 +430,11 @@ fn command_for(app: &mut crate::SoundApp, reset: bool, params: &Value, edit: boo
         && ["panel", "target"].iter().any(|field| {
             matches!(
                 params.get(*field).and_then(Value::as_str),
-                Some("clips" | "midi" | "master" | "visibility" | "meter" | "loudness" | "inspector")
+                Some("clips" | "midi" | "master" | "visibility" | "meter" | "loudness" | "inspector" | "mixer")
             )
         })
     {
-        return Err("Clips, MIDI, Master, Visibility, Meter, Loudness and Inspector panels belong to the Edit window".into());
+        return Err("Clips, MIDI, Master, Visibility, Meter, Loudness, Inspector and Mixer panels belong to the Edit window".into());
     }
     let mut workspace = if edit { app.ui.docking.clone() } else { app.ui.mix_docking.clone() };
     if !reset && !edit {
@@ -418,6 +448,7 @@ fn command_for(app: &mut crate::SoundApp, reset: bool, params: &Value, edit: boo
         if edit {
             app.ui.show_clip_list = defaults.show_clip_list;
             app.ui.show_inspector = defaults.show_inspector;
+            app.ui.show_mixer_panel = defaults.show_mixer_panel;
         }
         workspace = if edit { Workspace::default() } else { mix_default() };
         sync(&mut workspace, app, edit)?;
@@ -432,6 +463,36 @@ fn command_for(app: &mut crate::SoundApp, reset: bool, params: &Value, edit: boo
     let result = json!({"docking": workspace});
     store(app, workspace, edit);
     Ok(result)
+}
+
+/// The active panel of the tab group the Editor and the Mixer share, if both are docked together.
+pub fn lower_tab_active(workspace: &Workspace) -> Option<Panel> {
+    let mut nodes: Vec<_> = workspace.layout.root.iter().collect();
+    while let Some(node) = nodes.pop() {
+        match node {
+            Node::Split { first, second, .. } => nodes.extend([&**first, &**second]),
+            Node::Tabs { panels, active } if panels.contains(&Panel::Midi) && panels.contains(&Panel::Mixer) => {
+                return panels.get(*active).copied();
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// A click on the EDITOR or MIXER dock tab (`command` is the toggle's command id): when the other
+/// one is showing in the shared tab group, switch to the clicked one instead of closing anything.
+/// Returns whether the click was handled.
+pub(crate) fn switch_lower_tab(app: &mut crate::SoundApp, command: &str) -> bool {
+    let target = match command {
+        "window.midi_editor" => Panel::Midi,
+        "window.mixer_panel" => Panel::Mixer,
+        _ => return false,
+    };
+    if app.ui.window != crate::MainWindow::Edit || lower_tab_active(&app.ui.docking).is_none_or(|active| active == target) {
+        return false;
+    }
+    command_for(app, false, &json!({"operation": "activate", "panel": target.id()}), true).is_ok()
 }
 
 /// Existing Arrange commands reposition shared floating panels along with the legacy windows.
@@ -552,6 +613,7 @@ impl craft_ui::docking::DockContent<Panel> for Content<'_> {
             Panel::Meter => crate::meter_pane::show(app, ui),
             Panel::Loudness => crate::loudness_pane::show(app, ui),
             Panel::Inspector => crate::inspector::show(app, ui),
+            Panel::Mixer => crate::mixer_pane::show(app, ui),
         }
     }
 
@@ -598,6 +660,7 @@ fn panel_limits(panel: &Panel) -> PanelLimits {
         Panel::Meter => (egui::vec2(120.0, 160.0), 720.0),
         Panel::Loudness => (egui::vec2(160.0, 160.0), 420.0),
         Panel::Inspector => (egui::vec2(170.0, 160.0), 420.0),
+        Panel::Mixer => (egui::vec2(420.0, 260.0), 1_000_000.0),
     };
     PanelLimits { min, max: egui::vec2(max_width, 1_000_000.0) }
 }

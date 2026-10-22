@@ -549,7 +549,13 @@ pub(crate) fn strip(app: &mut SoundApp, ui: &mut Ui, id: TrackId, snap: Option<&
         t.name_field
     };
     let chip_ink = if opts.color_chip { chip_text(chip, &t) } else { t.text_dark };
-    ui.painter().rect(nr, CornerRadius::same(2), chip, Stroke::new(1.0, Color32::BLACK), StrokeKind::Inside);
+    if opts.color_chip {
+        // The coloured chip is a glossy rounded name bar (flat when gloss is off).
+        let paint = crate::clip_paint::ClipPaint::from_tokens(&t, chip, Color32::BLACK, crate::clip_paint::ClipState::Normal, 1);
+        crate::clip_paint::body(ui.painter(), nr, &paint);
+    } else {
+        ui.painter().rect(nr, CornerRadius::same(2), chip, Stroke::new(1.0, Color32::BLACK), StrokeKind::Inside);
+    }
     ui.painter().with_clip_rect(nr).text(nr.center(), Align2::CENTER_CENTER, &track.name, bold(12.0), chip_ink);
     let nresp = ui.interact(nr, ui.id().with(("strip_name", id.0)), Sense::click());
     if nresp.clicked() {

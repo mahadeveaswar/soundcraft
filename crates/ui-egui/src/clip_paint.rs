@@ -125,6 +125,13 @@ pub fn gloss_outline(base: Color32, outline: Color32, gloss: f32) -> Color32 {
     if gloss > 0.0 && base.a() == 255 { darken(base, 0.45) } else { outline }
 }
 
+/// Whether `m` is one of this module's gradient meshes (six rows of two vertices, each pair on one
+/// horizontal line). Lets tests tell the glossy shading from waveform meshes, whose vertex pairs
+/// share an x instead.
+pub fn is_gloss_mesh(m: &Mesh) -> bool {
+    m.vertices.len() == 12 && m.indices.len() == 30 && m.vertices.chunks(2).all(|p| p[0].pos.y == p[1].pos.y && p[0].pos.x < p[1].pos.x)
+}
+
 thread_local! {
     /// Reused vertex/index storage for gradient meshes.
     static SCRATCH: RefCell<Mesh> = RefCell::new(Mesh::default());

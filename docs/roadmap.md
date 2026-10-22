@@ -1,6 +1,6 @@
 # SoundCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-14 · **Change:** trivial (M8 batch limit validation) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-22 · **Change:** trivial (later UI items) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Forward-looking plan. Status and numbers: [`../ROADMAP.md`](../ROADMAP.md) and
 [`target-app-parity.md`](target-app-parity.md); the ranked work list: [`gaps.md`](gaps.md).
@@ -82,6 +82,11 @@ Control surfaces (G-10), immersive delivery (G-12), the rest of the built-in plu
 speech-to-text (G-18), notation and instrument depth (G-20), compressed export (G-21), and the
 remaining languages.
 
+Later UI items from the Inspector, palette and Mixer work: an Inspector EQ curve view (the built-in
+EQ and the spectrum code exist), MIDI track transpose, velocity and channel controls (needs model
+fields and engine commands), the Mixer pane inside the Mix window workspace, and side-by-side
+Editor and Mixer docking (today they are exclusive lower-zone tabs).
+
 There is no `cargo xtask scorecard` in this repo; the measured number is `cargo xtask parity`
 ([`parity-checklist.md`](parity-checklist.md)).
 
@@ -89,6 +94,7 @@ There is no `cargo xtask scorecard` in this repo; the measured number is `cargo 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-22 | trivial | Later UI items: Inspector EQ curve, MIDI track controls, Mixer in the Mix window, side-by-side Editor and Mixer |
 | 2026-10-14 | trivial | M8: reject oversized MCP batches before execution (#460) |
 | 2026-10-10 | minor | Added the alpha gate (3 of 6 core workflows fail → pre-alpha) |
 | 2026-10-10 | major | Created from ROADMAP.md's milestones and alpha list; added M12–M17 and the beta plan with estimates |
