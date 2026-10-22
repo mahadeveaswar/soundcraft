@@ -202,9 +202,17 @@ fn dock_tabs(app: &mut SoundApp, ui: &mut Ui) {
     ] {
         x = tab(app, ui, x, label, on, id, false);
     }
-    // Right strip: the Master panel (a loudness tab joins it once a live loudness meter exists).
-    let master = app.ui.show_master_panel;
-    tab(app, ui, r.max.x - 10.0, "MASTER", master, "window.master_panel", true);
+    x = tab(app, ui, x, "VISIBILITY", app.ui.show_visibility_pane, "window.visibility_pane", false);
+    let _ = x;
+    // Right strip: the Master, Meters and Loudness panels.
+    let mut rx = r.max.x - 10.0;
+    for (label, on, id) in [
+        ("MASTER", app.ui.show_master_panel, "window.master_panel"),
+        ("METERS", app.ui.show_meter_panel, "window.meter_panel"),
+        ("LOUDNESS", app.ui.show_loudness_panel, "window.loudness_panel"),
+    ] {
+        rx = tab(app, ui, rx, label, on, id, true);
+    }
 }
 
 fn status_bar(app: &mut SoundApp, ui: &mut Ui) {

@@ -10,7 +10,15 @@ fn shared_panels_and_controls_follow_manual_and_live_system_appearance() {
     for scale in [1.0, 2.0] {
         let mut app = SoundApp::new(soundcraft_engine::demo::demo_engine(), None, Services::default());
         app.run("edit.select", json!({"tracks":["Keys"]})).unwrap();
-        for id in ["window.midi_editor", "window.memory_locations", "window.undo_history", "window.master_panel"] {
+        for id in [
+            "window.midi_editor",
+            "window.memory_locations",
+            "window.undo_history",
+            "window.master_panel",
+            "window.visibility_pane",
+            "window.meter_panel",
+            "window.loudness_panel",
+        ] {
             app.run(id, json!({})).unwrap();
         }
         let session = app.engine.session().clone();
