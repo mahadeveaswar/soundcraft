@@ -101,7 +101,27 @@ contrast warnings. `ui.theme_list {}` lists built-in and saved themes.
 `ui.theme_export {path?}` and `ui.theme_import {path?}` manage themes; built-in names cannot be
 overwritten, renamed or deleted. Saved themes are JSON files in the `themes` folder next to
 `ui.json`; with `SOUNDCRAFT_NO_PREFS` they stay in memory. A theme's track palette is pushed to
-the engine with `track_palette.set` when the theme applies and cleared for built-in themes.
+the engine with `track_palette.set` when the theme applies and cleared for built-in themes. The
+Settings window (see Settings) is the UI for these commands.
+
+## Settings
+
+The Settings window has three pages: `general`, `appearance` and `tracks` (track colours).
+
+- `window.settings {tab?: "general"|"appearance"|"tracks", value?: bool}` shows, hides or toggles the
+  window. With `tab` it opens on that page; without `tab` a closed window opens on General. An
+  unknown tab is an error. Returns `{value, tab}`. Menu: Setup > Preferences... and Window > Settings...
+  (the engine command `setup.preferences` still returns the edit state for scripts).
+- `window.ui_customization {tab?, value?}` is the same command with `appearance` as the default page
+  (Setup > Appearance).
+- `ui.prefs {ui_scale?: 0.75-1.5, reduce_motion?: bool, tooltips?: bool, reset?: true}` sets the
+  interface preferences (scale values outside the range are clamped; wrong types are errors and
+  change nothing) and returns all three. They are saved with the UI preferences (`ui.json`) and
+  restored at launch; no undo. `reset` returns them to 1.0, false and true.
+
+The other General controls use `ui.theme`, `ui.menu_layout`, `ui.toolbar_style`,
+`ui.header_style`, `ui.transport_position` and `window.config_auto_update` (not saved). The
+Appearance and Track colours pages use the `ui.theme_*` commands described under Themes.
 
 ## Panel docking
 
