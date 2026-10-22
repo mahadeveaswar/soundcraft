@@ -279,6 +279,9 @@ fn params(app: &mut SoundApp, ui: &mut Ui, st: &mut PageState) {
         "clip_opacity_selected" => doc.params.clip_opacity_selected.is_some(),
         "grid_strength" => doc.params.grid_strength.is_some(),
         "track_tint" => doc.params.track_tint.is_some(),
+        "clip_gloss" => doc.params.clip_gloss.is_some(),
+        "clip_corner" => doc.params.clip_corner.is_some(),
+        "header_corner" => doc.params.header_corner.is_some(),
         _ => doc.params.grid_beat_always.is_some(),
     };
     egui::Grid::new("settings_theme_params").num_columns(3).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
@@ -291,6 +294,29 @@ fn params(app: &mut SoundApp, ui: &mut Ui, st: &mut PageState) {
                 _ => app.ui.track_tint,
             };
             if ui.add(egui::Slider::new(&mut v, lo..=hi).fixed_decimals(2)).changed() {
+                exec(app, st, "ui.theme_set_param", json!({"key": key, "value": v}));
+            }
+            if ui.add_enabled(overridden(key), egui::Button::new("Reset")).clicked() {
+                exec(app, st, "ui.theme_reset", json!({"key": key}));
+            }
+            ui.end_row();
+        }
+        ui.label("Glossy clips");
+        let mut glossy = t.clip_gloss > 0.0;
+        if crate::widgets::checkbox(ui, &mut glossy, "On").changed() {
+            let on = doc.base.tokens().clip_gloss.max(0.5);
+            exec(app, st, "ui.theme_set_param", json!({"key": "clip_gloss", "value": if glossy { on } else { 0.0 }}));
+        }
+        if ui.add_enabled(overridden("clip_gloss"), egui::Button::new("Reset")).clicked() {
+            exec(app, st, "ui.theme_reset", json!({"key": "clip_gloss"}));
+        }
+        ui.end_row();
+        for (key, label, current) in
+            [("clip_corner", "Clip corner radius", t.clip_corner), ("header_corner", "Header corner radius", t.header_corner)]
+        {
+            ui.label(label);
+            let mut v = current;
+            if ui.add(egui::Slider::new(&mut v, 0..=8).suffix(" pt")).changed() {
                 exec(app, st, "ui.theme_set_param", json!({"key": key, "value": v}));
             }
             if ui.add_enabled(overridden(key), egui::Button::new("Reset")).clicked() {
