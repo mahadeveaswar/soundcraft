@@ -1184,7 +1184,7 @@ mod tests {
             assert_eq!((tk.clip_corner, tk.header_corner), (4, 3));
         }
         assert_eq!(Tokens::DARK.clip_gloss, 1.0);
-        assert!(Tokens::MIDNIGHT.clip_gloss < Tokens::DARK.clip_gloss);
+        assert!(Tokens::for_palette(PALETTE_MIDNIGHT).clip_gloss < Tokens::for_palette(PALETTE_DARK).clip_gloss);
     }
     #[test]
     fn current_follows_set_custom_and_the_cache_takes_no_lock_when_unchanged() {
