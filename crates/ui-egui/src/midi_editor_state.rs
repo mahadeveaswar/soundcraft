@@ -35,7 +35,7 @@ pub enum MidiSnap {
     Off,
     /// One bar.
     Bar,
-    /// A note division: denominator 2, 4, 8, 16 or 32.
+    /// A note division: denominator 2, 4, 8, 16, 32 or 64.
     Div(u8, Flavor),
 }
 
@@ -43,7 +43,7 @@ pub enum MidiSnap {
 pub fn all_snaps() -> Vec<MidiSnap> {
     let mut v = vec![MidiSnap::Grid, MidiSnap::Off, MidiSnap::Bar];
     for flavor in [Flavor::Straight, Flavor::Triplet, Flavor::Dotted] {
-        for d in [2, 4, 8, 16, 32] {
+        for d in [2, 4, 8, 16, 32, 64] {
             v.push(MidiSnap::Div(d, flavor));
         }
     }
@@ -153,7 +153,7 @@ pub fn run_ui_command(app: &mut SoundApp, id: &str, p: &Value) -> Option<Result<
         "ui.midi_snap" => {
             if let Some(name) = p.get("snap").and_then(Value::as_str) {
                 let Some(snap) = MidiSnap::parse(name) else {
-                    return Some(Err(format!("unknown snap `{name}` (grid, off, bar, 1/2 to 1/32 with t or d)")));
+                    return Some(Err(format!("unknown snap `{name}` (grid, off, bar, 1/2 to 1/64 with t or d)")));
                 };
                 app.midi.snap = snap;
             }
@@ -227,7 +227,7 @@ mod tests {
     #[test]
     fn snap_ids_round_trip_and_are_unique() {
         let all = all_snaps();
-        assert_eq!(all.len(), 18);
+        assert_eq!(all.len(), 21);
         for s in &all {
             assert_eq!(MidiSnap::parse(&s.id()), Some(*s), "{}", s.id());
         }
@@ -245,6 +245,9 @@ mod tests {
         assert_eq!(MidiSnap::Div(8, Flavor::Triplet).ticks(0, 3840), 320);
         assert_eq!(MidiSnap::Div(8, Flavor::Dotted).ticks(0, 3840), 720);
         assert_eq!(MidiSnap::Div(32, Flavor::Straight).ticks(0, 3840), 120);
+        assert_eq!(MidiSnap::Div(64, Flavor::Straight).ticks(0, 3840), 60);
+        assert_eq!(MidiSnap::Div(64, Flavor::Triplet).ticks(0, 3840), 40);
+        assert_eq!(MidiSnap::Div(64, Flavor::Dotted).ticks(0, 3840), 90);
         assert_eq!(MidiSnap::Bar.ticks(240, 2880), 2880);
         assert_eq!(MidiSnap::Grid.ticks(240, 3840), 240);
         assert_eq!(MidiSnap::Off.ticks(240, 3840), 1);
