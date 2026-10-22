@@ -413,3 +413,23 @@ fn shuffle_lock_and_snap_rules_hold_when_a_call_names_tracks() {
     run(&mut e, "edit.mode", json!({"mode": "grid"}));
     assert!(e.execute("edit.snap_to_grid", &json!({"tracks": [t.0]})).is_err());
 }
+
+#[test]
+fn adaptive_grid_copy_and_paste_agree_when_zoomed_out() {
+    let (mut e, t, [_, b]) = engine("relative_grid");
+    if let Some(c) = e.session_mut().find_clip_mut(b) {
+        c.start = 20_000;
+    }
+    run(&mut e, "edit.grid_adaptive", json!({"value": true}));
+    run(&mut e, "view.zoom_set", json!({"samples_per_px": 2000.0}));
+    let s = e.session();
+    let g = soundcraft_engine::cmd::grid_adapt::effective_grid(s, 20_000);
+    assert_ne!(g, s.edit.grid, "zoomed out the effective grid is coarser");
+    let line = |at| g.line_at_or_before(at, s.sample_rate, &s.tempo, s.frame_rate);
+    let want = line(30_000) + (20_000 - line(20_000));
+    run(&mut e, "edit.select", json!({"clips": [b.0]}));
+    run(&mut e, "edit.copy", json!({}));
+    run(&mut e, "edit.select", json!({"tracks": [t.0], "start": 30_000}));
+    run(&mut e, "edit.paste", json!({}));
+    assert_eq!(clips(&e, t).last(), Some(&(want, 1000)));
+}

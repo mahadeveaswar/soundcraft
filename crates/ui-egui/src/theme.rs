@@ -330,6 +330,12 @@ pub struct Tokens {
     pub spot_speaker_ring: Color32,
     pub spot_object: Color32,
     pub spot_object_name: Color32,
+    // --- TB-5/TB-6 tokens: info row and selection strip ---
+    /// Backgrounds of the Standard toolbar's info row and selection strip.
+    pub info_row_bg: Color32,
+    pub sel_strip_bg: Color32,
+    /// "not connected" and other warnings in the info row.
+    pub status_warn: Color32,
 }
 
 impl Tokens {
@@ -469,6 +475,9 @@ impl Tokens {
         spot_speaker_ring: Color32::from_rgb(150, 160, 170),
         spot_object: Color32::from_rgb(240, 180, 60),
         spot_object_name: Color32::from_rgb(240, 200, 120),
+        info_row_bg: Color32::from_rgb(36, 36, 38),
+        sel_strip_bg: Color32::from_rgb(33, 33, 35),
+        status_warn: Color32::from_rgb(232, 148, 40),
     };
 
     pub const LIGHT: Tokens = Tokens {
@@ -572,6 +581,9 @@ impl Tokens {
         grid_bar: Color32::from_rgb(162, 166, 172),
         grid_beat: Color32::from_rgb(188, 191, 196),
         grid_beat_always: false,
+        info_row_bg: Color32::from_rgb(204, 206, 210),
+        sel_strip_bg: Color32::from_rgb(210, 212, 216),
+        status_warn: Color32::from_rgb(176, 96, 8),
         ..Tokens::DARK
     };
 

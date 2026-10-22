@@ -752,7 +752,7 @@ pub fn stroke_points(prev: Option<(Samples, f32)>, cur: (Samples, f32), step: Sa
 pub(crate) fn draw_position(s: &soundcraft_model::Session, at: Samples) -> (Samples, Samples) {
     let at = crate::edit_window::snap(s, at.max(0));
     let step = if crate::edit_window::snap_on(s) {
-        s.edit.grid.step_samples(at, s.sample_rate, &s.tempo, s.frame_rate).max(1)
+        soundcraft_engine::cmd::grid_adapt::effective_grid(s, at).step_samples(at, s.sample_rate, &s.tempo, s.frame_rate).max(1)
     } else {
         ((s.edit.zoom.samples_per_px * 4.0) as Samples).max(1)
     };
