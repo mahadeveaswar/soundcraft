@@ -11,6 +11,11 @@ Dated entries, newest first. Each entry groups changes as Added, Changed, Fixed 
 - Glossy rounded clips and track headers: clip bodies, clip name bars, header colour strips and the Mix strip name chip get a soft vertical gradient, a top highlight and rounded corners. New theme tokens `clip_gloss` (0 flat, 1 full; Dark 1.0, Light 0.8, Midnight 0.6), `clip_corner` and `header_corner`, with a "Glossy clips" switch and a "Corner radius" slider in Settings > Appearance. Tiny, muted and very crowded clips fall back to the flat look; gloss is on by default.
 - Mixer pane: a bottom dock panel (`window.mixer_panel`, `ui.dock` panel `mixer`, Window menu, toolbar and a MIXER dock tab) with the Mix strips for the visible tracks and a pinned Master, a Compact switch and selection that follows the track list. Edit window only. It shares the lower zone with the MIDI editor as exclusive Editor / Mixer tabs. The Mix window strip is now reusable with options (`StripOpts`) and looks the same by default.
 
+- Inspector redesign: a glossy track-colour header band (large editable name, type badge, clickable colour chip, mute/solo/record/monitor toggles with state colours), collapsible rounded section cards (Routing, Instrument, Inserts, Sends, Channel, Notes) with count pills, insert rows with a bypass LED and hover actions, "+ Add effect" and "+ Add send" rows, a "+" and a "..." section menu for the extra insert actions, and a compact Channel card (fader, meters, pan, trim, phase). All existing commands and the saved collapse state are unchanged.
+- Mixer pane strips are now stacked: name chip, input/record/solo/mute row, pan, then the fader with meter and dB readout, with inserts, sends and routing folding into count badges, then an output row, then full lists as the pane gets taller. The Master strip is fully visible at the default height.
+- Selected clips keep their outline when muted, dimmed or shown under an automation view, and the outline is drawn above the name bar; the gloss gradient no longer shows outside rounded corners.
+- Settings > Appearance: colour rows sit in an aligned four-column grid and show the full hex value.
+
 ### Added
 - Keyboard icon (drawn in code) and, on instrument track headers, a key button that opens the loaded instrument's plugin window.
 - Controller commands for the MIDI editor: `midi.ctrl_list`, `midi.ctrl_set`, `midi.ctrl_clear` (continuous controllers, pitch bend, pressure), with tests.
@@ -102,6 +107,10 @@ Dated entries, newest first. Each entry groups changes as Added, Changed, Fixed 
 - Setup > Preferences... opens the Settings window (the engine command `setup.preferences` still returns the edit state to scripts and also runs from the menu item). Setup > Appearance and `window.ui_customization` open the Settings window on the Appearance page. The Window menu entry "UI Customization" is now "Settings..." (`window.settings`). The old 320 x 180 Appearance window is gone.
 
 ### Fixed
+- Locked automation lanes are now skipped by every bulk writer: cut, paste, duplicate, insert silence, clip moves and ripples that carry automation, insert/cut time, Write to Current/All, Clear and Thin without a lane, glide/trim edits, and the trim and volume helpers. The other lanes still change, and undo is never blocked.
+- `template.new_session` is journaled (not undoable) like `session.new`, so a replay that starts from a template ends with the same document; its `path` is checked against the automation read root.
+- `track.color` with an `[r,g,b]` array rejects out-of-range or non-integer components instead of turning them into 0.
+- Integrated loudness is cached and updated once per 100 ms block instead of being recomputed on every audio block.
 - Narrow track header column: the Views button no longer overlaps the ruler labels at any header width from 112 to 640 pt; ruler labels that share the button's row use a smaller margin and then an ellipsis. A width sweep test covers it and the default-width layout is unchanged.
 - Window > Reset Panel Layout did not bring back a closed track list or clip list: the reset re-applied the saved "hidden" flags to the fresh default layout. Reset now restores both panes (test added).
 - A Windows path-separator test in the engine IO module.
