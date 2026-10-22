@@ -205,7 +205,12 @@ fn insert_path(roots: &mut Vec<MenuNode>, line: &str) {
         let idx = match level.iter().position(|n| n.label == *p) {
             Some(i) => i,
             None => {
-                level.push(MenuNode { label: p.to_string(), path: path.clone(), source_root: parts.first().map_or(String::new(), |r| r.to_string()), children: Vec::new() });
+                level.push(MenuNode {
+                    label: p.to_string(),
+                    path: path.clone(),
+                    source_root: parts.first().map_or(String::new(), |r| r.to_string()),
+                    children: Vec::new(),
+                });
                 level.len() - 1
             }
         };
@@ -225,7 +230,10 @@ pub fn tree() -> Vec<MenuNode> {
     // Not in the observed catalog either; Pro Tools lists it right under Identify Sync Point.
     if let Some(clip) = roots.iter_mut().find(|n| n.label == "Clip") {
         let at = clip.children.iter().position(|n| n.label == "Identify Sync Point").map_or(clip.children.len(), |i| i + 1);
-        clip.children.insert(at, MenuNode { label: "Remove Sync Point".into(), path: "Clip > Remove Sync Point".into(), source_root: "Clip".into(), children: Vec::new() });
+        clip.children.insert(
+            at,
+            MenuNode { label: "Remove Sync Point".into(), path: "Clip > Remove Sync Point".into(), source_root: "Clip".into(), children: Vec::new() },
+        );
     }
     // Not in the incumbent catalog, but the only UI path to an empty MIDI clip (#282).
     // It creates a clip rather than acting on the selected ones, so it leads the Clip menu.

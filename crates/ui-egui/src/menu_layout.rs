@@ -201,7 +201,12 @@ impl ClonedNode for Option<&MenuNode> {
 }
 
 fn clone_node(n: &MenuNode) -> MenuNode {
-    MenuNode { label: n.label.clone(), path: n.path.clone(), source_root: n.source_root.clone(), children: n.children.iter().map(clone_node).collect() }
+    MenuNode {
+        label: n.label.clone(),
+        path: n.path.clone(),
+        source_root: n.source_root.clone(),
+        children: n.children.iter().map(clone_node).collect(),
+    }
 }
 
 /// `ui.menu_layout {layout?}`: report or set the menu bar arrangement (no undo, not in the session).
