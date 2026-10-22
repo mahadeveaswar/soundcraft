@@ -154,6 +154,8 @@ pub struct LoudnessMeter {
     tp_hist: Vec<[f32; TP_TAPS]>,
     true_peak: f32,
     max_momentary: f32,
+    /// Gated integrated loudness, refreshed when a 100 ms block lands (the only time it can change).
+    integrated_cache: f32,
 }
 
 /// A loudness reading: what a live meter shows (all LUFS / dBTP, `MIN_DB` when nothing is measured).
@@ -247,6 +249,7 @@ impl LoudnessMeter {
             tp_hist: vec![[0.0; TP_TAPS]; channels],
             true_peak: 0.0,
             max_momentary: MIN_DB,
+            integrated_cache: MIN_DB,
         }
     }
 
@@ -276,6 +279,7 @@ impl LoudnessMeter {
         self.tp_hist.iter_mut().for_each(|h| *h = [0.0; TP_TAPS]);
         self.true_peak = 0.0;
         self.max_momentary = MIN_DB;
+        self.integrated_cache = MIN_DB;
     }
 
     /// Feeds planar audio. Channels beyond the meter's channel count are ignored.
@@ -337,6 +341,7 @@ impl LoudnessMeter {
                     *c += 1;
                     *e += z;
                 }
+                self.integrated_cache = self.compute_integrated();
             }
         }
     }
@@ -372,6 +377,10 @@ impl LoudnessMeter {
 
     /// Gated integrated loudness (absolute gate -70 LUFS, relative gate -10 LU), LUFS.
     pub fn integrated_lufs(&self) -> f32 {
+        self.integrated_cache
+    }
+
+    fn compute_integrated(&self) -> f32 {
         let (mut n, mut e) = (0u64, 0.0f64);
         for (c, s) in self.hist_count.iter().zip(&self.hist_energy) {
             n += c;
