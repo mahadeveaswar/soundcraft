@@ -46,7 +46,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "List Automation Lanes",
             [],
             None,
-            "{track?} -> lanes: [{index, param, label, points, value, unit, min, max, height, locked, follow, toggle}]",
+            "{track?} -> lanes: [{index, param, label, points, value, unit, min, max, height, locked, follow, draw, toggle}]",
             always,
             lanes_list
         ),
@@ -176,7 +176,7 @@ fn lanes_list(e: &mut Engine, p: &Value) -> Result<Value> {
             let (min, max) = if min <= f32::MIN || max >= f32::MAX { (Value::Null, Value::Null) } else { (json!(min), json!(max)) };
             json!({
                 "index": i, "param": l.param.id(), "label": l.param.label(), "points": lane.map_or(0, |a| a.points.len()),
-                "value": value, "unit": unit_of(&l.param), "min": min, "max": max, "height": l.height, "locked": l.locked, "follow": l.follow, "toggle": l.param.is_toggle(),
+                "value": value, "unit": unit_of(&l.param), "min": min, "max": max, "height": l.height, "locked": l.locked, "follow": l.follow, "draw": l.draw, "toggle": l.param.is_toggle(),
             })
         })
         .collect();
@@ -331,6 +331,20 @@ mod tests {
             assert_eq!(l[1]["toggle"], true);
             assert_eq!((l[2]["unit"].as_str(), l[2]["min"].as_f64(), l[2]["max"].as_f64()), (Some("bend"), Some(-8192.0), Some(8191.0)));
         }
+    }
+
+    #[test]
+    fn midi_value_defaults_to_the_playhead() {
+        let (mut e, _) = engine();
+        let m = e.session_mut().add_track(TrackKind::Instrument, ChannelFormat::Stereo, None).0;
+        e.session_mut().edit.selection.start = 5;
+        e.transport.position = 777;
+        e.execute("automation.midi_value", &json!({"track": m, "param": "cc1", "value": 9})).unwrap();
+        assert_eq!(e.session().track(TrackId(m)).unwrap().lane(&AutoParam::MidiCc(1)).unwrap().points[0].at, 5, "stopped: the insertion");
+        e.transport.playing = true;
+        e.execute("automation.midi_value", &json!({"track": m, "param": "cc1", "value": 10})).unwrap();
+        let tr = e.session().track(TrackId(m)).unwrap();
+        assert_eq!(tr.lane(&AutoParam::MidiCc(1)).unwrap().points.last().unwrap().at, 777, "playing: the playhead");
     }
 
     #[test]

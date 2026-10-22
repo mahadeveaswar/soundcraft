@@ -1909,7 +1909,7 @@ fn crossfade_partner<'a>(track: &'a Track, clip: &Clip) -> Option<&'a Clip> {
 pub(crate) fn draw_automation(painter: &egui::Painter, s: &Session, track: &Track, p: &AutoParam, tl: Rect, lane: Rect) {
     let t = Tokens::current();
     let range = lane_range(track, p);
-    let def = crate::auto_lanes_ui::static_value(track, p);
+    let def = crate::auto_lanes_ui::static_value(track, p, 0);
     let yv = |v: f32| auto_y(lane, range, v);
     let lanes = track.lane(p);
     let pts: Vec<(f32, f32)> = match lanes {
@@ -1919,6 +1919,12 @@ pub(crate) fn draw_automation(painter: &egui::Painter, s: &Session, track: &Trac
             for pt in &l.points {
                 let x = x_of(s, tl, pt.at);
                 if x > lane.min.x && x < lane.max.x {
+                    // Stepped parameters (mute, switches) hold their value until the next point.
+                    if p.stepped()
+                        && let Some(&(_, y)) = v.last()
+                    {
+                        v.push((x, y));
+                    }
                     v.push((x, yv(pt.value)));
                 }
             }
@@ -2000,8 +2006,12 @@ fn plugin_range(track: &Track, p: &AutoParam) -> (f32, f32) {
 
 // ---- interaction -----------------------------------------------------------------------------
 
+pub(crate) fn snap_on(s: &Session) -> bool {
+    s.edit.edit_mode.is_grid() || s.edit.flag(ops::SNAP_TO_GRID)
+}
+
 pub(crate) fn snap(s: &Session, at: Samples) -> Samples {
-    let on = s.edit.edit_mode.is_grid() || s.edit.flag(ops::SNAP_TO_GRID);
+    let on = snap_on(s);
     if on { s.edit.grid.snap(at, s.sample_rate, &s.tempo, s.frame_rate) } else { at }
 }
 
@@ -2158,7 +2168,7 @@ fn lane_interaction(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: Rect, 
     };
     // Effective tool under the Smart tool; on a breakpoint every tool that edits one grabs it.
     let eff = match tool {
-        _ if point_hit.is_some() => Tool::Grabber,
+        _ if point_hit.is_some() && tool != Tool::Pencil => Tool::Grabber,
         Tool::Smart => {
             if let Some(c) = &hit {
                 if near_edge(c).is_some() {
@@ -2272,7 +2282,16 @@ fn lane_interaction(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: Rect, 
             Tool::Pencil if auto_view.is_none() && track.kind.is_midi() => {
                 hit.is_none().then_some(Gesture::MidiClip { track: track.id, from: at_origin, to: at_origin })
             }
-            Tool::Pencil => Some(Gesture::Pencil { track: track.id, points: Vec::new() }),
+            Tool::Pencil if auto_view.as_ref().is_some_and(|p| crate::auto_lanes_ui::lane_locked(track, p)) => {
+                app.ui.status = "Lane is locked".into();
+                None
+            }
+            Tool::Pencil => {
+                if auto_view.is_some() {
+                    crate::auto_lanes_ui::off_hint(app, ui.ctx(), track);
+                }
+                Some(Gesture::Pencil { track: track.id, stroke: None, erase: mods.shift })
+            }
             Tool::Zoom => Some(Gesture::ZoomBox { start: origin.x }),
         };
     }
@@ -2325,19 +2344,13 @@ fn lane_interaction(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: Rect, 
             }
             Tool::Pencil => {
                 if let Some(param) = &auto_view {
-                    let (lo, hi, _) = param.range();
-                    let (lo, hi) = if matches!(param, AutoParam::Volume | AutoParam::SendLevel(_)) {
-                        (-60.0, 12.0)
-                    } else if matches!(param, AutoParam::Plugin { .. }) {
-                        plugin_range(track, param)
+                    if crate::auto_lanes_ui::lane_locked(track, param) {
+                        app.ui.status = "Lane is locked".into();
                     } else {
-                        (lo, hi)
-                    };
-                    let k = ((lane.max.y - 4.0 - p.y) / (lane.height() - 8.0)).clamp(0.0, 1.0);
-                    let _ = app.run(
-                        "automation.set_point",
-                        json!({"track": track.id.0, "param": automation_id(param), "at": at, "value": lo + (hi - lo) * k}),
-                    );
+                        let value = auto_value(lane, lane_range(track, param), p.y);
+                        let _ =
+                            app.run("automation.set_point", json!({"track": track.id.0, "param": automation_id(param), "at": at, "value": value}));
+                    }
                 } else if track.kind.is_midi() && hit.is_none() {
                     new_midi_clip(app, &s, track.id, at, at);
                 }
@@ -2419,6 +2432,24 @@ fn drive_drag(app: &mut SoundApp, ctx: &egui::Context) {
     let Some(p) = p else { return };
     let at = sample_at(&s, tl, p.x).max(0);
     let inside = pos2(p.x.max(tl.min.x).min(tl.max.x), p.y.max(tl.min.y).min(tl.max.y));
+    // The track view's pencil draws like the lane pencil: interpolated, replacing the swept points,
+    // one undo step per stroke.
+    if let Some(Gesture::Pencil { track, mut stroke, erase }) = app.gesture.take_if(|g| matches!(g, Gesture::Pencil { .. })) {
+        if let Some(t) = s.track(track)
+            && let Some(param) = AutoParam::parse(&t.view)
+            && let Some((_, row)) = app.edit_layout.rows.iter().find(|(i, _)| *i == t.id.0)
+        {
+            let lane = lane_rect(t, rect(*row), tl);
+            let range = lane_range(t, &param);
+            if erase {
+                crate::auto_lanes_ui::erase_update(app, t.id, &param, &mut stroke, at);
+            } else {
+                let stepped = crate::auto_lanes_ui::is_toggle(t, &param);
+                crate::auto_lanes_ui::draw_update(app, t.id, &param, &mut stroke, at, auto_value(lane, range, p.y), range, stepped);
+            }
+        }
+        app.gesture = Some(Gesture::Pencil { track, stroke, erase });
+    }
     let rows = &app.edit_layout.rows;
     let gap = |r: &[f32; 4]| (r[1] - inside.y).max(inside.y - r[3]).max(0.0);
     let to_track = rows.iter().min_by(|a, b| gap(&a.1).total_cmp(&gap(&b.1))).map(|(i, _)| TrackId(*i));
@@ -2485,26 +2516,6 @@ fn drive_drag(app: &mut SoundApp, ctx: &egui::Context) {
                 }
             }
         }
-        Some(Gesture::Pencil { track, points }) => {
-            if let Some(t) = s.track(*track)
-                && let Some(param) = AutoParam::parse(&t.view)
-                && let Some((_, row)) = rows.iter().find(|(i, _)| *i == t.id.0)
-            {
-                let lane = lane_rect(t, rect(*row), tl);
-                let (lo, hi, _) = param.range();
-                let (lo, hi) = if matches!(param, AutoParam::Volume | AutoParam::SendLevel(_)) {
-                    (-60.0, 12.0)
-                } else if matches!(param, AutoParam::Plugin { .. }) {
-                    plugin_range(t, &param)
-                } else {
-                    (lo, hi)
-                };
-                let k = ((lane.max.y - 4.0 - p.y) / (lane.height() - 8.0)).clamp(0.0, 1.0);
-                if points.last().is_none_or(|(a, _)| (at - a).abs() as f64 > s.edit.zoom.samples_per_px * 3.0) {
-                    points.push((at, lo + (hi - lo) * k));
-                }
-            }
-        }
         _ => {}
     }
     if invalid_fade {
@@ -2555,12 +2566,14 @@ fn finish_drag(app: &mut SoundApp, s: &Session, tl: Rect, p: Option<Pos2>) {
         Some(Gesture::TrimStart { clip, to, .. }) => trim_clip(app, clip, to, true),
         Some(Gesture::TrimEnd { clip, to, .. }) => trim_clip(app, clip, to, false),
         Some(Gesture::MidiClip { track, from, to }) => new_midi_clip(app, s, track, from, to),
-        Some(Gesture::Pencil { track, points }) => {
-            if let Some(param) = s.track(track).and_then(|t| AutoParam::parse(&t.view)) {
-                let pid = automation_id(&param);
-                for (a, v) in points {
-                    let _ = app.run("automation.set_point", json!({"track": track.0, "param": pid, "at": a, "value": v}));
-                }
+        Some(Gesture::Pencil { track, stroke, erase }) => {
+            if let Some(t) = s.track(track)
+                && let Some(param) = AutoParam::parse(&t.view)
+            {
+                let stepped = crate::auto_lanes_ui::is_toggle(t, &param);
+                crate::auto_lanes_ui::draw_end(app, track, &param, lane_range(t, &param), stepped, stroke, erase);
+            } else {
+                app.engine.end_merge();
             }
         }
         Some(Gesture::ZoomBox { start }) => {
