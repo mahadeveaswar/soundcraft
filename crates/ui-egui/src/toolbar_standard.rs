@@ -361,12 +361,13 @@ fn zoom(app: &mut SoundApp, ui: &mut Ui) {
 }
 
 /// (label, icon, command, shown) for the panel toggles.
-fn panels(app: &SoundApp) -> [(&'static str, &'static str, &'static str, bool); 6] {
+fn panels(app: &SoundApp) -> [(&'static str, &'static str, &'static str, bool); 7] {
     let u = &app.ui;
     [
         ("Tracks", "tracks", "window.track_list", u.show_tracks_list),
         ("Inspector", "inspector", "window.inspector", u.show_inspector),
         ("Clips", "clips", "window.clip_list", u.show_clip_list),
+        ("Mixer", "mixer", "window.mixer_panel", u.show_mixer_panel),
         ("MIDI Editor", "note", "window.midi_editor", u.show_midi_editor),
         ("Memory Locations", "flag_l", "window.memory_locations", u.show_memory_locations),
         ("Undo History", "clock", "window.undo_history", u.show_undo_history),

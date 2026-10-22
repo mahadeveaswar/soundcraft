@@ -36,6 +36,7 @@ pub mod midi_ruler;
 pub mod midi_tools_ui;
 pub mod midi_zoom;
 pub mod mix_window;
+pub mod mixer_pane;
 pub mod ops_windows;
 pub mod palette;
 pub mod panel_menu;
@@ -119,6 +120,10 @@ pub struct UiState {
     pub show_loudness_panel: bool,
     /// The Inspector dock panel (Edit window): the selected track's fader, inserts and sends.
     pub show_inspector: bool,
+    /// The bottom Mixer pane (Edit window): a row of channel strips.
+    pub show_mixer_panel: bool,
+    /// The Mixer pane's narrow strips, with inserts and sends folded to counts.
+    pub mixer_compact: bool,
     pub show_universe: bool,
     pub narrow_mix: bool,
     /// Mix window sections: inserts_ae, inserts_fj, sends_ae, sends_fj, io, comments, eq_curve, color.
@@ -230,6 +235,8 @@ impl Default for UiState {
             show_meter_panel: false,
             show_loudness_panel: false,
             show_inspector: false,
+            show_mixer_panel: false,
+            mixer_compact: false,
             show_universe: false,
             narrow_mix: false,
             mix_views: vec!["inserts_ae".into(), "sends_ae".into(), "io".into(), "color".into()],
