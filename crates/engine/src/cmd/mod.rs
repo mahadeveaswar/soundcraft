@@ -8,6 +8,7 @@ use std::sync::OnceLock;
 
 mod audio_midi;
 mod audiosuite;
+mod auto_draw;
 mod auto_lanes;
 mod clap;
 mod clip;
@@ -135,6 +136,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(midi_audition::specs());
         v.extend(midi_ctrl::specs());
         v.extend(auto_lanes::specs());
+        v.extend(auto_draw::specs());
         v.extend(midi_info::specs());
         v.extend(midi_sel::specs());
         v.extend(midi_theory::specs());

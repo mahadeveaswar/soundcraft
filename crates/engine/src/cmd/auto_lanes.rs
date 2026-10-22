@@ -46,7 +46,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "List Automation Lanes",
             [],
             None,
-            "{track?} -> lanes: [{index, param, label, points, value, unit, min, max, height, locked, follow, toggle}]",
+            "{track?} -> lanes: [{index, param, label, points, value, unit, min, max, height, locked, follow, draw, toggle}]",
             always,
             lanes_list
         ),
@@ -176,7 +176,7 @@ fn lanes_list(e: &mut Engine, p: &Value) -> Result<Value> {
             let (min, max) = if min <= f32::MIN || max >= f32::MAX { (Value::Null, Value::Null) } else { (json!(min), json!(max)) };
             json!({
                 "index": i, "param": l.param.id(), "label": l.param.label(), "points": lane.map_or(0, |a| a.points.len()),
-                "value": value, "unit": unit_of(&l.param), "min": min, "max": max, "height": l.height, "locked": l.locked, "follow": l.follow, "toggle": l.param.is_toggle(),
+                "value": value, "unit": unit_of(&l.param), "min": min, "max": max, "height": l.height, "locked": l.locked, "follow": l.follow, "draw": l.draw, "toggle": l.param.is_toggle(),
             })
         })
         .collect();

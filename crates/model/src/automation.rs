@@ -248,11 +248,14 @@ pub struct ShownLane {
     /// The lane switches to the parameter the user is moving.
     #[serde(default)]
     pub follow: bool,
+    /// Freehand drawing is on for this lane (the pencil button in the lane header).
+    #[serde(default)]
+    pub draw: bool,
 }
 
 impl ShownLane {
     pub fn new(param: AutoParam) -> Self {
-        ShownLane { param, height: LANE_HEIGHT_DEFAULT, locked: false, follow: false }
+        ShownLane { param, height: LANE_HEIGHT_DEFAULT, locked: false, follow: false, draw: false }
     }
 
     /// `h` limited to the allowed range (NaN gives the default).
@@ -366,6 +369,24 @@ impl AutomationLane {
         before - self.points.len()
     }
 
+    /// Thin only the points inside `[start, end]` (the points just outside stay and bound the
+    /// curve). Returns how many were removed.
+    pub fn thin_range(&mut self, tolerance: f32, start: Samples, end: Samples) -> usize {
+        let (start, end) = if start <= end { (start, end) } else { (end, start) };
+        let lo = self.points.partition_point(|p| p.at < start);
+        let hi = self.points.partition_point(|p| p.at <= end);
+        if hi.saturating_sub(lo) < 3 {
+            return 0;
+        }
+        let mut part =
+            AutomationLane { param: self.param.clone(), points: self.points.get(lo..hi).map(<[_]>::to_vec).unwrap_or_default(), enabled: true };
+        let removed = part.thin(tolerance);
+        if removed > 0 {
+            self.points.splice(lo..hi, part.points);
+        }
+        removed
+    }
+
     /// Shift points at or after `from` by `delta` (Shuffle edits, Insert Time).
     pub fn shift_from(&mut self, from: Samples, delta: Samples) {
         for p in &mut self.points {
@@ -381,6 +402,30 @@ impl AutomationLane {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thin_range_touches_only_points_inside() {
+        let mut l = AutomationLane::new(AutoParam::Volume);
+        for i in 0..=10 {
+            l.set_point(i * 100, 0.0);
+        }
+        let removed = l.thin_range(0.01, 300, 700);
+        assert_eq!(removed, 3, "300..=700 hold five collinear points, the ends stay");
+        assert_eq!(l.points.len(), 8);
+        assert!(l.points.iter().any(|p| p.at == 300) && l.points.iter().any(|p| p.at == 700));
+        assert_eq!(l.thin_range(0.01, 700, 300), 0, "swapped ends work, nothing left to thin");
+        let mut m = AutomationLane::new(AutoParam::Mute);
+        for i in 0..6 {
+            m.set_point(i * 10, 0.0);
+        }
+        assert_eq!(m.thin_range(1.0, 0, 100), 0, "stepped lanes are never thinned");
+    }
+
+    #[test]
+    fn shown_lane_without_draw_loads_off() {
+        let l: ShownLane = serde_json::from_str(r#"{"param":"Volume"}"#).unwrap_or_else(|_| ShownLane::new(AutoParam::Pan(0)));
+        assert!(!l.draw && l.param == AutoParam::Volume);
+    }
 
     #[test]
     fn interpolation_and_steps() {

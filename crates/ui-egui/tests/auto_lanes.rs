@@ -195,3 +195,157 @@ fn the_sustain_toggle_writes_127_and_0() {
     let kick = id(&h, "Kick");
     assert!(h.state_mut().run("automation.lane_show", json!({"track": kick.0, "param": "cc64"})).is_err());
 }
+
+/// Press at `from`, move to `to` in `steps` frames, release; `mods` stay held for the whole drag.
+fn drag(h: &mut Harness<SoundApp>, from: Pos2, to: Pos2, steps: usize, mods: Modifiers) {
+    h.input_mut().events.push(Event::ModifiersChanged(mods));
+    move_to(h, from);
+    h.input_mut().events.push(Event::PointerButton { pos: from, button: PointerButton::Primary, pressed: true, modifiers: mods });
+    h.run_steps(2);
+    for i in 1..=steps {
+        let f = i as f32 / steps as f32;
+        move_to(h, pos2(from.x + (to.x - from.x) * f, from.y + (to.y - from.y) * f));
+    }
+    h.input_mut().events.push(Event::PointerButton { pos: to, button: PointerButton::Primary, pressed: false, modifiers: mods });
+    h.run_steps(2);
+    h.input_mut().events.push(Event::ModifiersChanged(Modifiers::NONE));
+    h.run_steps(2);
+}
+
+fn pts(h: &Harness<SoundApp>, name: &str, p: &AutoParam) -> Vec<(i64, f32)> {
+    h.state()
+        .engine
+        .session()
+        .track(id(h, name))
+        .and_then(|t| t.lane(p))
+        .map(|l| l.points.iter().map(|x| (x.at, x.value)).collect())
+        .unwrap_or_default()
+}
+
+fn set_tool(h: &mut Harness<SoundApp>, tool: &str) {
+    h.state_mut().run("edit.tool", json!({"tool": tool})).unwrap();
+    h.run_steps(3);
+}
+
+#[test]
+fn the_pencil_draws_a_replacing_curve_in_one_undo_step() {
+    let mut h = harness();
+    show(&mut h, "Kick", "volume");
+    set_tool(&mut h, "pencil");
+    let b = body(&h, "Kick", 0);
+    let (from, to) = (pos2(b.min.x + 200.0, b.max.y - 10.0), pos2(b.min.x + 320.0, b.min.y + 10.0));
+    let history = h.state().engine.undo_history().len();
+    drag(&mut h, from, to, 12, Modifiers::NONE);
+    let got = pts(&h, "Kick", &AutoParam::Volume);
+    assert!(got.len() >= 2, "a drag leaves a curve: {got:?}");
+    assert!(got.windows(2).all(|w| w[0].0 < w[1].0), "ordered");
+    // The first and last points are anchors holding the old value; the stroke is what lies between.
+    let inner = &got[1..got.len() - 1];
+    assert!(inner.len() >= 2, "{got:?}");
+    assert!(inner[inner.len() - 1].1 > inner[0].1 + 20.0, "values rise with the pointer: {inner:?}");
+    assert_eq!(h.state().engine.undo_history().len(), history + 1, "one undo step per stroke");
+    assert!(h.state_mut().engine.undo());
+    assert!(pts(&h, "Kick", &AutoParam::Volume).is_empty(), "one undo restores the lane");
+}
+
+#[test]
+fn the_grabber_still_moves_only_the_point_it_grabs() {
+    let mut h = harness();
+    show(&mut h, "Kick", "volume");
+    let b = body(&h, "Kick", 0);
+    let spot = pos2(b.center().x + 100.0, b.min.y + b.height() * 0.3);
+    click(&mut h, spot, PointerButton::Primary);
+    click(&mut h, pos2(spot.x + 150.0, spot.y), PointerButton::Primary);
+    let before = pts(&h, "Kick", &AutoParam::Volume);
+    assert_eq!(before.len(), 2);
+    drag(&mut h, spot, pos2(spot.x, spot.y + 30.0), 5, Modifiers::NONE);
+    let after = pts(&h, "Kick", &AutoParam::Volume);
+    assert_eq!(after.len(), 2, "no drawing with the Grabber");
+    assert_eq!(after[1], before[1], "the other point is untouched");
+    assert!(after[0].1 < before[0].1, "the grabbed point moved down");
+}
+
+#[test]
+fn the_draw_button_and_the_command_modifier_draw_with_any_tool() {
+    let mut h = harness();
+    show(&mut h, "Kick", "volume");
+    set_tool(&mut h, "grabber");
+    let t = id(&h, "Kick");
+    let b = body(&h, "Kick", 0);
+    let (from, to) = (pos2(b.min.x + 200.0, b.max.y - 10.0), pos2(b.min.x + 300.0, b.min.y + 10.0));
+    h.state_mut().run("automation.lane_draw", json!({"track": t.0, "index": 0})).unwrap();
+    h.run_steps(3);
+    drag(&mut h, from, to, 10, Modifiers::NONE);
+    let drawn = pts(&h, "Kick", &AutoParam::Volume);
+    assert!(drawn.len() >= 2, "Draw on: a drag draws with the Grabber: {drawn:?}");
+    h.state_mut().run("automation.lane_draw", json!({"track": t.0, "index": 0, "draw": false})).unwrap();
+    h.state_mut().run("automation.clear", json!({"track": t.0, "param": "volume", "start": 0, "end": 1_000_000_000})).unwrap();
+    h.run_steps(3);
+    assert!(pts(&h, "Kick", &AutoParam::Volume).is_empty());
+    drag(&mut h, from, to, 10, Modifiers { command: true, ctrl: !cfg!(target_os = "macos"), mac_cmd: cfg!(target_os = "macos"), ..Modifiers::NONE });
+    assert!(pts(&h, "Kick", &AutoParam::Volume).len() >= 2, "the command modifier draws for one stroke");
+    drag(&mut h, from, to, 10, Modifiers::NONE);
+    assert!(!h.state().engine.undo_history().is_empty());
+}
+
+#[test]
+fn shift_drag_erases_the_swept_range_and_a_locked_lane_refuses_the_pencil() {
+    let mut h = harness();
+    show(&mut h, "Kick", "volume");
+    set_tool(&mut h, "pencil");
+    let t = id(&h, "Kick");
+    let b = body(&h, "Kick", 0);
+    let (tl, zoom) = (h.state().edit_layout.timeline, h.state().engine.session().edit.zoom);
+    let at_x = |x: f32| zoom.scroll + ((x - tl[0]) as f64 * zoom.samples_per_px) as i64;
+    for i in 0..40 {
+        let value = if i % 2 == 0 { -40.0 } else { 0.0 };
+        h.state_mut()
+            .run("automation.set_point", json!({"track": t.0, "param": "volume", "at": at_x(b.min.x + 200.0 + i as f32 * 5.0), "value": value}))
+            .unwrap();
+    }
+    let (from_at, to_at) = (at_x(b.min.x + 250.0), at_x(b.min.x + 350.0));
+    let inside = |h: &Harness<SoundApp>| pts(h, "Kick", &AutoParam::Volume).iter().filter(|p| p.0 > from_at + 40_000 && p.0 < to_at - 40_000).count();
+    assert!(inside(&h) > 5);
+    let history = h.state().engine.undo_history().len();
+    drag(&mut h, pos2(b.min.x + 250.0, b.center().y), pos2(b.min.x + 350.0, b.center().y), 10, Modifiers::SHIFT);
+    assert_eq!(inside(&h), 0, "Shift+drag removed the swept points");
+    assert!(pts(&h, "Kick", &AutoParam::Volume).len() > 10, "points outside the sweep stay");
+    assert_eq!(h.state().engine.undo_history().len(), history + 1, "the erase is one undo step");
+    h.state_mut().run("automation.lane_lock", json!({"track": t.0, "index": 0})).unwrap();
+    h.run_steps(3);
+    let locked = pts(&h, "Kick", &AutoParam::Volume);
+    drag(&mut h, pos2(b.min.x + 450.0, b.max.y - 15.0), pos2(b.min.x + 520.0, b.min.y + 8.0), 8, Modifiers::NONE);
+    assert_eq!(pts(&h, "Kick", &AutoParam::Volume), locked, "a locked lane is not drawn on");
+    assert_eq!(h.state().ui.status, "Lane is locked");
+}
+
+#[test]
+fn drawing_on_a_mute_lane_only_writes_off_and_on() {
+    let mut h = harness();
+    show(&mut h, "Kick", "mute");
+    set_tool(&mut h, "pencil");
+    let b = body(&h, "Kick", 0);
+    drag(&mut h, pos2(b.min.x + 200.0, b.max.y - 8.0), pos2(b.min.x + 320.0, b.min.y + 8.0), 12, Modifiers::NONE);
+    let got = pts(&h, "Kick", &AutoParam::Mute);
+    assert!(got.len() >= 2 && got.iter().all(|(_, v)| *v == 0.0 || *v == 1.0), "{got:?}");
+    assert!(got.iter().any(|(_, v)| *v == 1.0));
+}
+
+#[test]
+fn the_track_view_pencil_is_one_undo_step() {
+    let mut h = harness();
+    let t = id(&h, "Kick");
+    h.state_mut().run("track.view", json!({"tracks": [t.0], "view": "volume"})).unwrap();
+    set_tool(&mut h, "pencil");
+    h.run_steps(3);
+    let row = h.state().edit_layout.rows.iter().find(|(i, _)| *i == t.0).unwrap().1;
+    let tl = h.state().edit_layout.timeline;
+    let (y0, y1) = (row[3] - 8.0, row[1] + 8.0);
+    let history = h.state().engine.undo_history().len();
+    drag(&mut h, pos2(tl[0] + 200.0, y0), pos2(tl[0] + 320.0, y1), 12, Modifiers::NONE);
+    let got = pts(&h, "Kick", &AutoParam::Volume);
+    assert!(got.len() >= 2, "{got:?}");
+    assert_eq!(h.state().engine.undo_history().len(), history + 1, "one undo step, not one per point");
+    assert!(h.state_mut().engine.undo());
+    assert!(pts(&h, "Kick", &AutoParam::Volume).is_empty());
+}

@@ -151,9 +151,15 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("automation.write_range", "Write Automation", [], None, "{track?, param, start?, end?, value}", has_selection, write_range),
         cmd!("automation.clear", "Clear Automation", [], None, "{track?, param?, start?, end?}", has_selection, clear_lane),
-        cmd!("automation.thin", "Thin", ["Edit", "Automation"], Some("Cmd+Alt+T"), "{tracks?, tolerance?: 0.1}", has_selection, |e, p| thin(
-            e, p, false
-        )),
+        cmd!(
+            "automation.thin",
+            "Thin",
+            ["Edit", "Automation"],
+            Some("Cmd+Alt+T"),
+            "{tracks?, tolerance?: 0.1, param?, start?, end?} (with `param` only that lane is thinned; with `start` and `end` only the points between them)",
+            has_selection,
+            |e, p| thin(e, p, false)
+        ),
         cmd!("automation.thin_all", "Thin All", ["Edit", "Automation"], None, "{tolerance?: 0.1}", has_tracks, |e, p| thin(e, p, true)),
         cmd!("automation.write_to_current", "Write to Current", ["Edit", "Automation"], Some("Cmd+/"), "{tracks?}", has_range, |e, p| write_current(
             e, p, false
@@ -561,6 +567,7 @@ fn check_tracks(e: &Engine, cmd: &str, tracks: &[TrackId], param: &AutoParam) ->
     for t in tracks {
         if let Some(tr) = e.session().track(*t) {
             check_param_for_track(cmd, tr, param)?;
+            super::auto_draw::refuse_locked(cmd, tr, param)?;
         }
     }
     Ok(())
@@ -596,6 +603,13 @@ fn midi_value(e: &mut Engine, p: &Value) -> Result<Value> {
 fn clear_lane(e: &mut Engine, p: &Value) -> Result<Value> {
     let tracks = tracks_required(e, "automation.clear", p)?;
     let param = if str_param(p, "param").is_some() { Some(lane_param(p, "automation.clear")?) } else { None };
+    if let Some(param) = &param {
+        for t in &tracks {
+            if let Some(tr) = e.session().track(*t) {
+                super::auto_draw::refuse_locked("automation.clear", tr, param)?;
+            }
+        }
+    }
     let r = range_param(e, "automation.clear", p)?;
     let (a, b) = if r.is_empty() { (i64::MIN, i64::MAX) } else { (r.start, r.end) };
     let s = e.session_mut();
@@ -615,12 +629,24 @@ fn clear_lane(e: &mut Engine, p: &Value) -> Result<Value> {
 fn thin(e: &mut Engine, p: &Value, all: bool) -> Result<Value> {
     let tracks = if all { e.session().tracks.iter().map(|t| t.id).collect() } else { tracks_required(e, "automation.thin", p)? };
     let tol = f32_or(p, "tolerance", 0.1).clamp(0.0, 100.0);
+    let only = if str_param(p, "param").is_some() { Some(lane_param(p, "automation.thin")?) } else { None };
+    let (start, end) = (position_param(e, "automation.thin", p, "start")?, position_param(e, "automation.thin", p, "end")?);
+    if let Some(param) = &only {
+        for t in &tracks {
+            if let Some(tr) = e.session().track(*t) {
+                super::auto_draw::refuse_locked("automation.thin", tr, param)?;
+            }
+        }
+    }
     let s = e.session_mut();
     let mut n = 0;
     for t in &tracks {
         if let Some(tr) = s.track_mut(*t) {
-            for l in &mut tr.automation {
-                n += l.thin(tol);
+            for l in tr.automation.iter_mut().filter(|l| only.as_ref().is_none_or(|x| x == &l.param)) {
+                n += match (start, end) {
+                    (Some(a), Some(b)) => l.thin_range(tol, a, b),
+                    _ => l.thin(tol),
+                };
             }
         }
     }

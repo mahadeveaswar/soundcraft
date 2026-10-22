@@ -57,6 +57,7 @@ pub struct HeaderLayout {
     pub param: Rect,
     pub value: Rect,
     pub follow: Rect,
+    pub draw: Rect,
 }
 
 pub fn header_layout(head: Rect) -> HeaderLayout {
@@ -68,14 +69,16 @@ pub fn header_layout(head: Rect) -> HeaderLayout {
     let bx = ax + 2.0 * bw + 7.0;
     let right = (head.max.x - 4.0).max(bx + 2.0 * bw);
     let follow = cell(right - bw, y2);
+    let draw = cell(follow.min.x - bw - 2.0, y2);
     HeaderLayout {
         read: cell(ax, y1),
         write: cell(ax + bw + 2.0, y1),
         hide: cell(ax, y2),
         lock: cell(ax + bw + 2.0, y2),
         param: Rect::from_min_max(pos2(bx, y1), pos2(right, y1 + rh)),
-        value: Rect::from_min_max(pos2(bx, y2), pos2(follow.min.x - 2.0, y2 + rh)),
+        value: Rect::from_min_max(pos2(bx, y2), pos2(draw.min.x - 2.0, y2 + rh)),
         follow,
+        draw,
     }
 }
 
@@ -305,7 +308,7 @@ pub fn changed_param(before: &Snapshot, track: u64, now: &[(AutoParam, f32)]) ->
 /// session each frame); automation playback does not change them.
 pub fn follow_update(app: &mut SoundApp, ctx: &egui::Context) {
     let s = app.engine.session_arc();
-    if s.tracks.iter().all(|t| t.shown_lanes.is_empty()) {
+    if s.tracks.iter().all(|t| t.shown_lanes.is_empty()) || stroke_active(ctx) {
         return;
     }
     let before: Snapshot = ctx.data_mut(|d| d.get_temp(egui::Id::new("auto_lane_snapshot")).unwrap_or_default());
@@ -432,6 +435,24 @@ fn header(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: &ShownLane, inde
     p.text(lay.follow.center(), Align2::CENTER_CENTER, "F", bold(10.0), if lane.follow { t.text_dark } else { t.text });
     if resp.on_hover_text("Follow: show the parameter you move").clicked() {
         let _ = app.run("automation.lane_follow", json!({"track": id.0, "index": index}));
+    }
+    // Draw: freehand curves in this lane.
+    let resp = ui.interact(lay.draw, ui.id().with(("lane_draw", id.0, index)), Sense::click());
+    p.rect_filled(
+        lay.draw,
+        4.0,
+        if lane.draw {
+            t.accent
+        } else if resp.hovered() {
+            t.button_hi
+        } else {
+            t.button
+        },
+    );
+    icons::draw(&p, lay.draw.shrink2(vec2(4.0, 1.0)), "pencil", if lane.draw { t.text_dark } else { t.text_dim });
+    let cmd_key = crate::shortcuts::shortcut_label("Cmd", ui.ctx().os().is_mac());
+    if resp.on_hover_text(format!("Draw: freehand curves in this lane (hold {cmd_key} to draw for one stroke; Shift+drag erases)")).clicked() {
+        let _ = app.run("automation.lane_draw", json!({"track": id.0, "index": index}));
     }
     param_menu(app, ui, track, lane, index, lay.param);
     value_box(app, ui, track, lane, index, lay.value);
@@ -678,6 +699,168 @@ fn height_handle(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: &ShownLan
     }
 }
 
+// ---- freehand drawing ----------------------------------------------------------------------------
+
+/// Most points one stroke update sends (the engine accepts 8192 per call).
+pub const STROKE_MAX_POINTS: usize = 8192;
+/// Thinning after a stroke removes points that change the curve by less than this share of the range.
+pub const DRAW_THIN_SHARE: f32 = 0.005;
+
+/// Where a freehand stroke has been: its last pointer sample and the span it swept.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StrokeState {
+    pub last: (Samples, f32),
+    pub span: (Samples, Samples),
+}
+
+/// The points one pointer move adds to a stroke: from the previous sample to this one, one point
+/// per `step` samples with the value interpolated (no gaps on fast drags, either direction), values
+/// limited to `range`; stepped parameters only take the range limits. Never more than
+/// [`STROKE_MAX_POINTS`]. A non-finite value gives nothing.
+pub fn stroke_points(prev: Option<(Samples, f32)>, cur: (Samples, f32), step: Samples, range: (f32, f32), stepped: bool) -> Vec<(Samples, f32)> {
+    if !cur.1.is_finite() {
+        return Vec::new();
+    }
+    let (lo, hi) = (range.0.min(range.1), range.0.max(range.1));
+    let fix = |v: f32| {
+        let v = v.clamp(lo, hi);
+        if stepped { if v >= (lo + hi) * 0.5 { hi } else { lo } } else { v }
+    };
+    let cur = (cur.0.max(0), cur.1);
+    let Some(prev) = prev.filter(|p| p.1.is_finite() && p.0 != cur.0) else { return vec![(cur.0, fix(cur.1))] };
+    let prev = (prev.0.max(0), prev.1);
+    let ((a, va), (b, vb)) = if prev.0 <= cur.0 { (prev, cur) } else { (cur, prev) };
+    if a == b {
+        return vec![(b, fix(cur.1))];
+    }
+    let span = i128::from(b) - i128::from(a);
+    let step = i128::from(step.max(1));
+    let count = ((span + step - 1) / step).clamp(1, STROKE_MAX_POINTS as i128 - 1);
+    let mut out: Vec<(Samples, f32)> = (0..=count)
+        .map(|i| {
+            let at = i64::try_from(i128::from(a) + span * i / count).unwrap_or(b);
+            let f = i as f32 / count as f32;
+            (at, fix(va + (vb - va) * f))
+        })
+        .collect();
+    out.dedup_by_key(|p| p.0);
+    out
+}
+
+/// Where a stroke point lands (snapped when snap is on) and the spacing of its points: the grid
+/// step with snap on, about four pixels otherwise.
+pub(crate) fn draw_position(s: &soundcraft_model::Session, at: Samples) -> (Samples, Samples) {
+    let at = crate::edit_window::snap(s, at.max(0));
+    let step = if crate::edit_window::snap_on(s) {
+        s.edit.grid.step_samples(at, s.sample_rate, &s.tempo, s.frame_rate).max(1)
+    } else {
+        ((s.edit.zoom.samples_per_px * 4.0) as Samples).max(1)
+    };
+    (at, step)
+}
+
+fn stroke_key(tid: TrackId, p: &AutoParam) -> String {
+    format!("lane_draw:{}:{}", tid.0, p.id())
+}
+
+/// One pointer sample of a drawing stroke: replaces the swept range with the interpolated points
+/// (one merged undo step per stroke, heard at once).
+pub(crate) fn draw_update(
+    app: &mut SoundApp,
+    tid: TrackId,
+    param: &AutoParam,
+    stroke: &mut Option<StrokeState>,
+    at: Samples,
+    value: f32,
+    range: (f32, f32),
+    stepped: bool,
+) {
+    let s = app.engine.session_arc();
+    let (at, step) = draw_position(&s, at);
+    if !value.is_finite() || stroke.is_some_and(|st| st.last == (at, value)) {
+        return;
+    }
+    let pts = stroke_points(stroke.map(|st| st.last), (at, value), step, range, stepped);
+    let (Some(first), Some(last)) = (pts.first(), pts.last()) else { return };
+    let points: Vec<_> = pts.iter().map(|(a, v)| json!({"at": a, "value": v})).collect();
+    let _ = app.engine.execute_merged("automation.draw", &json!({"track": tid.0, "param": param.id(), "points": points}), &stroke_key(tid, param));
+    let (a, b) = stroke.map_or((first.0, last.0), |st| (st.span.0.min(first.0), st.span.1.max(last.0)));
+    *stroke = Some(StrokeState { last: (at, value), span: (a, b) });
+}
+
+/// One pointer sample of an erasing stroke (Shift+drag): removes the points swept since the last sample.
+pub(crate) fn erase_update(app: &mut SoundApp, tid: TrackId, param: &AutoParam, stroke: &mut Option<StrokeState>, at: Samples) {
+    let s = app.engine.session_arc();
+    let (at, step) = draw_position(&s, at);
+    // Each update erases the whole span swept so far, so the anchors that keep the curve outside
+    // are only ever left at the two ends (not one per frame along the way).
+    let end = at.saturating_add(step);
+    let (a, b) = stroke.map_or((at, end), |st| (st.span.0.min(at), st.span.1.max(end)));
+    let key = format!("lane_erase:{}:{}", tid.0, param.id());
+    let _ = app.engine.execute_merged("automation.erase_range", &json!({"track": tid.0, "param": param.id(), "start": a, "end": b}), &key);
+    *stroke = Some(StrokeState { last: (at, 0.0), span: (a, b) });
+}
+
+/// The end of a stroke: thin what was drawn (kept in the same undo step), then close the step.
+pub(crate) fn draw_end(
+    app: &mut SoundApp,
+    tid: TrackId,
+    param: &AutoParam,
+    range: (f32, f32),
+    stepped: bool,
+    stroke: Option<StrokeState>,
+    erased: bool,
+) {
+    if let Some(st) = stroke
+        && !erased
+        && !stepped
+    {
+        let tolerance = (range.1 - range.0).abs() * DRAW_THIN_SHARE;
+        if tolerance > 0.0 && tolerance.is_finite() {
+            let params = json!({"track": tid.0, "param": param.id(), "start": st.span.0, "end": st.span.1, "tolerance": tolerance});
+            let _ = app.engine.execute_merged("automation.thin", &params, &stroke_key(tid, param));
+        }
+    }
+    app.engine.end_merge();
+}
+
+fn stroke_active_id() -> egui::Id {
+    egui::Id::new("lane_stroke_active")
+}
+
+/// True while a lane stroke is in progress (the follow logic stays out of the way).
+pub fn stroke_active(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(stroke_active_id()).unwrap_or(false))
+}
+
+/// Clears the in-progress flag (the pointer is up; the stroke finishes this frame).
+pub(crate) fn clear_stroke_flag(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.insert_temp(stroke_active_id(), false));
+}
+
+/// The status hint for drawing while the track's automation is Off (shown once).
+pub(crate) fn off_hint(app: &mut SoundApp, ctx: &egui::Context, track: &Track) {
+    if track.mixer.automation_mode.reads() {
+        return;
+    }
+    let id = egui::Id::new("lane_off_hint");
+    if !ctx.data(|d| d.get_temp::<bool>(id).unwrap_or(false)) {
+        ctx.data_mut(|d| d.insert_temp(id, true));
+        app.ui.status = "Automation is Off on this track: the drawn curve will not play".into();
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum StrokeMode {
+    Draw,
+    Erase,
+}
+
+/// True when a lane of `p` on `t` is locked against edits.
+pub fn lane_locked(t: &Track, p: &AutoParam) -> bool {
+    t.shown_lanes.iter().any(|l| l.locked && &l.param == p)
+}
+
 fn body(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: &ShownLane, index: usize, rect: Rect, tl: Rect) {
     let t = Tokens::current();
     let s = app.engine.session_arc();
@@ -696,9 +879,16 @@ fn body(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: &ShownLane, index:
     let pid = lane.param.id();
     let tid = track.id.0;
     let hit = |at: Pos2| breakpoint_at(&s, tl, rect, track, &lane.param, at);
+    let mods = ui.input(|i| i.modifiers);
+    // Drawing is on with the Pencil tool or the lane's Draw button; the command modifier draws
+    // for one stroke from an empty spot.
+    let draw_on = s.edit.tool == soundcraft_model::Tool::Pencil || lane.draw;
+    let stepped = is_toggle(track, &lane.param);
     if resp.hovered() {
         ui.ctx().set_cursor_icon(if lane.locked {
             egui::CursorIcon::NotAllowed
+        } else if draw_on || (mods.command && hit(pos).is_none()) {
+            egui::CursorIcon::Crosshair
         } else if hit(pos).is_some() {
             egui::CursorIcon::Grab
         } else {
@@ -706,40 +896,77 @@ fn body(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: &ShownLane, index:
         });
     }
     if lane.locked {
+        if resp.drag_started() || resp.clicked() {
+            app.ui.status = "Lane is locked".into();
+        }
         return;
     }
     let value_at = |y: f32| {
         let v = auto_value(rect, range, y);
-        if is_toggle(track, &lane.param) { if v > (range.0 + range.1) * 0.5 { range.1 } else { range.0 } } else { v }
+        if stepped { if v > (range.0 + range.1) * 0.5 { range.1 } else { range.0 } } else { v }
     };
-    if resp.drag_started()
-        && let Some(origin) = ui.input(|i| i.pointer.press_origin())
-        && let Some(at) = hit(origin)
-    {
-        ui.data_mut(|d| d.insert_temp(resp.id, at));
-    }
-    if resp.dragged()
-        && let Some(from) = ui.data(|d| d.get_temp::<i64>(resp.id))
-        && let Some(points) = track.lane(&lane.param).map(|l| l.points.as_slice())
-        && let Some(i) = points.iter().position(|pt| pt.at == from)
-    {
-        let after = i.checked_sub(1).and_then(|j| points.get(j)).map_or(0, |pt| pt.at.saturating_add(1));
-        let before = points.get(i + 1).map_or(i64::MAX, |pt| pt.at.saturating_sub(1));
-        let to = snap(&s, sample_at(&s, tl, pos.x).max(0)).clamp(after, before.max(after));
-        let value = value_at(pos.y);
-        if to != from || points.get(i).is_some_and(|pt| (pt.value - value).abs() > 1e-6) {
-            let key = format!("lane_breakpoint:{tid}:{pid}");
-            if to != from {
-                let clear = json!({"track": tid, "param": pid, "start": from, "end": from.saturating_add(1)});
-                let _ = app.engine.execute_merged("automation.clear", &clear, &key);
+    let mode_id = resp.id.with("stroke_mode");
+    let state_id = resp.id.with("stroke_state");
+    let origin = ui.input(|i| i.pointer.press_origin());
+    if resp.drag_started() {
+        let origin_hit = origin.and_then(hit);
+        if draw_on || (mods.command && origin_hit.is_none()) {
+            let mode = if mods.shift { StrokeMode::Erase } else { StrokeMode::Draw };
+            ui.data_mut(|d| d.insert_temp(mode_id, mode));
+            if mode == StrokeMode::Draw {
+                off_hint(app, ui.ctx(), track);
             }
-            let _ = app.engine.execute_merged("automation.set_point", &json!({"track": tid, "param": pid, "at": to, "value": value}), &key);
-            ui.data_mut(|d| d.insert_temp(resp.id, to));
+        } else if let Some(at) = origin_hit {
+            ui.data_mut(|d| d.insert_temp(resp.id, at));
         }
     }
-    if resp.drag_stopped() {
-        ui.data_mut(|d| d.remove::<i64>(resp.id));
-        app.engine.end_merge();
+    let mode = ui.data(|d| d.get_temp::<StrokeMode>(mode_id));
+    if let Some(mode) = mode {
+        ui.ctx().data_mut(|d| d.insert_temp(stroke_active_id(), true));
+        if resp.dragged() {
+            let mut stroke = ui.data(|d| d.get_temp::<StrokeState>(state_id));
+            let at = sample_at(&s, tl, pos.x).max(0);
+            match mode {
+                StrokeMode::Draw => draw_update(app, track.id, &lane.param, &mut stroke, at, auto_value(rect, range, pos.y), range, stepped),
+                StrokeMode::Erase => erase_update(app, track.id, &lane.param, &mut stroke, at),
+            }
+            if let Some(st) = stroke {
+                ui.data_mut(|d| d.insert_temp(state_id, st));
+            }
+        }
+        if resp.drag_stopped() {
+            let stroke = ui.data(|d| d.get_temp::<StrokeState>(state_id));
+            draw_end(app, track.id, &lane.param, range, stepped, stroke, mode == StrokeMode::Erase);
+            ui.data_mut(|d| {
+                d.remove::<StrokeMode>(mode_id);
+                d.remove::<StrokeState>(state_id);
+            });
+            ui.ctx().data_mut(|d| d.insert_temp(stroke_active_id(), false));
+        }
+    } else {
+        if resp.dragged()
+            && let Some(from) = ui.data(|d| d.get_temp::<i64>(resp.id))
+            && let Some(points) = track.lane(&lane.param).map(|l| l.points.as_slice())
+            && let Some(i) = points.iter().position(|pt| pt.at == from)
+        {
+            let after = i.checked_sub(1).and_then(|j| points.get(j)).map_or(0, |pt| pt.at.saturating_add(1));
+            let before = points.get(i + 1).map_or(i64::MAX, |pt| pt.at.saturating_sub(1));
+            let to = snap(&s, sample_at(&s, tl, pos.x).max(0)).clamp(after, before.max(after));
+            let value = value_at(pos.y);
+            if to != from || points.get(i).is_some_and(|pt| (pt.value - value).abs() > 1e-6) {
+                let key = format!("lane_breakpoint:{tid}:{pid}");
+                if to != from {
+                    let clear = json!({"track": tid, "param": pid, "start": from, "end": from.saturating_add(1)});
+                    let _ = app.engine.execute_merged("automation.clear", &clear, &key);
+                }
+                let _ = app.engine.execute_merged("automation.set_point", &json!({"track": tid, "param": pid, "at": to, "value": value}), &key);
+                ui.data_mut(|d| d.insert_temp(resp.id, to));
+            }
+        }
+        if resp.drag_stopped() {
+            ui.data_mut(|d| d.remove::<i64>(resp.id));
+            app.engine.end_merge();
+        }
     }
     if resp.clicked() && hit(pos).is_none() {
         let at = snap(&s, sample_at(&s, tl, pos.x).max(0));
@@ -749,6 +976,39 @@ fn body(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: &ShownLane, index:
         && let Some(at) = hit(pos)
     {
         let _ = app.run("automation.clear", json!({"track": tid, "param": pid, "start": at, "end": at.saturating_add(1)}));
+    }
+    // In draw mode a right-click off a point opens a small menu (losing a lane costs more than a
+    // piano roll controller lane, so it does not clear at once).
+    if draw_on {
+        let menu_id = resp.id.with("menu_ok");
+        let ok = if resp.secondary_clicked() {
+            let ok = hit(pos).is_none();
+            ui.data_mut(|d| d.insert_temp(menu_id, ok));
+            ok
+        } else {
+            ui.data(|d| d.get_temp::<bool>(menu_id).unwrap_or(false))
+        };
+        if ok {
+            resp.context_menu(|ui| draw_menu(app, ui, track, &lane.param, range));
+        }
+    }
+}
+
+fn draw_menu(app: &mut SoundApp, ui: &mut Ui, track: &Track, param: &AutoParam, range: (f32, f32)) {
+    let (tid, pid) = (track.id.0, param.id());
+    let sel = app.engine.session().edit.selection;
+    if ui.add_enabled(!sel.is_empty(), egui::Button::new("Clear in Selection")).clicked() {
+        let _ = app.run("automation.clear", json!({"track": tid, "param": pid, "start": sel.start, "end": sel.end}));
+        ui.close();
+    }
+    if ui.button("Clear Lane").clicked() {
+        let _ = app.run("automation.clear", json!({"track": tid, "param": pid, "start": 0, "end": soundcraft_time::MAX_POSITION}));
+        ui.close();
+    }
+    if ui.button("Thin Lane").clicked() {
+        let tolerance = (range.1 - range.0).abs() * DRAW_THIN_SHARE;
+        let _ = app.run("automation.thin", json!({"track": tid, "param": pid, "tolerance": tolerance}));
+        ui.close();
     }
 }
 
@@ -780,7 +1040,7 @@ mod tests {
             for w in [136.0, 180.0, 400.0] {
                 let head = Rect::from_min_size(pos2(10.0, 20.0), vec2(w, h));
                 let l = header_layout(head);
-                let all = [l.read, l.write, l.hide, l.lock, l.param, l.value, l.follow];
+                let all = [l.read, l.write, l.hide, l.lock, l.param, l.value, l.follow, l.draw];
                 for (i, a) in all.iter().enumerate() {
                     assert!(head.contains_rect(*a), "control {i} outside at {w}x{h}");
                     for b in &all[i + 1..] {
@@ -826,6 +1086,32 @@ mod tests {
         assert_eq!(changed_param(&before, 1, &now), None);
         before.insert((1, AutoParam::Pan(0)), 0.5);
         assert_eq!(changed_param(&before, 1, &now), Some(AutoParam::Pan(0)));
+    }
+
+    #[test]
+    fn stroke_points_leave_no_gaps_in_either_direction() {
+        let fwd = stroke_points(Some((0, 0.0)), (1000, 10.0), 100, (0.0, 10.0), false);
+        assert_eq!(fwd.first(), Some(&(0, 0.0)));
+        assert_eq!(fwd.last(), Some(&(1000, 10.0)));
+        assert!(fwd.windows(2).all(|w| w[1].0 - w[0].0 <= 100 && w[1].0 > w[0].0), "ordered and within one step");
+        assert!((fwd[5].1 - 5.0).abs() < 1e-4, "linear in between: {:?}", fwd[5]);
+        let back = stroke_points(Some((1000, 10.0)), (0, 0.0), 100, (0.0, 10.0), false);
+        assert_eq!(back, fwd, "a right-to-left drag gives the same curve, ordered");
+        assert_eq!(stroke_points(None, (50, 3.0), 100, (0.0, 10.0), false), vec![(50, 3.0)]);
+        assert_eq!(stroke_points(Some((50, 1.0)), (50, 3.0), 100, (0.0, 10.0), false), vec![(50, 3.0)], "same sample: one point");
+    }
+
+    #[test]
+    fn stroke_points_clamp_cap_and_step() {
+        let clamped = stroke_points(Some((0, -5.0)), (10, 99.0), 5, (0.0, 10.0), false);
+        assert!(clamped.iter().all(|p| (0.0..=10.0).contains(&p.1)));
+        let many = stroke_points(Some((0, 0.0)), (10_000_000, 1.0), 1, (0.0, 1.0), false);
+        assert!(many.len() <= STROKE_MAX_POINTS && many.last().map(|p| p.0) == Some(10_000_000), "capped at the engine limit: {}", many.len());
+        let stepped = stroke_points(Some((0, 0.0)), (100, 127.0), 10, (0.0, 127.0), true);
+        assert!(stepped.iter().all(|p| p.1 == 0.0 || p.1 == 127.0), "stepped values only: {stepped:?}");
+        assert!(stepped.first().is_some_and(|p| p.1 == 0.0) && stepped.last().is_some_and(|p| p.1 == 127.0));
+        assert!(stroke_points(Some((0, 0.0)), (10, f32::NAN), 5, (0.0, 1.0), false).is_empty());
+        assert!(stroke_points(Some((i64::MAX, 0.0)), (i64::MAX - 10, 1.0), 4, (0.0, 1.0), false).len() > 1, "huge positions do not overflow");
     }
 
     fn instrument() -> Track {

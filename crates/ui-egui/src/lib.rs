@@ -298,7 +298,7 @@ pub enum Gesture {
     Scrub { last: Samples },
     Fader { track: TrackId, start_db: f32 },
     ClipGain { clip: soundcraft_model::ClipId, track: TrackId, pos: f32, anchor: (f32, f32), fine: bool, fader_bottom: egui::Pos2 },
-    Pencil { track: TrackId, points: Vec<(Samples, f32)> },
+    Pencil { track: TrackId, stroke: Option<auto_lanes_ui::StrokeState>, erase: bool },
     Breakpoint { track: TrackId, param: soundcraft_model::AutoParam, at: Samples },
     MidiClip { track: TrackId, from: Samples, to: Samples },
     ZoomBox { start: f32 },
@@ -1235,7 +1235,11 @@ impl SoundApp {
                 self.gesture = None;
             }
             // Keep a running automation pass merged until playback stops.
-            if !ctx.egui_wants_keyboard_input() && self.touched.is_empty() {
+            // A freehand stroke ends its own merge on release (after thinning what it drew).
+            let drawing = matches!(self.gesture, Some(Gesture::Pencil { .. })) || auto_lanes_ui::stroke_active(ctx);
+            if drawing {
+                auto_lanes_ui::clear_stroke_flag(ctx);
+            } else if !ctx.egui_wants_keyboard_input() && self.touched.is_empty() {
                 self.engine.end_merge();
             }
         }
