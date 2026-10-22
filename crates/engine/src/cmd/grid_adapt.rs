@@ -12,7 +12,7 @@ pub const GRID_ADAPTIVE: &str = "grid.adaptive";
 pub const MIN_STEP_PX: f64 = 12.0;
 
 pub fn specs() -> Vec<CommandSpec> {
-    vec![cmd!(view "edit.grid_adaptive", "Adapt Grid to Zoom", [], None, "{value?: bool}", always, |e, p| {
+    vec![cmd!(noundo "edit.grid_adaptive", "Adapt Grid to Zoom", [], None, "{value?: bool}", always, |e, p| {
         let s = e.session_mut();
         let on = p.get("value").and_then(Value::as_bool).unwrap_or(!s.edit.flag(GRID_ADAPTIVE));
         s.edit.set_flag(GRID_ADAPTIVE, on);

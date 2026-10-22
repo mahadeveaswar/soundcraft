@@ -319,9 +319,9 @@ fn paste(e: &mut Engine, p: &Value) -> Result<Value> {
     let s = e.session();
     let at = match given {
         Some(at) => at,
-        None if s.edit.edit_mode == EditMode::GridRelative => {
-            s.edit.grid.line_at_or_before(s.edit.selection.start, s.sample_rate, &s.tempo, s.frame_rate).saturating_add(cb.grid_offset)
-        }
+        None if s.edit.edit_mode == EditMode::GridRelative => grid_adapt::effective_grid(s, s.edit.selection.start)
+            .line_at_or_before(s.edit.selection.start, s.sample_rate, &s.tempo, s.frame_rate)
+            .saturating_add(cb.grid_offset),
         None => s.edit.selection.start,
     };
     let sh = shuffle(s) && !cb.automation_only;
@@ -651,7 +651,7 @@ fn separate_on_grid(e: &mut Engine, p: &Value) -> Result<Value> {
     let tracks = tracks_required(e, "edit.separate_on_grid", p)?;
     let r = range_param(e, "edit.separate_on_grid", p)?;
     let s = e.session_mut();
-    let lines = s.edit.grid.lines(r.start, r.end, s.sample_rate, &s.tempo, s.frame_rate, 10_000);
+    let lines = grid_adapt::effective_grid(s, r.start).lines(r.start, r.end, s.sample_rate, &s.tempo, s.frame_rate, 10_000);
     let mut n = 0;
     for t in &tracks {
         for at in &lines {
