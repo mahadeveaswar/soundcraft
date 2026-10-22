@@ -156,6 +156,22 @@ pub struct LoudnessMeter {
     max_momentary: f32,
 }
 
+/// A loudness reading: what a live meter shows (all LUFS / dBTP, `MIN_DB` when nothing is measured).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LoudnessReading {
+    pub momentary: f32,
+    pub short_term: f32,
+    pub integrated: f32,
+    pub max_momentary: f32,
+    pub true_peak_db: f32,
+}
+
+impl Default for LoudnessReading {
+    fn default() -> Self {
+        Self { momentary: MIN_DB, short_term: MIN_DB, integrated: MIN_DB, max_momentary: MIN_DB, true_peak_db: MIN_DB }
+    }
+}
+
 /// Loudness from mean-square energy (BS.1770 eq. 2).
 fn lufs(energy: f64) -> f32 {
     if energy <= 1e-20 { MIN_DB } else { (-0.691 + 10.0 * energy.log10()) as f32 }
@@ -374,6 +390,17 @@ impl LoudnessMeter {
             }
         }
         if n2 == 0 { MIN_DB } else { lufs(e2 / n2 as f64) }
+    }
+
+    /// All readings at once. Allocation-free, so the audio thread may call it each block.
+    pub fn reading(&self) -> LoudnessReading {
+        LoudnessReading {
+            momentary: self.momentary_lufs(),
+            short_term: self.short_term_lufs(),
+            integrated: self.integrated_lufs(),
+            max_momentary: self.max_momentary_lufs(),
+            true_peak_db: self.true_peak_db(),
+        }
     }
 
     /// Maximum true peak (4× oversampled) in dBTP.

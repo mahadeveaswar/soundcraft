@@ -52,6 +52,8 @@ pub use soundcraft_mix::{mark_audio_thread, on_audio_thread};
 pub struct MeterSnapshot {
     pub tracks: HashMap<TrackId, StripMeter>,
     pub main: StripMeter,
+    /// Loudness of the main mix (momentary, short-term, integrated LUFS, true peak).
+    pub loudness: soundcraft_dsp::meter::LoudnessReading,
 }
 
 /// Plugin states read from the live instances: `(track, slot or INSTRUMENT_SLOT, state)`.
@@ -74,6 +76,8 @@ enum Cmd {
     },
     Stop,
     Locate(Samples),
+    /// Clear the main mix's loudness measurement.
+    ResetLoudness,
 }
 
 struct Shared {
@@ -216,6 +220,12 @@ impl AudioState {
             match c {
                 Cmd::Input(r) => self.input = Some(r),
                 Cmd::Recording(r) => self.recording = r,
+                Cmd::ResetLoudness => {
+                    self.mix.reset_loudness();
+                    if let Ok(mut m) = self.shared.meters.try_lock() {
+                        m.loudness = self.mix.main_loudness;
+                    }
+                }
                 Cmd::Session(s, instances) => {
                     changed = true;
                     if (s.sample_rate.as_f64() - self.session.sample_rate.as_f64()).abs() > 0.5 {
@@ -317,6 +327,7 @@ impl AudioState {
         self.pending_len = n;
         if let Ok(mut m) = self.shared.meters.try_lock() {
             m.main.copy_from(&self.mix.main_meter);
+            m.loudness = self.mix.main_loudness;
             for (k, v) in &self.mix.meters {
                 match m.tracks.get_mut(k) {
                     Some(d) => d.copy_from(v),
@@ -780,6 +791,11 @@ impl Player {
         let _ = self.tx.send(Cmd::Recording(on));
     }
 
+    /// Restart the master loudness measurement (integrated, maximum momentary, true peak).
+    pub fn reset_loudness(&self) {
+        let _ = self.tx.send(Cmd::ResetLoudness);
+    }
+
     pub fn stop(&self) {
         self.shared.playing.store(false, Ordering::Relaxed);
         let _ = self.tx.send(Cmd::Stop);
@@ -845,6 +861,7 @@ fn copy_meter_snapshot(source: &MeterSnapshot, out: &mut MeterSnapshot) {
         out.tracks.entry(*id).or_default().copy_from(meter);
     }
     out.main.copy_from(&source.main);
+    out.loudness = source.loudness;
 }
 
 impl Side {

@@ -347,6 +347,11 @@ pub struct MixEngine {
     main_fmt: ChannelFormat,
     pub meters: HashMap<TrackId, StripMeter>,
     pub main_meter: StripMeter,
+    /// BS.1770 loudness of the main mix, fed every rendered block. It survives `reset` (stop and
+    /// seek); [`MixEngine::reset_loudness`] clears it.
+    loudness: soundcraft_dsp::meter::LoudnessMeter,
+    /// The latest reading of `loudness`, refreshed after every block.
+    pub main_loudness: soundcraft_dsp::meter::LoudnessReading,
     pub pan_law: PanLaw,
     /// Last rendered position end (to detect seeks).
     last_end: Samples,
@@ -439,6 +444,8 @@ impl MixEngine {
             main_fmt: ChannelFormat::Stereo,
             meters: HashMap::new(),
             main_meter: StripMeter::default(),
+            loudness: soundcraft_dsp::meter::LoudnessMeter::new(sample_rate, MAIN_CHANNELS),
+            main_loudness: soundcraft_dsp::meter::LoudnessReading::default(),
             pan_law: PanLaw::Minus3,
             last_end: 0,
             synced: (0, 0, 0),
@@ -510,6 +517,12 @@ impl MixEngine {
         self.main.len()
     }
 
+    /// Clears the main mix's loudness measurement (integrated, maximum momentary, true peak).
+    pub fn reset_loudness(&mut self) {
+        self.loudness.reset();
+        self.main_loudness = soundcraft_dsp::meter::LoudnessReading::default();
+    }
+
     /// Reset all plugin state (on stop / seek).
     pub fn reset(&mut self) {
         for s in self.strips.values_mut() {
@@ -546,6 +559,9 @@ impl MixEngine {
         self.main_fmt = s.main_format();
         if self.main.len() != main_ch {
             self.main = vec![vec![0.0; mb]; main_ch];
+            // A new channel layout is a new measurement (the weights differ).
+            self.loudness = soundcraft_dsp::meter::LoudnessMeter::new(self.sample_rate, main_ch);
+            self.main_loudness = soundcraft_dsp::meter::LoudnessReading::default();
         }
         let mut cx = SlotCtx { sr: self.sample_rate, mb, external: self.external, adopt: &mut self.adopt, retired: &mut self.retired };
         let gone: Vec<TrackId> = self.strips.keys().filter(|id| s.track(**id).is_none()).copied().collect();
@@ -826,6 +842,8 @@ impl MixEngine {
             }
         }
         self.main_meter.measure(&self.main, frames, 0.0);
+        self.loudness.process(&self.main, frames);
+        self.main_loudness = self.loudness.reading();
     }
 
     /// The delay-compensation latency written onto `bus`: the slowest track insert, plus the
@@ -2480,6 +2498,55 @@ mod tests {
             pl.clips.push(Clip::audio(id, "dc", SourceId(900), 0, 0, frames as i64));
         }
         t
+    }
+
+    /// A 1 kHz tone on a mono track, `secs` long.
+    fn tone_session(amp: f32, secs: usize) -> (Session, usize) {
+        let frames = 48_000 * secs;
+        let mut s = Session::default();
+        let t = s.add_track(TrackKind::Audio, ChannelFormat::Mono, None);
+        let wave: Vec<f32> = (0..frames).map(|i| amp * (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / 48_000.0).sin()).collect();
+        s.pool.insert(SourceId(900), Arc::new(SourceAudio::new(AudioBuffer { sample_rate: 48_000, channels: vec![wave] })));
+        let id = s.new_clip_id();
+        if let Some(pl) = s.track_mut(t).and_then(|t| t.playlist_mut()) {
+            pl.clips.push(Clip::audio(id, "tone", SourceId(900), 0, 0, frames as i64));
+        }
+        (s, frames)
+    }
+
+    #[test]
+    fn live_loudness_agrees_with_the_offline_measurement_on_a_tone() {
+        let (s, frames) = tone_session(0.25, 5);
+        let offline = render_range(&s, Range::new(0, frames as i64), 4096);
+        let mut m = soundcraft_dsp::meter::LoudnessMeter::new(48_000.0, offline.len());
+        m.process(&offline, frames);
+        let want = m.reading();
+        assert!(want.integrated > -40.0 && want.integrated < -10.0, "{want:?}");
+        for block in [512usize, 480] {
+            let mut eng = MixEngine::new(48_000.0, block);
+            let mut out = vec![vec![0.0; block]; 2];
+            let mut pos = 0usize;
+            while pos < frames {
+                let n = block.min(frames - pos);
+                eng.render(&s, pos as i64, n, &mut out);
+                pos += n;
+            }
+            let got = eng.main_loudness;
+            for (name, a, b) in [
+                ("momentary", got.momentary, want.momentary),
+                ("short_term", got.short_term, want.short_term),
+                ("integrated", got.integrated, want.integrated),
+                ("true_peak", got.true_peak_db, want.true_peak_db),
+            ] {
+                assert!((a - b).abs() < 0.01, "block {block} {name}: live {a} vs offline {b}");
+            }
+            // A steady tone reads the same at every window length.
+            assert!((got.momentary - got.integrated).abs() < 0.1 && (got.short_term - got.integrated).abs() < 0.1, "{got:?}");
+            eng.reset();
+            assert_eq!(eng.main_loudness.integrated, got.integrated, "stop and seek keep the measurement");
+            eng.reset_loudness();
+            assert_eq!(eng.main_loudness, soundcraft_dsp::meter::LoudnessReading::default());
+        }
     }
 
     #[test]

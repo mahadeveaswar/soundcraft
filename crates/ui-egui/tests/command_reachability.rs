@@ -29,6 +29,7 @@ const KNOWN_UNREACHED: &[&str] = &[
     "track.load_preset",
     "track.pin",
     "track.trim_automation_write",
+    "template.instrument_rack", // T6 adds the dialog; remove this entry then
     "track.vca",
     "transport.pause",
     "transport.status",
