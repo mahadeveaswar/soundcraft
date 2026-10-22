@@ -336,6 +336,93 @@ pub struct Tokens {
     pub sel_strip_bg: Color32,
     /// "not connected" and other warnings in the info row.
     pub status_warn: Color32,
+    // --- U1b: edit_window.rs colours; every palette keeps the Dark value except clip_style_light ---
+    /// Tempo editor lane background.
+    pub tempo_lane_bg: Color32,
+    /// Tempo editor curve and points.
+    pub tempo_lane_line: Color32,
+    /// Tempo editor axis labels.
+    pub tempo_lane_label: Color32,
+    /// Tempo ruler change marker.
+    pub tempo_marker: Color32,
+    /// Tempo ruler values.
+    pub tempo_value_text: Color32,
+    /// Meter ruler values.
+    pub meter_value_text: Color32,
+    /// Key signature ruler background.
+    pub key_lane_bg: Color32,
+    /// Key ruler default label (C major).
+    pub key_lane_text: Color32,
+    /// Key ruler change line.
+    pub key_lane_line: Color32,
+    /// Key ruler change names.
+    pub key_lane_name: Color32,
+    /// Chords ruler background.
+    pub chord_lane_bg: Color32,
+    /// Marker colour when the marker has none.
+    pub marker_default: Color32,
+    /// Marker line over the tracks when the marker has no colour.
+    pub marker_default_line: Color32,
+    /// Track header timebase key, ticks.
+    pub timebase_ticks: Color32,
+    /// Track header timebase key, samples.
+    pub timebase_samples: Color32,
+    /// Record-arm dot while armed.
+    pub rec_dot_lit: Color32,
+    /// Header meter and Mix readout well.
+    pub meter_well: Color32,
+    /// Rim of the header volume and pan readout.
+    pub readout_rim: Color32,
+    /// Rule inside the header readout.
+    pub readout_rule: Color32,
+    /// Outline of an opaque clip body and of the live recording take.
+    pub clip_outline_dark: Color32,
+    /// Waveform of a selected opaque clip.
+    pub clip_wave_selected: Color32,
+    /// Muted or dimmed clip waveform and name bar.
+    pub clip_muted: Color32,
+    /// Clip name text.
+    pub clip_name_ink: Color32,
+    /// Media offline caption.
+    pub media_offline: Color32,
+    /// MIDI notes of a selected opaque clip.
+    pub clip_note_selected: Color32,
+    /// Clip rating and time overlay text.
+    pub clip_overlay_ink: Color32,
+    /// Clip gain line and points.
+    pub clip_gain_line: Color32,
+    /// Clip gain icon and readout.
+    pub clip_gain_icon: Color32,
+    /// Fade curves over clips.
+    pub clip_fade_curve: Color32,
+    /// Fade curve handle outline.
+    pub clip_fade_handle: Color32,
+    /// Fade curve handle outline while hovered or dragged.
+    pub clip_fade_handle_hot: Color32,
+    /// Sync point marker and clip lock glyph.
+    pub clip_sync_mark: Color32,
+    /// Sync point line.
+    pub clip_sync_line: Color32,
+    /// Clip FX indicator.
+    pub clip_fx_text: Color32,
+    /// Overlap shadow over a covered clip.
+    pub clip_overlap_shadow: Color32,
+    /// Automation breakpoint fill.
+    pub auto_point_fill: Color32,
+    /// Clip gain fader popup panel.
+    pub fader_popup_bg: Color32,
+    /// Clip gain fader popup outline.
+    pub fader_popup_border: Color32,
+    /// Clip gain fader popup zero tick.
+    pub fader_popup_zero: Color32,
+    /// Clip gain fader popup cap.
+    pub fader_popup_cap: Color32,
+    /// Clip gain fader popup cap outline.
+    pub fader_popup_cap_edge: Color32,
+    /// Ghost outlines and trim line while dragging clips.
+    pub gesture_outline: Color32,
+    /// Paler clip bodies with a deep waveform and dark MIDI notes (the Light palette's clip style).
+    pub clip_style_light: bool,
 }
 
 impl Tokens {
@@ -478,6 +565,49 @@ impl Tokens {
         info_row_bg: Color32::from_rgb(36, 36, 38),
         sel_strip_bg: Color32::from_rgb(33, 33, 35),
         status_warn: Color32::from_rgb(232, 148, 40),
+        tempo_lane_bg: Color32::from_rgb(24, 40, 32),
+        tempo_lane_line: Color32::from_rgb(140, 230, 160),
+        tempo_lane_label: Color32::from_rgb(120, 160, 130),
+        tempo_marker: Color32::from_rgb(220, 60, 50),
+        tempo_value_text: Color32::from_rgb(230, 240, 230),
+        meter_value_text: Color32::from_rgb(230, 236, 240),
+        key_lane_bg: Color32::from_rgb(64, 52, 88),
+        key_lane_text: Color32::from_rgb(220, 214, 236),
+        key_lane_line: Color32::from_rgb(200, 180, 240),
+        key_lane_name: Color32::from_rgb(236, 230, 250),
+        chord_lane_bg: Color32::from_rgb(40, 56, 60),
+        marker_default: Color32::from_rgb(232, 200, 64),
+        marker_default_line: Color32::from_rgba_premultiplied(64, 55, 18, 70),
+        timebase_ticks: Color32::from_rgb(86, 172, 103),
+        timebase_samples: Color32::from_rgb(100, 184, 249),
+        rec_dot_lit: Color32::WHITE,
+        meter_well: Color32::BLACK,
+        readout_rim: Color32::from_rgb(15, 15, 15),
+        readout_rule: Color32::from_rgb(35, 35, 35),
+        clip_outline_dark: Color32::from_rgb(10, 10, 10),
+        clip_wave_selected: Color32::from_rgb(16, 16, 18),
+        clip_muted: Color32::from_rgb(70, 70, 70),
+        clip_name_ink: Color32::from_rgb(12, 12, 12),
+        media_offline: Color32::from_rgb(220, 120, 120),
+        clip_note_selected: Color32::from_rgb(16, 16, 16),
+        clip_overlay_ink: Color32::from_rgb(16, 16, 16),
+        clip_gain_line: Color32::from_rgba_premultiplied(170, 170, 170, 170),
+        clip_gain_icon: Color32::from_rgba_premultiplied(200, 200, 200, 200),
+        clip_fade_curve: Color32::from_rgba_premultiplied(90, 90, 90, 90),
+        clip_fade_handle: Color32::from_rgba_premultiplied(200, 200, 200, 200),
+        clip_fade_handle_hot: Color32::from_rgba_premultiplied(230, 230, 230, 230),
+        clip_sync_mark: Color32::WHITE,
+        clip_sync_line: Color32::from_rgba_premultiplied(90, 90, 90, 90),
+        clip_fx_text: Color32::from_rgb(250, 230, 120),
+        clip_overlap_shadow: Color32::from_black_alpha(70),
+        auto_point_fill: Color32::from_rgb(40, 40, 40),
+        fader_popup_bg: Color32::from_rgb(38, 38, 40),
+        fader_popup_border: Color32::from_rgb(10, 10, 10),
+        fader_popup_zero: Color32::from_rgb(150, 150, 150),
+        fader_popup_cap: Color32::from_rgb(210, 210, 210),
+        fader_popup_cap_edge: Color32::from_rgb(20, 20, 20),
+        gesture_outline: Color32::WHITE,
+        clip_style_light: false,
     };
 
     pub const LIGHT: Tokens = Tokens {
@@ -584,6 +714,7 @@ impl Tokens {
         info_row_bg: Color32::from_rgb(204, 206, 210),
         sel_strip_bg: Color32::from_rgb(210, 212, 216),
         status_warn: Color32::from_rgb(176, 96, 8),
+        clip_style_light: true,
         ..Tokens::DARK
     };
 
@@ -762,17 +893,18 @@ pub fn clip_colors(rgb: [u8; 3], selected: bool) -> (Color32, Color32, Color32) 
         return (body, Color32::from_rgb(r, g, b), if selected { tint(0.8) } else { tint(0.5) });
     }
     let bar = shade(0.9);
-    if is_light() {
+    if tk.clip_style_light {
         // A paler body and a waveform in a deep shade of the clip's own colour.
         return if selected { (tint(0.2), bar, shade(0.22)) } else { (tint(0.45), bar, shade(0.32)) };
     }
     // A dark body and a light waveform in the clip's own colour; selection inverts them.
-    if selected { (shade(0.7), bar, Color32::from_rgb(16, 16, 18)) } else { (shade(0.34), bar, tint(0.35)) }
+    if selected { (shade(0.7), bar, tk.clip_wave_selected) } else { (shade(0.34), bar, tint(0.35)) }
 }
 
 /// The outline of a clip body: near-black for opaque palettes, the clip colour for translucent ones.
 pub fn clip_outline(color: [u8; 3]) -> Color32 {
-    if Tokens::current().clip_fill_alpha < 255 { rgb(color) } else { Color32::from_rgb(10, 10, 10) }
+    let tk = Tokens::current();
+    if tk.clip_fill_alpha < 255 { rgb(color) } else { tk.clip_outline_dark }
 }
 
 pub fn rgb(c: [u8; 3]) -> Color32 {
@@ -983,6 +1115,56 @@ mod tests {
         }
     }
 
+    #[test]
+    fn edit_window_colours_equal_the_old_literals_in_every_palette() {
+        let rgb = Color32::from_rgb;
+        let white = |a: u8| Color32::from_rgba_unmultiplied(255, 255, 255, a);
+        for tk in [Tokens::DARK, Tokens::LIGHT, Tokens::MIDNIGHT] {
+            assert_eq!(tk.tempo_lane_bg, rgb(24, 40, 32));
+            assert_eq!(tk.tempo_lane_line, rgb(140, 230, 160));
+            assert_eq!(tk.tempo_lane_label, rgb(120, 160, 130));
+            assert_eq!(tk.tempo_marker, rgb(220, 60, 50));
+            assert_eq!(tk.tempo_value_text, rgb(230, 240, 230));
+            assert_eq!(tk.meter_value_text, rgb(230, 236, 240));
+            assert_eq!(tk.key_lane_bg, rgb(64, 52, 88));
+            assert_eq!(tk.key_lane_text, rgb(220, 214, 236));
+            assert_eq!(tk.key_lane_line, rgb(200, 180, 240));
+            assert_eq!(tk.key_lane_name, rgb(236, 230, 250));
+            assert_eq!(tk.chord_lane_bg, rgb(40, 56, 60));
+            assert_eq!(tk.marker_default, rgb(232, 200, 64));
+            assert_eq!(tk.marker_default_line, Color32::from_rgba_unmultiplied(232, 200, 64, 70));
+            assert_eq!(tk.timebase_ticks, rgb(86, 172, 103));
+            assert_eq!(tk.timebase_samples, rgb(100, 184, 249));
+            assert_eq!(tk.rec_dot_lit, Color32::WHITE);
+            assert_eq!(tk.meter_well, Color32::BLACK);
+            assert_eq!(tk.readout_rim, rgb(15, 15, 15));
+            assert_eq!(tk.readout_rule, rgb(35, 35, 35));
+            assert_eq!(tk.clip_outline_dark, rgb(10, 10, 10));
+            assert_eq!(tk.clip_wave_selected, rgb(16, 16, 18));
+            assert_eq!(tk.clip_muted, rgb(70, 70, 70));
+            assert_eq!(tk.clip_name_ink, rgb(12, 12, 12));
+            assert_eq!(tk.media_offline, rgb(220, 120, 120));
+            assert_eq!(tk.clip_note_selected, rgb(16, 16, 16));
+            assert_eq!(tk.clip_overlay_ink, rgb(16, 16, 16));
+            assert_eq!(tk.clip_gain_line, white(170));
+            assert_eq!(tk.clip_gain_icon, white(200));
+            assert_eq!(tk.clip_fade_curve, white(90));
+            assert_eq!(tk.clip_fade_handle, white(200));
+            assert_eq!(tk.clip_fade_handle_hot, white(230));
+            assert_eq!(tk.clip_sync_mark, Color32::WHITE);
+            assert_eq!(tk.clip_sync_line, white(90));
+            assert_eq!(tk.clip_fx_text, rgb(250, 230, 120));
+            assert_eq!(tk.clip_overlap_shadow, Color32::from_black_alpha(70));
+            assert_eq!(tk.auto_point_fill, rgb(40, 40, 40));
+            assert_eq!(tk.fader_popup_bg, rgb(38, 38, 40));
+            assert_eq!(tk.fader_popup_border, rgb(10, 10, 10));
+            assert_eq!(tk.fader_popup_zero, rgb(150, 150, 150));
+            assert_eq!(tk.fader_popup_cap, rgb(210, 210, 210));
+            assert_eq!(tk.fader_popup_cap_edge, rgb(20, 20, 20));
+            assert_eq!(tk.gesture_outline, Color32::WHITE);
+        }
+        assert_eq!([Tokens::DARK, Tokens::LIGHT, Tokens::MIDNIGHT].map(|tk| tk.clip_style_light), [false, true, false]);
+    }
     #[test]
     fn current_follows_set_custom_and_the_cache_takes_no_lock_when_unchanged() {
         let _guard = lock_test_palette();

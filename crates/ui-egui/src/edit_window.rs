@@ -485,7 +485,8 @@ pub fn ruler_height(id: &str) -> f32 {
 /// The tempo editor: a graph of tempo over time. Click adds a change, Alt-click removes the nearest.
 fn tempo_editor(app: &mut SoundApp, ui: &mut Ui, painter: &egui::Painter, s: &Session, tl: Rect, row: Rect) {
     let sr = s.sample_rate;
-    painter.rect_filled(row, 0.0, Color32::from_rgb(24, 40, 32));
+    let t = Tokens::current();
+    painter.rect_filled(row, 0.0, t.tempo_lane_bg);
     let (lo, hi) = s.tempo.tempos().iter().fold((f64::MAX, f64::MIN), |(a, b), e| (a.min(e.bpm), b.max(e.bpm)));
     let (lo, hi) = ((lo - 20.0).max(20.0), (hi + 20.0).min(400.0));
     let y_of = |bpm: f64| row.max.y - 4.0 - ((bpm - lo) / (hi - lo).max(1.0)) as f32 * (row.height() - 8.0);
@@ -496,11 +497,11 @@ fn tempo_editor(app: &mut SoundApp, ui: &mut Ui, painter: &egui::Painter, s: &Se
         let x_next = evs.get(k + 1).map_or(tl.max.x, |n| x_of(s, tl, s.tempo.tick_to_samples(n.tick, sr)));
         pts.push(pos2(x, y_of(e.bpm)));
         pts.push(pos2(x_next.min(tl.max.x), y_of(e.bpm)));
-        painter.circle_filled(pos2(x, y_of(e.bpm)), 3.0, Color32::from_rgb(140, 230, 160));
+        painter.circle_filled(pos2(x, y_of(e.bpm)), 3.0, t.tempo_lane_line);
     }
-    painter.add(Shape::line(pts, Stroke::new(1.5, Color32::from_rgb(140, 230, 160))));
-    painter.text(pos2(tl.min.x + 4.0, row.min.y + 8.0), Align2::LEFT_CENTER, format!("{hi:.0}"), regular(9.0), Color32::from_rgb(120, 160, 130));
-    painter.text(pos2(tl.min.x + 4.0, row.max.y - 8.0), Align2::LEFT_CENTER, format!("{lo:.0}"), regular(9.0), Color32::from_rgb(120, 160, 130));
+    painter.add(Shape::line(pts, Stroke::new(1.5, t.tempo_lane_line)));
+    painter.text(pos2(tl.min.x + 4.0, row.min.y + 8.0), Align2::LEFT_CENTER, format!("{hi:.0}"), regular(9.0), t.tempo_lane_label);
+    painter.text(pos2(tl.min.x + 4.0, row.max.y - 8.0), Align2::LEFT_CENTER, format!("{lo:.0}"), regular(9.0), t.tempo_lane_label);
     let resp = ui.interact(row, ui.id().with("tempo_editor"), Sense::click());
     if resp.clicked()
         && let Some(p) = resp.interact_pointer_pos()
@@ -568,7 +569,7 @@ fn draw_rulers(app: &mut SoundApp, ui: &mut Ui, area: Rect, tl: Rect, rulers: &[
                     let x = x_of(&s, tl, s.tempo.tick_to_samples(ev.tick, sr));
                     painter.add(Shape::convex_polygon(
                         vec![pos2(x, row.min.y + 3.0), pos2(x + 7.0, row.center().y), pos2(x, row.max.y - 3.0)],
-                        Color32::from_rgb(220, 60, 50),
+                        t.tempo_marker,
                         Stroke::NONE,
                     ));
                     if x - last_label > 46.0 {
@@ -578,7 +579,7 @@ fn draw_rulers(app: &mut SoundApp, ui: &mut Ui, area: Rect, tl: Rect, rulers: &[
                             Align2::LEFT_CENTER,
                             format!("{}", (ev.bpm * 100.0).round() / 100.0),
                             bold(11.0),
-                            Color32::from_rgb(230, 240, 230),
+                            t.tempo_value_text,
                         );
                     }
                 }
@@ -592,7 +593,7 @@ fn draw_rulers(app: &mut SoundApp, ui: &mut Ui, area: Rect, tl: Rect, rulers: &[
                         Align2::LEFT_CENTER,
                         format!("{}/{}", ev.numerator, ev.denominator),
                         bold(11.0),
-                        Color32::from_rgb(230, 236, 240),
+                        t.meter_value_text,
                     );
                 }
             }
@@ -600,14 +601,14 @@ fn draw_rulers(app: &mut SoundApp, ui: &mut Ui, area: Rect, tl: Rect, rulers: &[
                 tempo_editor(app, ui, &painter, &s, tl, row);
             }
             "key" => {
-                painter.rect_filled(row, 0.0, Color32::from_rgb(64, 52, 88));
+                painter.rect_filled(row, 0.0, t.key_lane_bg);
                 if s.key_signatures.is_empty() {
-                    painter.text(pos2(tl.min.x + 6.0, row.center().y), Align2::LEFT_CENTER, "C major", bold(11.0), Color32::from_rgb(220, 214, 236));
+                    painter.text(pos2(tl.min.x + 6.0, row.center().y), Align2::LEFT_CENTER, "C major", bold(11.0), t.key_lane_text);
                 }
                 for (at, k) in &s.key_signatures {
                     let x = x_of(&s, tl, *at);
-                    painter.line_segment([pos2(x, row.min.y + 2.0), pos2(x, row.max.y - 2.0)], Stroke::new(2.0, Color32::from_rgb(200, 180, 240)));
-                    painter.text(pos2(x + 5.0, row.center().y), Align2::LEFT_CENTER, k, bold(11.0), Color32::from_rgb(236, 230, 250));
+                    painter.line_segment([pos2(x, row.min.y + 2.0), pos2(x, row.max.y - 2.0)], Stroke::new(2.0, t.key_lane_line));
+                    painter.text(pos2(x + 5.0, row.center().y), Align2::LEFT_CENTER, k, bold(11.0), t.key_lane_name);
                 }
                 let resp = ui.interact(row, ui.id().with("key_ruler"), Sense::click());
                 if resp.double_clicked()
@@ -634,10 +635,10 @@ fn draw_rulers(app: &mut SoundApp, ui: &mut Ui, area: Rect, tl: Rect, rulers: &[
                     "markers5" => 5,
                     _ => 1,
                 };
-                painter.rect_filled(row, 0.0, if id == "chords" { Color32::from_rgb(40, 56, 60) } else { t.marker_ruler });
+                painter.rect_filled(row, 0.0, if id == "chords" { t.chord_lane_bg } else { t.marker_ruler });
                 for m in s.markers.iter().filter(|m| m.ruler == lane || (lane == 1 && m.ruler == 0)) {
                     let x = x_of(&s, tl, m.start);
-                    let col = m.color.map_or(Color32::from_rgb(232, 200, 64), rgb);
+                    let col = m.color.map_or(t.marker_default, rgb);
                     if m.kind == soundcraft_model::MarkerKind::Selection {
                         let x1 = x_of(&s, tl, m.end);
                         painter.rect_filled(Rect::from_min_max(pos2(x, row.min.y + 3.0), pos2(x1, row.max.y - 3.0)), 2.0, col.gamma_multiply(0.5));
@@ -1222,7 +1223,7 @@ fn track_header(app: &mut SoundApp, ui: &mut Ui, track: &Track, head: Rect, sele
             raised_key(ui.painter(), r, t.slot_face, resp.hovered());
             let c = r.center();
             if track.ticks_timebase {
-                let green = Color32::from_rgb(86, 172, 103);
+                let green = t.timebase_ticks;
                 ui.painter().add(Shape::convex_polygon(
                     vec![c + vec2(-3.0, 3.25), c + vec2(3.0, 3.25), c + vec2(1.0, -3.25), c + vec2(-1.0, -3.25)],
                     green,
@@ -1230,7 +1231,7 @@ fn track_header(app: &mut SoundApp, ui: &mut Ui, track: &Track, head: Rect, sele
                 ));
                 ui.painter().line_segment([c + vec2(0.0, 2.0), c + vec2(2.0, -3.0)], Stroke::new(1.0, t.text));
             } else {
-                ui.painter().circle_filled(c, 3.25, Color32::from_rgb(100, 184, 249));
+                ui.painter().circle_filled(c, 3.25, t.timebase_samples);
                 ui.painter().line_segment([c, c + vec2(0.0, -3.25)], Stroke::new(1.0, t.slot_face[1]));
                 ui.painter().line_segment([c, c + vec2(3.25, 0.0)], Stroke::new(1.0, t.slot_face[1]));
             }
@@ -1354,7 +1355,7 @@ pub(crate) fn header_toggle(ui: &Ui, r: Rect, track: TrackId, key: HeaderKey, li
         t.text
     };
     if rec {
-        ui.painter().circle_filled(r.center(), 4.0, if lit { Color32::WHITE } else { t.text.lerp_to_gamma(color, 0.3) });
+        ui.painter().circle_filled(r.center(), 4.0, if lit { t.rec_dot_lit } else { t.text.lerp_to_gamma(color, 0.3) });
     } else {
         ui.painter().text(r.center(), Align2::CENTER_CENTER, label.get(..1).unwrap_or_default(), bold(11.0), ink);
     }
@@ -1365,7 +1366,7 @@ pub(crate) fn header_toggle(ui: &Ui, r: Rect, track: TrackId, key: HeaderKey, li
 pub(crate) fn header_meter(ui: &Ui, r: Rect, md: &crate::MeterDisplay, stereo: bool) {
     let t = Tokens::current();
     let p = ui.painter();
-    p.rect_filled(r, 0.0, Color32::BLACK);
+    p.rect_filled(r, 0.0, t.meter_well);
     let inner = r.shrink(1.0);
     let clip = inner.with_max_y(inner.min.y + 4.0);
     p.rect_filled(clip, 0.0, if md.clip { t.meter_red } else { t.meter_red.gamma_multiply(0.18) });
@@ -1442,8 +1443,8 @@ fn io_column(app: &mut SoundApp, ui: &mut Ui, track: &Track, r: Rect) {
         }
     }
     if let Some(vr) = row(45.0, 30.0).map(|vr| vr.shrink2(vec2(1.0, 0.0))) {
-        ui.painter().rect_filled(vr, 2.0, Color32::from_gray(15));
-        ui.painter().rect_filled(vr.shrink(1.5), 1.5, Color32::BLACK);
+        ui.painter().rect_filled(vr, 2.0, t.readout_rim);
+        ui.painter().rect_filled(vr.shrink(1.5), 1.5, t.meter_well);
         let m = &track.mixer;
         let pan = m.pan.first().map_or("-".into(), |p| crate::widgets::pan_text(*p));
         // The readout is black in both themes, so it takes the dark palette's green.
@@ -1452,7 +1453,7 @@ fn io_column(app: &mut SoundApp, ui: &mut Ui, track: &Track, r: Rect) {
             ui.painter().text(pos2(vr.min.x + 7.0, vr.min.y + y), Align2::LEFT_CENTER, label, bold(10.0), ink);
             ui.painter().text(pos2(vr.max.x - 6.5, vr.min.y + y), Align2::RIGHT_CENTER, value, bold(10.0), ink);
         }
-        ui.painter().hline(vr.min.x + 7.0..=vr.max.x - 6.0, vr.min.y + 14.5, Stroke::new(1.0, Color32::from_gray(35)));
+        ui.painter().hline(vr.min.x + 7.0..=vr.max.x - 6.0, vr.min.y + 14.5, Stroke::new(1.0, t.readout_rule));
     }
 }
 
@@ -1693,7 +1694,7 @@ fn draw_live_take(app: &SoundApp, painter: &egui::Painter, s: &Session, track: &
     let r = Rect::from_min_max(pos2(x_of(s, tl, span.start), lane.min.y + 1.0), pos2(x_of(s, tl, span.end), lane.max.y - 1.0));
     let t = Tokens::current();
     let (body, _, wave) = clip_colors([t.rec.r(), t.rec.g(), t.rec.b()], false);
-    painter.rect(r, CornerRadius::same(2), body, Stroke::new(1.0, Color32::from_rgb(10, 10, 10)), StrokeKind::Inside);
+    painter.rect(r, CornerRadius::same(2), body, Stroke::new(1.0, t.clip_outline_dark), StrokeKind::Inside);
     if track.view != "blocks" {
         crate::waveform::draw_live(&painter.with_clip_rect(r.intersect(lane)), s, tl, origin as f64, block_len, &take, r, wave);
     }
@@ -1718,6 +1719,7 @@ fn grid_veil(line: Color32, bg: Color32) -> Color32 {
 }
 
 fn draw_clip(app: &SoundApp, painter: &egui::Painter, s: &Session, track: &Track, clip: &Clip, tl: Rect, lane: Rect, dim: bool) {
+    let ck = Tokens::current();
     let x0 = x_of(s, tl, clip.start);
     let x1 = x_of(s, tl, clip.end()).max(x0 + 1.0);
     let r = Rect::from_min_max(pos2(x0, lane.min.y + 1.0), pos2(x1, lane.max.y - 1.0));
@@ -1730,21 +1732,21 @@ fn draw_clip(app: &SoundApp, painter: &egui::Painter, s: &Session, track: &Track
     let (mut body, bar, mut wave) = clip_colors(color, selected);
     if clip.muted || dim {
         body = body.gamma_multiply(0.45);
-        wave = Color32::from_rgb(70, 70, 70);
+        wave = ck.clip_muted;
     }
     let body = if s.edit.flag("view.clip.transparency") { body.gamma_multiply(0.55) } else { body };
     painter.rect(r, CornerRadius::same(2), body, Stroke::new(1.0, crate::theme::clip_outline(color)), StrokeKind::Inside);
     let name_h = clip_name_height(s, lane);
     if name_h > 0.0 {
         let nb = Rect::from_min_max(r.min, pos2(r.max.x, r.min.y + name_h));
-        painter.rect_filled(nb, CornerRadius { nw: 2, ne: 2, sw: 0, se: 0 }, if clip.muted { Color32::from_rgb(70, 70, 70) } else { bar });
+        painter.rect_filled(nb, CornerRadius { nw: 2, ne: 2, sw: 0, se: 0 }, if clip.muted { ck.clip_muted } else { bar });
         let name_clip = nb.intersect(lane);
         painter.with_clip_rect(name_clip).text(
             pos2(nb.min.x.max(lane.min.x) + 4.0, nb.center().y),
             Align2::LEFT_CENTER,
             &clip.name,
             bold(10.5),
-            Color32::from_rgb(12, 12, 12),
+            ck.clip_name_ink,
         );
     }
     let body_r = Rect::from_min_max(pos2(r.min.x, r.min.y + name_h), r.max);
@@ -1772,7 +1774,7 @@ fn draw_clip(app: &SoundApp, painter: &egui::Painter, s: &Session, track: &Track
                     }
                 }
             } else {
-                painter.text(body_r.center(), Align2::CENTER_CENTER, "media offline", regular(10.0), Color32::from_rgb(220, 120, 120));
+                painter.text(body_r.center(), Align2::CENTER_CENTER, "media offline", regular(10.0), ck.media_offline);
             }
         }
         ClipContent::Video { .. } => {} // thumbnails: video_track::draw_lane
@@ -1792,7 +1794,7 @@ fn draw_clip(app: &SoundApp, painter: &egui::Painter, s: &Session, track: &Track
                 }
                 let y = body_r.max.y - 3.0 - (f32::from(n.pitch.saturating_sub(lo)) / span) * (body_r.height() - 6.0);
                 let nh = ((body_r.height() - 6.0) / span).clamp(1.5, 6.0);
-                let vcol = if crate::theme::is_light() {
+                let vcol = if ck.clip_style_light {
                     Color32::from_rgb(20, 20 + n.velocity, 40)
                 } else {
                     wave.gamma_multiply(0.5 + f32::from(n.velocity) / 254.0)
@@ -1800,7 +1802,7 @@ fn draw_clip(app: &SoundApp, painter: &egui::Painter, s: &Session, track: &Track
                 p.rect_filled(
                     Rect::from_min_max(pos2(nx0, y - nh * 0.5), pos2(nx1, y + nh * 0.5)),
                     1.0,
-                    if selected && Tokens::current().clip_fill_alpha == 255 { Color32::from_rgb(16, 16, 16) } else { vcol },
+                    if selected && ck.clip_fill_alpha == 255 { ck.clip_note_selected } else { vcol },
                 );
             }
         }
@@ -1813,18 +1815,14 @@ fn draw_clip(app: &SoundApp, painter: &egui::Painter, s: &Session, track: &Track
         && let Some(audio) = s.pool.get(*source)
     {
         let xf = Rect::from_min_max(pos2(x0, body_r.min.y), pos2(x_of(s, tl, prev.end()).min(x1), body_r.max.y)).intersect(vis);
-        let tail = if prev.muted || dim {
-            Color32::from_rgb(70, 70, 70)
-        } else {
-            clip_colors(prev.color.unwrap_or(track.color), false).2.gamma_multiply(0.6)
-        };
+        let tail = if prev.muted || dim { ck.clip_muted } else { clip_colors(prev.color.unwrap_or(track.color), false).2.gamma_multiply(0.6) };
         crate::waveform::draw(&painter.with_clip_rect(xf), s, tl, prev, audio, track.channels(), body_r, tail);
     }
     // Clip gain line.
     let show_gain = s.edit.flag("view.clip.gain_line") && (!clip.gain_env.is_empty() || clip.gain_db.abs() > 0.01 || track.view == "clip_gain");
     if show_gain && body_r.height() > 12.0 {
         let gy = |db: f32| body_r.max.y - 3.0 - ((db.clamp(-36.0, 36.0) + 36.0) / 72.0) * (body_r.height() - 6.0);
-        let col = Color32::from_rgba_unmultiplied(255, 255, 255, 170);
+        let col = ck.clip_gain_line;
         if clip.gain_env.is_empty() {
             painter.line_segment([pos2(x0, gy(clip.gain_db)), pos2(x1, gy(clip.gain_db))], Stroke::new(1.0, col));
         } else {
@@ -1839,12 +1837,12 @@ fn draw_clip(app: &SoundApp, painter: &egui::Painter, s: &Session, track: &Track
         }
     }
     if !dim && let Some(icon) = clip_gain_icon(s, tl, lane, clip) {
-        let col = Color32::from_rgba_unmultiplied(255, 255, 255, 200);
+        let col = ck.clip_gain_icon;
         painter.line_segment([pos2(icon.center().x, icon.min.y), pos2(icon.center().x, icon.max.y)], Stroke::new(1.0, col));
         painter.rect_filled(Rect::from_center_size(pos2(icon.center().x, icon.center().y + 2.0), vec2(icon.width(), 3.0)), 1.0, col);
         painter.text(pos2(icon.max.x + 3.0, icon.center().y), Align2::LEFT_CENTER, format!("{:+.1} dB", clip.gain_db), regular(9.5), col);
     }
-    let fade_col = Color32::from_rgba_unmultiplied(255, 255, 255, 90);
+    let fade_col = ck.clip_fade_curve;
     for (side, fade) in [(true, fade_in), (false, fade_out)] {
         if fade.len <= 0 {
             continue;
@@ -1857,7 +1855,7 @@ fn draw_clip(app: &SoundApp, painter: &egui::Painter, s: &Session, track: &Track
         let active = matches!(app.gesture, Some(Gesture::FadeCurve { clip: id, fade_in, .. }) if id == clip.id && fade_in == side);
         let hovered = painter.ctx().input(|i| i.pointer.hover_pos()).is_some_and(|p| near_fade_midpoint(p, midpoint));
         if !dim && s.edit.tool == Tool::Smart && AutoParam::parse(&track.view).is_none() && b - a >= 32.0 && vis.contains(midpoint) {
-            let col = Color32::from_rgba_unmultiplied(255, 255, 255, if active || hovered { 230 } else { 200 });
+            let col = if active || hovered { ck.clip_fade_handle_hot } else { ck.clip_fade_handle };
             painter.with_clip_rect(vis).circle(midpoint, 3.5, body, Stroke::new(1.0, col));
         }
     }
@@ -1868,7 +1866,7 @@ fn draw_clip(app: &SoundApp, painter: &egui::Painter, s: &Session, track: &Track
         painter.with_clip_rect(vis).add(Shape::line(pts, Stroke::new(1.2, fade_col)));
     }
     // Optional clip overlays (View › Clip).
-    let ov = Color32::from_rgb(16, 16, 16);
+    let ov = ck.clip_overlay_ink;
     if s.edit.flag("view.clip.rating") && clip.rating > 0 && name_h > 0.0 {
         painter.text(pos2(r.max.x - 18.0, r.min.y + 7.0), Align2::RIGHT_CENTER, "★".repeat(usize::from(clip.rating.min(5))), regular(9.0), ov);
     }
@@ -1876,10 +1874,10 @@ fn draw_clip(app: &SoundApp, painter: &egui::Painter, s: &Session, track: &Track
         let x = x_of(s, tl, clip.start + clip.sync_point);
         painter.add(Shape::convex_polygon(
             vec![pos2(x - 4.0, r.max.y - 1.0), pos2(x + 4.0, r.max.y - 1.0), pos2(x, r.max.y - 7.0)],
-            Color32::WHITE,
+            ck.clip_sync_mark,
             Stroke::NONE,
         ));
-        painter.line_segment([pos2(x, r.min.y + name_h), pos2(x, r.max.y)], Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 90)));
+        painter.line_segment([pos2(x, r.min.y + name_h), pos2(x, r.max.y)], Stroke::new(1.0, ck.clip_sync_line));
     }
     let time_text = if s.edit.flag("view.clip.time.current") {
         Some(s.format_position(clip.start, s.edit.main_counter))
@@ -1904,7 +1902,7 @@ fn draw_clip(app: &SoundApp, painter: &egui::Painter, s: &Session, track: &Track
         painter.with_clip_rect(r.intersect(lane)).text(pos2(r.min.x.max(lane.min.x) + 4.0, r.max.y - 7.0), Align2::LEFT_CENTER, tt, regular(9.0), ov);
     }
     if s.edit.flag("view.clip.effects_status") && s.edit.values.keys().any(|k| k.starts_with(&format!("clip_fx.{}.", clip.id.0))) {
-        painter.text(pos2(r.max.x - 6.0, r.max.y - 7.0), Align2::RIGHT_CENTER, "FX", bold(9.0), Color32::from_rgb(250, 230, 120));
+        painter.text(pos2(r.max.x - 6.0, r.max.y - 7.0), Align2::RIGHT_CENTER, "FX", bold(9.0), ck.clip_fx_text);
     }
     if s.edit.flag("view.clip.overlap_shadows") {
         // Shade where a later clip covers this one (crossfades and layered edits).
@@ -1912,12 +1910,12 @@ fn draw_clip(app: &SoundApp, painter: &egui::Painter, s: &Session, track: &Track
             if o.id != clip.id && o.start > clip.start && o.start < clip.end() {
                 let x0 = x_of(s, tl, o.start);
                 let x1 = x_of(s, tl, clip.end().min(o.end()));
-                painter.rect_filled(Rect::from_min_max(pos2(x0, r.min.y), pos2(x1, r.max.y)), 0.0, Color32::from_black_alpha(70));
+                painter.rect_filled(Rect::from_min_max(pos2(x0, r.min.y), pos2(x1, r.max.y)), 0.0, ck.clip_overlap_shadow);
             }
         }
     }
     if clip.edit_locked || clip.time_locked {
-        painter.text(pos2(r.max.x - 10.0, r.min.y + 7.0), Align2::CENTER_CENTER, "🔒", regular(9.0), Color32::WHITE);
+        painter.text(pos2(r.max.x - 10.0, r.min.y + 7.0), Align2::CENTER_CENTER, "🔒", regular(9.0), ck.clip_sync_mark);
     }
     let _ = app;
 }
@@ -1964,7 +1962,7 @@ pub(crate) fn draw_automation(painter: &egui::Painter, s: &Session, track: &Trac
         for pt in &l.points {
             let x = x_of(s, tl, pt.at);
             if x > lane.min.x - 4.0 && x < lane.max.x + 4.0 {
-                painter.circle(pos2(x, yv(pt.value)), 3.0, Color32::from_rgb(40, 40, 40), Stroke::new(1.5, t.automation_line));
+                painter.circle(pos2(x, yv(pt.value)), 3.0, t.auto_point_fill, Stroke::new(1.5, t.automation_line));
             }
         }
     }
@@ -2104,12 +2102,12 @@ fn clip_gain_popup(ctx: &egui::Context, fader_bottom: Pos2, pos: f32) {
     let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("clip_gain_fader")));
     let track = Rect::from_min_max(pos2(fader_bottom.x - 2.0, fader_bottom.y - CLIP_FADER_TRAVEL), pos2(fader_bottom.x + 2.0, fader_bottom.y));
     let panel = Rect::from_min_max(pos2(track.min.x - 22.0, track.min.y - 26.0), pos2(track.max.x + 22.0, track.max.y + 8.0));
-    p.rect(panel, 3.0, Color32::from_rgb(38, 38, 40), Stroke::new(1.0, Color32::from_rgb(10, 10, 10)), StrokeKind::Inside);
+    p.rect(panel, 3.0, t.fader_popup_bg, Stroke::new(1.0, t.fader_popup_border), StrokeKind::Inside);
     p.rect_filled(track, 2.0, t.fader_track);
     let zero = track.max.y - CLIP_FADER_TRAVEL * crate::widgets::clip_gain_to_pos(0.0);
-    p.line_segment([pos2(track.min.x - 8.0, zero), pos2(track.min.x - 2.0, zero)], Stroke::new(1.0, Color32::from_rgb(150, 150, 150)));
+    p.line_segment([pos2(track.min.x - 8.0, zero), pos2(track.min.x - 2.0, zero)], Stroke::new(1.0, t.fader_popup_zero));
     let cap = Rect::from_center_size(pos2(track.center().x, track.max.y - CLIP_FADER_TRAVEL * pos), vec2(22.0, 9.0));
-    p.rect(cap, 2.0, Color32::from_rgb(210, 210, 210), Stroke::new(1.0, Color32::from_rgb(20, 20, 20)), StrokeKind::Inside);
+    p.rect(cap, 2.0, t.fader_popup_cap, Stroke::new(1.0, t.fader_popup_cap_edge), StrokeKind::Inside);
     let db = crate::widgets::clip_gain_from_pos(pos);
     p.text(pos2(panel.center().x, panel.min.y + 12.0), Align2::CENTER_CENTER, format!("{db:+.1}"), regular(10.5), t.counter_text);
 }
@@ -2820,7 +2818,7 @@ fn overlay(app: &mut SoundApp, ui: &mut Ui, tl: Rect, area: Rect) {
             if x > tl.min.x && x < tl.max.x {
                 painter.line_segment(
                     [pos2(x, tl.min.y), pos2(x, tl.max.y)],
-                    Stroke::new(1.0, m.color.map_or(Color32::from_rgba_unmultiplied(232, 200, 64, 70), |c| rgb(c).gamma_multiply(0.4))),
+                    Stroke::new(1.0, m.color.map_or(Tokens::current().marker_default_line, |c| rgb(c).gamma_multiply(0.4))),
                 );
             }
         }
@@ -2901,7 +2899,7 @@ fn overlay(app: &mut SoundApp, ui: &mut Ui, tl: Rect, area: Rect) {
                 painter.rect_stroke(
                     Rect::from_min_max(pos2(x0, r[1] + 1.0), pos2(x1, r[3] - 1.0)),
                     2.0,
-                    Stroke::new(2.0, Color32::WHITE),
+                    Stroke::new(2.0, Tokens::current().gesture_outline),
                     StrokeKind::Inside,
                 );
             }
@@ -2912,14 +2910,14 @@ fn overlay(app: &mut SoundApp, ui: &mut Ui, tl: Rect, area: Rect) {
         && let Some((_, row)) = app.edit_layout.rows.iter().find(|(i, _)| *i == track.0)
     {
         let ghost = Rect::from_min_max(pos2(x_of(s, tl, r.start), row[1] + 1.0), pos2(x_of(s, tl, r.end), row[3] - 1.0));
-        painter.rect_stroke(ghost, 2.0, Stroke::new(2.0, Color32::WHITE), StrokeKind::Inside);
+        painter.rect_stroke(ghost, 2.0, Stroke::new(2.0, Tokens::current().gesture_outline), StrokeKind::Inside);
     }
     if let Some(Gesture::TrimStart { to, clip, .. } | Gesture::TrimEnd { to, clip, .. }) = &app.gesture
         && let Some((tid, _)) = s.find_clip(*clip)
         && let Some((_, r)) = app.edit_layout.rows.iter().find(|(i, _)| *i == tid.0)
     {
         let x = x_of(s, tl, *to);
-        painter.line_segment([pos2(x, r[1]), pos2(x, r[3])], Stroke::new(2.0, Color32::WHITE));
+        painter.line_segment([pos2(x, r[1]), pos2(x, r[3])], Stroke::new(2.0, Tokens::current().gesture_outline));
     }
     if let Some(at) = scroll_to {
         let _ = app.engine.execute("view.scroll", &json!({"to": at}));

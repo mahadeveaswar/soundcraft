@@ -19,6 +19,7 @@ pub enum Panel {
     Visibility,
     Meter,
     Loudness,
+    Inspector,
 }
 
 impl Panel {
@@ -33,6 +34,7 @@ impl Panel {
         Self::Visibility,
         Self::Meter,
         Self::Loudness,
+        Self::Inspector,
     ];
     pub fn id(self) -> &'static str {
         match self {
@@ -46,6 +48,7 @@ impl Panel {
             Self::Visibility => "visibility",
             Self::Meter => "meter",
             Self::Loudness => "loudness",
+            Self::Inspector => "inspector",
         }
     }
     pub fn label(self) -> &'static str {
@@ -60,6 +63,7 @@ impl Panel {
             Self::Visibility => "Visibility",
             Self::Meter => "Meters",
             Self::Loudness => "Loudness",
+            Self::Inspector => "Inspector",
         }
     }
     /// The `zone` name of `ui.dock` `move` that puts the panel back on its default side.
@@ -81,7 +85,7 @@ impl Panel {
             Self::Memory => Zone::Bottom,
             Self::History => Zone::Right,
             Self::Master | Self::Meter | Self::Loudness => Zone::Right,
-            Self::Visibility => Zone::Left,
+            Self::Visibility | Self::Inspector => Zone::Left,
         }
     }
     fn parse(id: &str) -> Result<Self, String> {
@@ -184,9 +188,9 @@ impl Workspace {
         self.validate()?;
         if self.layout.contains(&Panel::Clips)
             || self.layout.contains(&Panel::Midi)
-            || [Panel::Master, Panel::Visibility, Panel::Meter, Panel::Loudness].iter().any(|p| self.layout.contains(p))
+            || [Panel::Master, Panel::Visibility, Panel::Meter, Panel::Loudness, Panel::Inspector].iter().any(|p| self.layout.contains(p))
         {
-            return Err("Clips, MIDI, Master, Visibility, Meter and Loudness panels belong to the Edit window".into());
+            return Err("Clips, MIDI, Master, Visibility, Meter, Loudness and Inspector panels belong to the Edit window".into());
         }
         Ok(())
     }
@@ -340,6 +344,7 @@ fn sync(workspace: &mut Workspace, app: &crate::SoundApp, edit: bool) -> Result<
         workspace.set_visible(Panel::Visibility, app.ui.show_visibility_pane)?;
         workspace.set_visible(Panel::Meter, app.ui.show_meter_panel)?;
         workspace.set_visible(Panel::Loudness, app.ui.show_loudness_panel)?;
+        workspace.set_visible(Panel::Inspector, app.ui.show_inspector)?;
     }
     Ok(())
 }
@@ -355,6 +360,7 @@ fn publish_visibility(app: &mut crate::SoundApp, workspace: &Workspace, edit: bo
         app.ui.show_visibility_pane = workspace.layout.contains(&Panel::Visibility);
         app.ui.show_meter_panel = workspace.layout.contains(&Panel::Meter);
         app.ui.show_loudness_panel = workspace.layout.contains(&Panel::Loudness);
+        app.ui.show_inspector = workspace.layout.contains(&Panel::Inspector);
     }
 }
 
@@ -392,10 +398,13 @@ pub(crate) fn cancel_replaced_state(app: &crate::SoundApp, next: &crate::UiState
 fn command_for(app: &mut crate::SoundApp, reset: bool, params: &Value, edit: bool) -> Result<Value, String> {
     if !edit
         && ["panel", "target"].iter().any(|field| {
-            matches!(params.get(*field).and_then(Value::as_str), Some("clips" | "midi" | "master" | "visibility" | "meter" | "loudness"))
+            matches!(
+                params.get(*field).and_then(Value::as_str),
+                Some("clips" | "midi" | "master" | "visibility" | "meter" | "loudness" | "inspector")
+            )
         })
     {
-        return Err("Clips, MIDI, Master, Visibility, Meter and Loudness panels belong to the Edit window".into());
+        return Err("Clips, MIDI, Master, Visibility, Meter, Loudness and Inspector panels belong to the Edit window".into());
     }
     let mut workspace = if edit { app.ui.docking.clone() } else { app.ui.mix_docking.clone() };
     if !reset && !edit {
@@ -408,6 +417,7 @@ fn command_for(app: &mut crate::SoundApp, reset: bool, params: &Value, edit: boo
         app.ui.show_tracks_list = defaults.show_tracks_list;
         if edit {
             app.ui.show_clip_list = defaults.show_clip_list;
+            app.ui.show_inspector = defaults.show_inspector;
         }
         workspace = if edit { Workspace::default() } else { mix_default() };
         sync(&mut workspace, app, edit)?;
@@ -541,6 +551,7 @@ impl craft_ui::docking::DockContent<Panel> for Content<'_> {
             Panel::Visibility => crate::visibility_pane::show(app, ui),
             Panel::Meter => crate::meter_pane::show(app, ui),
             Panel::Loudness => crate::loudness_pane::show(app, ui),
+            Panel::Inspector => crate::inspector::show(app, ui),
         }
     }
 
@@ -586,6 +597,7 @@ fn panel_limits(panel: &Panel) -> PanelLimits {
         Panel::Visibility => (egui::vec2(140.0, 120.0), 420.0),
         Panel::Meter => (egui::vec2(120.0, 160.0), 720.0),
         Panel::Loudness => (egui::vec2(160.0, 160.0), 420.0),
+        Panel::Inspector => (egui::vec2(170.0, 160.0), 420.0),
     };
     PanelLimits { min, max: egui::vec2(max_width, 1_000_000.0) }
 }

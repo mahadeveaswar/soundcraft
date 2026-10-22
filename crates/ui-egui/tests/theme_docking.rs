@@ -18,6 +18,7 @@ fn shared_panels_and_controls_follow_manual_and_live_system_appearance() {
             "window.visibility_pane",
             "window.meter_panel",
             "window.loudness_panel",
+            "window.inspector",
         ] {
             app.run(id, json!({})).unwrap();
         }

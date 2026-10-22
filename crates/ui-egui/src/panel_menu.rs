@@ -9,8 +9,18 @@ use egui::{Align2, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use serde_json::{Value, json};
 
 /// The panels a user can hide and show, in menu order.
-pub const LIST: [Panel; 9] =
-    [Panel::Tracks, Panel::Clips, Panel::Midi, Panel::Memory, Panel::History, Panel::Master, Panel::Visibility, Panel::Meter, Panel::Loudness];
+pub const LIST: [Panel; 10] = [
+    Panel::Tracks,
+    Panel::Inspector,
+    Panel::Clips,
+    Panel::Midi,
+    Panel::Memory,
+    Panel::History,
+    Panel::Master,
+    Panel::Visibility,
+    Panel::Meter,
+    Panel::Loudness,
+];
 
 const HINT_THICKNESS: f32 = 20.0;
 const BUTTON: f32 = 18.0;
@@ -27,6 +37,7 @@ pub fn is_visible(app: &SoundApp, panel: Panel) -> bool {
         Panel::Visibility => app.ui.show_visibility_pane,
         Panel::Meter => app.ui.show_meter_panel,
         Panel::Loudness => app.ui.show_loudness_panel,
+        Panel::Inspector => app.ui.show_inspector,
         Panel::Canvas => true,
     }
 }
@@ -35,7 +46,9 @@ pub fn is_visible(app: &SoundApp, panel: Panel) -> bool {
 pub fn panels_for(edit: bool) -> Vec<Panel> {
     LIST.iter()
         .copied()
-        .filter(|p| edit || !matches!(p, Panel::Clips | Panel::Midi | Panel::Master | Panel::Visibility | Panel::Meter | Panel::Loudness))
+        .filter(|p| {
+            edit || !matches!(p, Panel::Clips | Panel::Midi | Panel::Master | Panel::Visibility | Panel::Meter | Panel::Loudness | Panel::Inspector)
+        })
         .collect()
 }
 
@@ -97,7 +110,7 @@ fn float_rect(panel: Panel) -> [f32; 4] {
     match panel {
         Panel::Memory => [160.0, 120.0, 480.0, 280.0],
         Panel::History => [680.0, 120.0, 260.0, 300.0],
-        Panel::Tracks | Panel::Clips => [160.0, 120.0, 260.0, 420.0],
+        Panel::Tracks | Panel::Clips | Panel::Inspector => [160.0, 120.0, 260.0, 420.0],
         _ => [160.0, 120.0, 360.0, 360.0],
     }
 }
@@ -217,8 +230,8 @@ mod tests {
     fn mix_has_no_clips_or_midi_entries() {
         let mix = panels_for(false);
         assert!(!mix.contains(&Panel::Clips) && !mix.contains(&Panel::Midi));
-        assert_eq!(panels_for(true).len(), 9);
-        assert!(!mix.contains(&Panel::Master));
+        assert_eq!(panels_for(true).len(), 10);
+        assert!(!mix.contains(&Panel::Master) && !mix.contains(&Panel::Inspector));
     }
 
     #[test]
