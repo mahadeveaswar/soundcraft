@@ -27,6 +27,7 @@ mod midi_info;
 mod midi_sel;
 mod midi_theory;
 pub use midi_theory::{chord_name_at, scale_key};
+pub mod grid_adapt;
 mod midi_tools;
 mod mix;
 mod more_util;
@@ -151,6 +152,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(sampler::specs());
         v.extend(video::specs());
         v.extend(zoom_toggle::specs());
+        v.extend(grid_adapt::specs());
         v
     })
 }

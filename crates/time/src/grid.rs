@@ -104,6 +104,29 @@ impl GridValue {
         }
     }
 
+    /// The grid to draw and snap to at a zoom level: `self`, coarsened one ladder step at a time until a
+    /// step spans at least `min_px` screen pixels at `at`. Never finer than `self`; stops at the largest
+    /// value of its kind (a bar for musical grids). Non-finite or non-positive inputs return `self`.
+    pub fn effective(self, samples_per_px: f64, min_px: f64, at: Samples, sr: SampleRate, map: &TempoMap, rate: FrameRate) -> GridValue {
+        if !(samples_per_px.is_finite() && samples_per_px > 0.0 && min_px.is_finite()) {
+            return self;
+        }
+        let need = min_px * samples_per_px;
+        let mut g = self;
+        // The ladders are short, so a fixed bound is plenty and guarantees termination.
+        for _ in 0..16 {
+            if g.step_samples(at, sr, map, rate) as f64 >= need {
+                break;
+            }
+            let next = g.stepped(true);
+            if next == g {
+                break;
+            }
+            g = next;
+        }
+        g
+    }
+
     fn note_ticks(value: NoteValue, dotted: bool, triplet: bool, map: &TempoMap, at_tick: i64) -> i64 {
         let base = if value == NoteValue::Bar { map.meter_at_tick(at_tick).ticks_per_bar() } else { value.ticks() };
         let mut t = base;
@@ -250,5 +273,27 @@ mod tests {
         assert_eq!(GridValue::Frames(1).stepped(true), GridValue::Frames(10));
         assert_eq!(GridValue::Samples(100).stepped(false), GridValue::Samples(10));
         assert_eq!(GridValue::Samples(1).stepped(false), GridValue::Samples(1));
+    }
+
+    #[test]
+    fn effective_grid_coarsens_with_zoom_out_and_never_refines() {
+        let (sr, map, rate) = (SampleRate::HZ_48000, TempoMap::default(), FrameRate::Fps25);
+        let g = GridValue::default(); // 1/16 = 6000 samples at 120 bpm
+        let eff = |spp| g.effective(spp, 12.0, 0, sr, &map, rate);
+        assert_eq!(eff(100.0), g); // 60 px
+        assert_eq!(eff(1000.0), GridValue::Note { value: NoteValue::Eighth, dotted: false, triplet: false }); // 12000 >= 12000
+        assert_eq!(eff(2000.0), GridValue::Note { value: NoteValue::Quarter, dotted: false, triplet: false });
+        assert_eq!(eff(1e9), GridValue::Note { value: NoteValue::Bar, dotted: false, triplet: false });
+        assert_eq!(GridValue::Seconds(0.01).effective(100.0, 12.0, 0, sr, &map, rate), GridValue::Seconds(0.1));
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(g.effective(bad, 12.0, 0, sr, &map, rate), g);
+        }
+    }
+
+    #[test]
+    fn effective_grid_keeps_triplets() {
+        let (sr, map, rate) = (SampleRate::HZ_48000, TempoMap::default(), FrameRate::Fps25);
+        let t = GridValue::Note { value: NoteValue::Sixteenth, dotted: false, triplet: true };
+        assert_eq!(t.effective(1000.0, 12.0, 0, sr, &map, rate), GridValue::Note { value: NoteValue::Quarter, dotted: false, triplet: true }); // 8000 < 12000, 16000 ok
     }
 }
