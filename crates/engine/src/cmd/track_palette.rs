@@ -6,8 +6,8 @@ use serde_json::json;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!(noundo "track_palette.set", "Set Track Default Palette", [], None, "{colors: [[r,g,b] | \"#RRGGBB\", ...]}", always, set),
-        cmd!(noundo "track_palette.clear", "Reset Track Default Palette", [], None, "{}", always, clear),
+        cmd!(view "track_palette.set", "Set Track Default Palette", [], None, "{colors: [[r,g,b] | \"#RRGGBB\", ...]}", always, set),
+        cmd!(view "track_palette.clear", "Reset Track Default Palette", [], None, "{}", always, clear),
         cmd!(query "track_palette.get", "Get Track Default Palette", [], None, "{}", always, get),
     ]
 }
