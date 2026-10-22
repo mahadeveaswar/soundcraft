@@ -1,5 +1,5 @@
 //! Window menu extras: the Renderer (speaker layout of the main output with live levels and the
-//! object tracks' positions), UI Customization, and auto-updating the active window configuration.
+//! object tracks' positions), the Settings window hook, and auto-updating the active window configuration.
 
 use crate::SoundApp;
 use crate::theme::{Tokens, bold, regular};
@@ -58,7 +58,7 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
     crate::settings_cmds::sync_on_load(app);
     auto_update(app, ctx);
     renderer(app, ctx);
-    ui_customization(app, ctx);
+    crate::settings_window::show(app, ctx);
     apply_customization(app, ctx);
 }
 
@@ -147,72 +147,4 @@ fn renderer(app: &mut SoundApp, ctx: &egui::Context) {
         },
     );
     app.extra.show_renderer = open;
-}
-
-fn ui_customization(app: &mut SoundApp, ctx: &egui::Context) {
-    let mut open = app.extra.show_settings;
-    if !open {
-        return;
-    }
-    egui::Window::new(egui::RichText::new("Appearance").font(bold(13.0))).open(&mut open).default_size(vec2(320.0, 180.0)).resizable(false).show(
-        ctx,
-        |ui| {
-            egui::Grid::new("ui_custom").num_columns(2).spacing(vec2(12.0, 8.0)).show(ui, |ui| {
-                ui.label("Interface scale");
-                ui.add(egui::Slider::new(&mut app.extra.ui_scale, 0.75..=1.5).step_by(0.05).custom_formatter(|v, _| format!("{:.0} %", v * 100.0)));
-                ui.end_row();
-                ui.label("Reduce motion");
-                crate::widgets::checkbox(ui, &mut app.extra.reduce_motion, "");
-                ui.end_row();
-                ui.label("Theme");
-                let mut chosen = None;
-                egui::ComboBox::from_id_salt("theme_mode").selected_text(app.ui.theme.label()).show_ui(ui, |ui| {
-                    for mode in crate::theme::ThemeMode::ALL {
-                        if ui.selectable_label(app.ui.theme == mode, mode.label()).clicked() {
-                            chosen = Some(mode);
-                        }
-                    }
-                });
-                if let Some(mode) = chosen {
-                    let _ = app.run("ui.theme", json!({"mode": mode.id()}));
-                }
-                ui.end_row();
-                ui.label("Track header");
-                let mut style = None;
-                egui::ComboBox::from_id_salt("header_style").selected_text(app.ui.header_style.label()).show_ui(ui, |ui| {
-                    for s in crate::track_header_compact::HeaderStyle::ALL {
-                        if ui.selectable_label(app.ui.header_style == s, s.label()).clicked() {
-                            style = Some(s);
-                        }
-                    }
-                });
-                if let Some(s) = style {
-                    let _ = app.run("ui.header_style", json!({"style": s.id()}));
-                }
-                ui.end_row();
-                ui.label("Menu layout");
-                let mut layout = None;
-                egui::ComboBox::from_id_salt("menu_layout").selected_text(app.ui.menu_layout.label()).show_ui(ui, |ui| {
-                    for m in crate::menu_layout::MenuLayout::ALL {
-                        if ui.selectable_label(app.ui.menu_layout == m, m.label()).clicked() {
-                            layout = Some(m);
-                        }
-                    }
-                });
-                if let Some(m) = layout {
-                    let _ = app.run("ui.menu_layout", json!({"layout": m.id()}));
-                }
-                ui.end_row();
-                ui.label("Auto-update configuration");
-                crate::widgets::checkbox(ui, &mut app.extra.auto_update_config, "");
-                ui.end_row();
-            });
-            if ui.button("Reset").clicked() {
-                app.extra.ui_scale = 1.0;
-                app.extra.reduce_motion = false;
-                let _ = app.run("ui.theme", json!({"mode": crate::theme::ThemeMode::default().id()}));
-            }
-        },
-    );
-    app.extra.show_settings = open;
 }
