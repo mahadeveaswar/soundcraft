@@ -43,8 +43,13 @@ pub(crate) fn swatch_button(app: &mut SoundApp, ui: &mut Ui, id: Id, current: [u
     ui.painter().rect(r, 2.0, rgb(current), Stroke::new(1.0, t.border), StrokeKind::Inside);
     resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "Track colour"));
     let resp = resp.on_hover_text("Choose a colour");
-    egui::Popup::menu(&resp).id(id).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| contents(app, ui, id, current, target));
+    swatch_popup(app, &resp, id, current, target);
     resp
+}
+
+/// The colour popup under `resp` (a click on it opens the popup); for callers that paint their own swatch.
+pub(crate) fn swatch_popup(app: &mut SoundApp, resp: &Response, id: Id, current: [u8; 3], target: &Target) {
+    egui::Popup::menu(resp).id(id).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| contents(app, ui, id, current, target));
 }
 
 /// The colour popup body for the tracks with these ids (a context menu entry shows it): the grid,

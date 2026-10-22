@@ -29,9 +29,7 @@ pub(crate) fn show(app: &mut SoundApp, ui: &mut Ui) {
     egui::ScrollArea::vertical().id_salt("inspector-scroll").auto_shrink([false, false]).show(ui, |ui| {
         inspector_header::show(app, ui, track);
         for s in inspector_sections(track.kind) {
-            if inspector_sections::header(app, ui, *s) {
-                inspector_sections::body(app, ui, *s, track);
-            }
+            inspector_sections::card(app, ui, *s, track);
         }
     });
 }

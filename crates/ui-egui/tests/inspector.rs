@@ -94,7 +94,9 @@ fn it_shows_the_selected_tracks_inserts_and_sends() {
     assert_eq!(count(&h, "Send A"), sends + 1, "the Inspector adds one Send A slot");
     // Filled slots plus one empty by default; "All" shows every slot.
     assert_eq!(count(&h, "Insert J"), all_before, "only filled slots and one empty show");
-    h.get_by_label("Inspector: Show all insert slots").click();
+    h.get_by_label("Inspector: Insert options").click();
+    h.run_steps(3);
+    h.get_by_label("Show all ten slots").click();
     h.run_steps(3);
     assert_eq!(count(&h, "Insert J"), all_before + 1);
     // With nothing selected it shows no slots.
@@ -157,6 +159,11 @@ fn a_taken_name_shows_the_engines_error() {
     assert_eq!(track(&h, "Keys").name, "Keys");
 }
 
+/// Insert slots drawn in the Inspector (the left of the window), not the Mix strips.
+fn inspector_insert_slots(h: &Harness<'_, SoundApp>) -> usize {
+    ["Insert A", "Insert B", "Insert C"].iter().map(|l| h.query_all_by_label(l).filter(|n| n.rect().min.x < 330.0).count()).sum()
+}
+
 #[test]
 fn collapse_toggles_and_persists_through_ui_json() {
     let mut h = open_inspector("Keys");
@@ -165,14 +172,14 @@ fn collapse_toggles_and_persists_through_ui_json() {
     h.get_by_label("Inspector section Inserts").click();
     h.run_steps(3);
     assert!(h.state().ui.inspector_collapsed.contains("inserts"));
-    assert!(h.query_by_label("Inspector: Add EQ").is_none(), "the body is hidden");
+    assert_eq!(inspector_insert_slots(&h), 0, "the body is hidden");
     let text = serde_json::to_string(&h.state().ui).unwrap();
     let back: UiState = serde_json::from_str(&text).unwrap();
     assert!(back.inspector_collapsed.contains("inserts"));
     h.get_by_label("Inspector section Inserts").click();
     h.run_steps(3);
     assert!(!h.state().ui.inspector_collapsed.contains("inserts"));
-    assert!(h.query_by_label("Inspector: Add EQ").is_some());
+    assert!(inspector_insert_slots(&h) > 0);
 }
 
 #[test]
@@ -190,7 +197,9 @@ fn an_old_ui_json_without_the_new_fields_loads() {
 fn add_eq_runs_mix_insert_and_remove_clears_the_slot() {
     let mut h = open_inspector("Keys");
     let before = track(&h, "Keys").mixer.inserts.iter().flatten().count();
-    h.get_by_label("Inspector: Add EQ").click();
+    h.get_by_label("Inspector: Add effect menu").click();
+    h.run_steps(3);
+    h.get_by_label("Add EQ").click();
     h.run_steps(3);
     let t = track(&h, "Keys");
     assert_eq!(t.mixer.inserts.iter().flatten().count(), before + 1);
@@ -280,4 +289,29 @@ fn master_has_no_input_row_and_an_instrument_has_its_row() {
     let h = open_inspector("Keys");
     assert!(h.query_by_label("Inspector: Input").is_some());
     assert!(h.query_by_label("Inspector: Open instrument editor").is_some(), "instrument tracks get the Instrument row");
+}
+
+#[test]
+fn a_send_row_mutes_sets_its_level_and_removes() {
+    let mut h = open_inspector("Keys");
+    assert!(track(&h, "Keys").mixer.sends[0].is_some(), "the demo Keys track has Send A");
+    h.get_by_label("Inspector: Send A mute").click();
+    h.run_steps(3);
+    assert!(track(&h, "Keys").mixer.sends[0].as_ref().unwrap().mute);
+    h.get_by_label("Inspector: Send A level").click();
+    h.run_steps(2);
+    h.get_by_label("Inspector: Send A remove").click();
+    h.run_steps(3);
+    assert!(track(&h, "Keys").mixer.sends[0].is_none());
+    assert!(h.query_by_label("Inspector: Send A remove").is_none());
+}
+
+#[test]
+fn the_header_shows_the_type_and_an_empty_instrument_says_so() {
+    let h = open_inspector("Verb");
+    assert!(h.query_by_label("Inspector: Record enable").is_none(), "a bus has no record button");
+    assert!(h.query_by_label("Inspector: Input monitor").is_none());
+    let h = open_inspector("Keys");
+    assert!(h.query_by_label("Inspector: Record enable").is_some());
+    assert!(h.query_by_label("Inspector: Choose instrument").is_some());
 }
