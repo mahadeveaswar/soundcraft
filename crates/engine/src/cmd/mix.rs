@@ -140,6 +140,15 @@ pub fn specs() -> Vec<CommandSpec> {
             has_selection,
             set_point
         ),
+        cmd!(
+            "automation.midi_value",
+            "Set MIDI Controller Value",
+            [],
+            None,
+            "{track?, param: cc<n>|pitch_bend|pressure, value, at?} (instrument and MIDI tracks; writes a breakpoint, clamped to the controller range)",
+            has_selection,
+            midi_value
+        ),
         cmd!("automation.write_range", "Write Automation", [], None, "{track?, param, start?, end?, value}", has_selection, write_range),
         cmd!("automation.clear", "Clear Automation", [], None, "{track?, param?, start?, end?}", has_selection, clear_lane),
         cmd!("automation.thin", "Thin", ["Edit", "Automation"], Some("Cmd+Alt+T"), "{tracks?, tolerance?: 0.1}", has_selection, |e, p| thin(
@@ -492,6 +501,7 @@ fn set_point(e: &mut Engine, p: &Value) -> Result<Value> {
     let tracks = tracks_required(e, "automation.set_point", p)?;
     let param = lane_param(p, "automation.set_point")?;
     let at = position_param(e, "automation.set_point", p, "at")?.unwrap_or(e.session().edit.selection.start).max(0);
+    check_tracks(e, "automation.set_point", &tracks, &param)?;
     let from = position_param(e, "automation.set_point", p, "from")?;
     let v = p.get("value").and_then(Value::as_f64).filter(|v| v.is_finite()).ok_or_else(|| bad("automation.set_point", "`value` required"))? as f32;
     let s = e.session_mut();
@@ -510,6 +520,7 @@ fn set_point(e: &mut Engine, p: &Value) -> Result<Value> {
 fn write_range(e: &mut Engine, p: &Value) -> Result<Value> {
     let tracks = tracks_required(e, "automation.write_range", p)?;
     let param = lane_param(p, "automation.write_range")?;
+    check_tracks(e, "automation.write_range", &tracks, &param)?;
     let r = range_param(e, "automation.write_range", p)?;
     let v = p.get("value").and_then(Value::as_f64).filter(|v| v.is_finite()).ok_or_else(|| bad("automation.write_range", "`value` required"))? as f32;
     let s = e.session_mut();
@@ -534,7 +545,47 @@ pub(crate) fn current_value(tr: &soundcraft_model::Track, param: &AutoParam) -> 
         AutoParam::Plugin { slot, param } => {
             tr.mixer.inserts.get(usize::from(*slot)).and_then(Option::as_ref).and_then(|i| i.params.get(param).copied()).unwrap_or(0.0)
         }
+        AutoParam::MidiCc(_) | AutoParam::PitchBend | AutoParam::ChannelPressure => param.range().2,
     }
+}
+
+/// MIDI controller parameters exist only on instrument and MIDI tracks.
+pub(crate) fn check_param_for_track(cmd: &str, tr: &soundcraft_model::Track, param: &AutoParam) -> Result<()> {
+    if param.is_midi() && !matches!(tr.kind, soundcraft_model::TrackKind::Instrument | soundcraft_model::TrackKind::Midi) {
+        return Err(bad(cmd, format!("`{}` is a MIDI controller: only instrument and MIDI tracks have it", param.id())));
+    }
+    Ok(())
+}
+
+fn check_tracks(e: &Engine, cmd: &str, tracks: &[TrackId], param: &AutoParam) -> Result<()> {
+    for t in tracks {
+        if let Some(tr) = e.session().track(*t) {
+            check_param_for_track(cmd, tr, param)?;
+        }
+    }
+    Ok(())
+}
+
+/// Set a MIDI controller's value from a point in time on: a breakpoint in the track's lane.
+fn midi_value(e: &mut Engine, p: &Value) -> Result<Value> {
+    let c = "automation.midi_value";
+    let tracks = tracks_required(e, c, p)?;
+    let param = lane_param(p, c)?;
+    if !param.is_midi() {
+        return Err(bad(c, "`param` must be a MIDI controller (cc<n>|pitch_bend|pressure)"));
+    }
+    check_tracks(e, c, &tracks, &param)?;
+    let at = position_param(e, c, p, "at")?.unwrap_or(e.session().edit.selection.start).max(0);
+    let v = p.get("value").and_then(Value::as_f64).filter(|v| v.is_finite()).ok_or_else(|| bad(c, "`value` required"))? as f32;
+    let (lo, hi, _) = param.range();
+    let v = v.clamp(lo, hi);
+    let s = e.session_mut();
+    for t in &tracks {
+        if let Some(tr) = s.track_mut(*t) {
+            tr.lane_mut(&param).set_point(at, v);
+        }
+    }
+    Ok(json!({"at": at, "value": v}))
 }
 
 fn clear_lane(e: &mut Engine, p: &Value) -> Result<Value> {

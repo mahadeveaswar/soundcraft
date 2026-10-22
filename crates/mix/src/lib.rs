@@ -233,6 +233,10 @@ struct Strip {
     live: live::LiveHeld,
     /// The instrument's next block starts somewhere new: send it the controllers in effect there.
     chase: bool,
+    /// Last value of each controller sent from track automation (`CTRL_UNKNOWN` = nothing sent).
+    ctrl_sent: [i16; CTRL_SLOTS],
+    /// Send sustain off and all-controllers-reset at the next block (after a stop or reset).
+    release_ctrls: bool,
     muted: bool,
     gr: f32,
     /// Per-clip effect chains (Clip Effects) and a scratch buffer to render clips into.
@@ -317,6 +321,8 @@ impl Strip {
             held: Vec::new(),
             live: live::LiveHeld::new(),
             chase: true,
+            ctrl_sent: [CTRL_UNKNOWN; CTRL_SLOTS],
+            release_ctrls: false,
             muted: false,
             gr: 0.0,
             clip_fx: HashMap::new(),
@@ -519,6 +525,8 @@ impl MixEngine {
             s.held.clear();
             s.live.clear();
             s.chase = true;
+            s.ctrl_sent = [CTRL_UNKNOWN; CTRL_SLOTS];
+            s.release_ctrls = s.instrument.is_some();
             s.align.clear();
             s.align_pre.clear();
             s.out_extra.clear();
@@ -634,6 +642,7 @@ impl MixEngine {
                 st.held.clear();
                 st.live.clear();
                 st.chase = true;
+                st.ctrl_sent = [CTRL_UNKNOWN; CTRL_SLOTS];
             }
         }
         self.live_tick(frames);
@@ -1007,11 +1016,17 @@ fn process_strip(
                 }
                 inst.plugin.set_transport(&transport);
                 // Stopped: only live notes sound, the clips' notes and controllers stay silent.
+                if std::mem::take(&mut strip.release_ctrls) {
+                    inst.plugin.midi(0, [0xB0, 64, 0]);
+                    inst.plugin.midi(0, [0xB0, 121, 0]);
+                }
                 if !live.monitor_only {
+                    let owned = owned_ctrls(t);
                     if std::mem::take(&mut strip.chase) {
-                        chase_controllers(s, t, pos, inst);
+                        chase_controllers(s, t, pos, inst, &owned, &mut strip.ctrl_sent);
                     }
-                    schedule_notes(s, t, pos, frames, inst, &mut strip.held);
+                    schedule_notes(s, t, pos, frames, inst, &mut strip.held, &owned);
+                    send_ctrl_automation(s, t, pos, inst, &owned, &mut strip.ctrl_sent);
                 }
                 if strip.buf.len() >= 2 {
                     inst.plugin.process(&mut strip.buf, frames);
@@ -1496,7 +1511,7 @@ fn midi_offset(s: &Session, t: &Track) -> i64 {
 }
 
 /// Send note on/offs and controllers for MIDI clips overlapping the block.
-fn schedule_notes(s: &Session, t: &Track, pos: Samples, frames: usize, inst: &mut PluginSlot, held: &mut Vec<u8>) {
+fn schedule_notes(s: &Session, t: &Track, pos: Samples, frames: usize, inst: &mut PluginSlot, held: &mut Vec<u8>, owned: &[bool; CTRL_SLOTS]) {
     let sr = s.sample_rate;
     // MIDI Track Offsets: the track's notes sound `offset` samples later (earlier if negative), so
     // the block looks that far back into the clips.
@@ -1552,7 +1567,7 @@ fn schedule_notes(s: &Session, t: &Track, pos: Samples, frames: usize, inst: &mu
         let near = s.tempo.samples_to_ticks(pos, sr).saturating_sub(base).saturating_sub(1)
             ..=s.tempo.samples_to_ticks(end, sr).saturating_sub(base).saturating_add(1);
         // Events before tick 0 are what a start trim hid: they don't play.
-        for c in sequence.ctrls.iter().filter(|c| c.tick >= 0) {
+        for c in sequence.ctrls.iter().filter(|c| c.tick >= 0 && !ctrl_slot(c.kind).is_some_and(|i| owned.get(i).copied().unwrap_or(false))) {
             let tick = c.tick.saturating_add(delay).max(0);
             if !near.contains(&tick) {
                 continue;
@@ -1583,8 +1598,9 @@ fn ctrl_message(kind: CtrlKind, value: i32, transpose: i64) -> [u8; 3] {
 
 /// Before an instrument plays from `pos`: reset its controllers, then send each one the last value
 /// it had on this track before `pos`.
-fn chase_controllers(s: &Session, t: &Track, pos: Samples, inst: &mut PluginSlot) {
+fn chase_controllers(s: &Session, t: &Track, pos: Samples, inst: &mut PluginSlot, owned: &[bool; CTRL_SLOTS], sent: &mut [i16; CTRL_SLOTS]) {
     inst.plugin.midi(0, [0xB0, 121, 0]);
+    *sent = [CTRL_UNKNOWN; CTRL_SLOTS];
     let pos = pos.saturating_sub(midi_offset(s, t));
     const BEND: usize = 128;
     const PRESSURE: usize = 129;
@@ -1598,7 +1614,7 @@ fn chase_controllers(s: &Session, t: &Track, pos: Samples, inst: &mut PluginSlot
         }
         let base = s.tempo.samples_to_ticks(clip.start, sr);
         let until = pos.min(clip.end());
-        for c in sequence.ctrls.iter().filter(|c| c.tick >= 0) {
+        for c in sequence.ctrls.iter().filter(|c| c.tick >= 0 && !ctrl_slot(c.kind).is_some_and(|i| owned.get(i).copied().unwrap_or(false))) {
             let slot = match c.kind {
                 CtrlKind::Cc(n) => usize::from(n & 0x7F),
                 CtrlKind::PitchBend => BEND,
@@ -1615,6 +1631,19 @@ fn chase_controllers(s: &Session, t: &Track, pos: Samples, inst: &mut PluginSlot
             }
         }
     }
+    // Controllers owned by a track lane take the lane's value at `pos` instead of clip data.
+    for slot in 0..CTRL_SLOTS {
+        if owned.get(slot).copied().unwrap_or(false)
+            && let Some(v) = auto_ctrl_value(t, pos, slot)
+        {
+            if let Some(l) = last.get_mut(slot) {
+                *l = (0, v);
+            }
+            if let Some(x) = sent.get_mut(slot) {
+                *x = v as i16;
+            }
+        }
+    }
     for (slot, &(at, value)) in last.iter().enumerate() {
         let kind = match slot {
             BEND => CtrlKind::PitchBend,
@@ -1624,6 +1653,83 @@ fn chase_controllers(s: &Session, t: &Track, pos: Samples, inst: &mut PluginSlot
         };
         if at != i64::MIN {
             inst.plugin.midi(0, ctrl_message(kind, value, 0));
+        }
+    }
+}
+
+/// Slots of the per-strip controller cache: CC 0-127, pitch bend, channel pressure.
+const CTRL_SLOTS: usize = 130;
+const CTRL_UNKNOWN: i16 = i16::MIN;
+const SLOT_BEND: usize = 128;
+const SLOT_PRESSURE: usize = 129;
+
+/// Cache slot of a clip controller kind that track automation can own.
+fn ctrl_slot(kind: CtrlKind) -> Option<usize> {
+    match kind {
+        CtrlKind::Cc(n) => Some(usize::from(n & 0x7F)),
+        CtrlKind::PitchBend => Some(SLOT_BEND),
+        CtrlKind::ChannelPressure => Some(SLOT_PRESSURE),
+        CtrlKind::PolyPressure(_) | CtrlKind::Program => None,
+    }
+}
+
+fn slot_kind(slot: usize) -> Option<CtrlKind> {
+    match slot {
+        SLOT_BEND => Some(CtrlKind::PitchBend),
+        SLOT_PRESSURE => Some(CtrlKind::ChannelPressure),
+        n if n < 128 => u8::try_from(n).ok().map(CtrlKind::Cc),
+        _ => None,
+    }
+}
+
+fn lane_slot(p: &AutoParam) -> Option<usize> {
+    match p {
+        AutoParam::MidiCc(n) if *n < 128 => Some(usize::from(*n)),
+        AutoParam::PitchBend => Some(SLOT_BEND),
+        AutoParam::ChannelPressure => Some(SLOT_PRESSURE),
+        _ => None,
+    }
+}
+
+/// Controllers whose track lane has points while the track reads automation: automation wins
+/// over clip data for those.
+fn owned_ctrls(t: &Track) -> [bool; CTRL_SLOTS] {
+    let mut owned = [false; CTRL_SLOTS];
+    if t.mixer.automation_mode.reads() {
+        for l in t.automation.iter().filter(|l| !l.points.is_empty()) {
+            if let Some(o) = lane_slot(&l.param).and_then(|i| owned.get_mut(i)) {
+                *o = true;
+            }
+        }
+    }
+    owned
+}
+
+/// The quantised value of the lane for `slot` at `pos` (already shifted by the MIDI offset).
+fn auto_ctrl_value(t: &Track, pos: Samples, slot: usize) -> Option<i32> {
+    let lane = t.automation.iter().find(|l| lane_slot(&l.param) == Some(slot) && !l.points.is_empty())?;
+    let (lo, hi, default) = lane.param.range();
+    let v = lane.value_at(pos, default);
+    if v.is_nan() {
+        return None;
+    }
+    let v = if lane.param.stepped() { if v >= 64.0 { hi } else { lo } } else { v.round().clamp(lo, hi) };
+    Some(v as i32)
+}
+
+/// Once per block: send each automation-owned controller whose value changed since last sent.
+fn send_ctrl_automation(s: &Session, t: &Track, pos: Samples, inst: &mut PluginSlot, owned: &[bool; CTRL_SLOTS], sent: &mut [i16; CTRL_SLOTS]) {
+    let pos = pos.saturating_sub(midi_offset(s, t));
+    for l in &t.automation {
+        let Some(slot) = lane_slot(&l.param) else { continue };
+        if !owned.get(slot).copied().unwrap_or(false) {
+            continue;
+        }
+        let (Some(v), Some(kind), Some(last)) = (auto_ctrl_value(t, pos, slot), slot_kind(slot), sent.get_mut(slot)) else { continue };
+        let Ok(v16) = i16::try_from(v) else { continue };
+        if *last != v16 {
+            *last = v16;
+            inst.plugin.midi(0, ctrl_message(kind, v, 0));
         }
     }
 }
@@ -2708,6 +2814,140 @@ mod tests {
         assert_eq!(std::mem::take(&mut *heard.lock().unwrap()), vec![(0, [0xB0, 121, 0]), (0, [0xB0, 64, 127]), (0, [0xE0, 0, 0])]);
         render_block(&mut eng, &s, 36_512);
         assert!(heard.lock().unwrap().is_empty());
+    }
+
+    type Heard = Arc<std::sync::Mutex<Vec<(usize, [u8; 3])>>>;
+
+    /// An instrument track whose instrument records every MIDI message it is sent.
+    fn ears_engine(clip_ctrls: Vec<soundcraft_midi::CtrlEvent>, lanes: Vec<(AutoParam, Vec<(i64, f32)>)>) -> (Session, MixEngine, Heard) {
+        let mut s = Session::default();
+        let t = s.add_track(TrackKind::Instrument, ChannelFormat::Stereo, None);
+        s.track_mut(t).unwrap().instrument = Some(Insert::new("clap:test.ears"));
+        if !clip_ctrls.is_empty() {
+            let seq = soundcraft_midi::Sequence { ctrls: clip_ctrls, ..Default::default() };
+            let cid = s.new_clip_id();
+            s.track_mut(t).unwrap().playlist_mut().unwrap().clips.push(Clip::midi(cid, "m", 0, 48_000 * 4, seq));
+        }
+        for (param, pts) in lanes {
+            let lane = s.track_mut(t).unwrap().lane_mut(&param);
+            for (at, v) in pts {
+                lane.set_point(at, v);
+            }
+        }
+        let heard: Heard = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let ears = Ears { inner: soundcraft_dsp::create("gain").unwrap(), heard: Arc::clone(&heard) };
+        let mut eng = MixEngine::new(48_000.0, 512);
+        eng.set_external_instances(true);
+        eng.adopt(vec![PreparedInstance { track: t, slot: INSTRUMENT_SLOT, id: "clap:test.ears".into(), ch: 2, plugin: Box::new(ears) }]);
+        (s, eng, heard)
+    }
+
+    fn take(h: &Heard) -> Vec<(usize, [u8; 3])> {
+        std::mem::take(&mut *h.lock().unwrap())
+    }
+
+    fn cc_event(tick: i64, kind: CtrlKind, value: i32) -> soundcraft_midi::CtrlEvent {
+        soundcraft_midi::CtrlEvent { tick, channel: 0, kind, value }
+    }
+
+    #[test]
+    fn automation_lane_ramps_a_controller_once_per_block() {
+        let (s, mut eng, heard) = ears_engine(vec![], vec![(AutoParam::MidiCc(11), vec![(0, 0.0), (48_000, 127.0)])]);
+        render_block(&mut eng, &s, 0);
+        assert_eq!(take(&heard), vec![(0, [0xB0, 121, 0]), (0, [0xB0, 0x0B, 0])]);
+        let mut values = Vec::new();
+        for b in 1..47 {
+            render_block(&mut eng, &s, b * 512);
+            let got = take(&heard);
+            assert!(got.len() <= 1, "at most one message per block: {got:?}");
+            values.extend(got.iter().map(|m| i32::from(m.1[2])));
+        }
+        assert!(values.windows(2).all(|w| w[0] < w[1]), "only changes are sent: {values:?}");
+        assert!(values.last().is_some_and(|v| (*v - 63).abs() <= 2), "{values:?}");
+    }
+
+    #[test]
+    fn constant_lane_sends_once() {
+        let (s, mut eng, heard) = ears_engine(vec![], vec![(AutoParam::MidiCc(1), vec![(0, 40.0), (96_000, 40.0)])]);
+        render_block(&mut eng, &s, 0);
+        assert_eq!(take(&heard), vec![(0, [0xB0, 121, 0]), (0, [0xB0, 1, 40])]);
+        render_block(&mut eng, &s, 512);
+        render_block(&mut eng, &s, 1024);
+        assert!(take(&heard).is_empty());
+    }
+
+    #[test]
+    fn locate_chases_the_automation_value() {
+        let (s, mut eng, heard) = ears_engine(vec![], vec![(AutoParam::MidiCc(11), vec![(0, 0.0), (48_000, 120.0)])]);
+        render_block(&mut eng, &s, 0);
+        take(&heard);
+        render_block(&mut eng, &s, 36_000);
+        assert_eq!(take(&heard), vec![(0, [0xB0, 121, 0]), (0, [0xB0, 0x0B, 90])]);
+    }
+
+    #[test]
+    fn automation_owns_a_controller_over_clip_data_unless_off() {
+        let clip = vec![cc_event(4, CtrlKind::Cc(64), 127)];
+        let (s, mut eng, heard) = ears_engine(clip.clone(), vec![(AutoParam::MidiCc(64), vec![(0, 0.0)])]);
+        render_block(&mut eng, &s, 0);
+        assert_eq!(take(&heard), vec![(0, [0xB0, 121, 0]), (0, [0xB0, 64, 0])]);
+        // Other controllers still play from the clip.
+        let (s2, mut eng2, heard2) = ears_engine(vec![cc_event(4, CtrlKind::Cc(1), 50)], vec![(AutoParam::MidiCc(64), vec![(0, 0.0)])]);
+        render_block(&mut eng2, &s2, 0);
+        assert!(take(&heard2).contains(&(100, [0xB0, 1, 50])));
+        let (mut s3, mut eng3, heard3) = ears_engine(clip, vec![(AutoParam::MidiCc(64), vec![(0, 0.0)])]);
+        let tid = s3.tracks.first().unwrap().id;
+        s3.track_mut(tid).unwrap().mixer.automation_mode = soundcraft_model::AutomationMode::Off;
+        render_block(&mut eng3, &s3, 0);
+        assert_eq!(take(&heard3), vec![(0, [0xB0, 121, 0]), (100, [0xB0, 64, 127])]);
+    }
+
+    #[test]
+    fn reset_releases_sustain() {
+        let (s, mut eng, heard) = ears_engine(vec![], vec![]);
+        render_block(&mut eng, &s, 0);
+        take(&heard);
+        eng.reset();
+        render_block(&mut eng, &s, 0);
+        let got = take(&heard);
+        assert!(got.contains(&(0, [0xB0, 64, 0])), "{got:?}");
+    }
+
+    #[test]
+    fn pitch_bend_lane_extremes() {
+        for (v, want) in [(-8192.0, [0xE0, 0, 0]), (8191.0, [0xE0, 0x7F, 0x7F]), (0.0, [0xE0, 0, 0x40])] {
+            let (s, mut eng, heard) = ears_engine(vec![], vec![(AutoParam::PitchBend, vec![(0, v)])]);
+            render_block(&mut eng, &s, 0);
+            assert_eq!(take(&heard), vec![(0, [0xB0, 121, 0]), (0, want)]);
+        }
+    }
+
+    #[test]
+    fn stepped_sustain_lane_gives_zero_at_the_midpoint() {
+        let (s, mut eng, heard) = ears_engine(vec![], vec![(AutoParam::MidiCc(64), vec![(0, 0.0), (48_000, 127.0)])]);
+        render_block(&mut eng, &s, 0);
+        take(&heard);
+        for b in 1..94 {
+            render_block(&mut eng, &s, b * 512);
+            assert!(take(&heard).is_empty(), "block {b}: still off before the lane's last point");
+        }
+        render_block(&mut eng, &s, 94 * 512);
+        assert_eq!(take(&heard), vec![(0, [0xB0, 64, 127])]);
+    }
+
+    #[test]
+    fn rendering_with_a_controller_lane_is_deterministic() {
+        let run = || {
+            let (s, mut eng, heard) = ears_engine(
+                vec![],
+                vec![(AutoParam::MidiCc(11), vec![(0, 0.0), (48_000, 127.0)]), (AutoParam::PitchBend, vec![(0, -100.0), (24_000, 100.0)])],
+            );
+            for b in 0..8 {
+                render_block(&mut eng, &s, b * 512);
+            }
+            take(&heard)
+        };
+        assert_eq!(run(), run());
     }
 
     struct Keys {

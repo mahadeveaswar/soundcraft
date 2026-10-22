@@ -16,7 +16,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Show Automation Lane",
             [],
             None,
-            "{track?, param?: volume|pan|mute|send_a_level|plugin:a:<id> (default: the first of volume, pan, mute not shown)}",
+            "{track?, param?: volume|pan|mute|send_a_level|plugin:a:<id>|cc<n>|pitch_bend|pressure (MIDI controllers on instrument and MIDI tracks only; default: the first of volume, pan, mute not shown)}",
             has_tracks,
             lane_show
         ),
@@ -46,7 +46,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "List Automation Lanes",
             [],
             None,
-            "{track?} -> lanes: [{index, param, label, points, value, height, locked, follow, toggle}]",
+            "{track?} -> lanes: [{index, param, label, points, value, unit, min, max, height, locked, follow, toggle}]",
             always,
             lanes_list
         ),
@@ -85,6 +85,9 @@ fn lane_show(e: &mut Engine, p: &Value) -> Result<Value> {
     let id = track_of(e, c, p)?;
     let requested = if str_param(p, "param").is_some() { Some(param_of(p, c)?) } else { None };
     let tr = e.session_mut().track_mut(id).ok_or_else(|| bad(c, "no such track"))?;
+    if let Some(x) = &requested {
+        super::mix::check_param_for_track(c, tr, x)?;
+    }
     let param = match requested {
         Some(x) if tr.shown_lanes.iter().any(|l| l.param == x) => return Err(bad(c, "that lane is already shown")),
         Some(x) => x,
@@ -113,6 +116,7 @@ fn lane_set_param(e: &mut Engine, p: &Value) -> Result<Value> {
     let (id, i) = target(e, c, p)?;
     let param = param_of(p, c)?;
     let tr = e.session().track(id).ok_or_else(|| bad(c, "no such track"))?;
+    super::mix::check_param_for_track(c, tr, &param)?;
     if tr.shown_lanes.iter().enumerate().any(|(j, l)| j != i && l.param == param) {
         return Err(bad(c, "another lane of this track already shows that parameter"));
     }
@@ -168,13 +172,27 @@ fn lanes_list(e: &mut Engine, p: &Value) -> Result<Value> {
             let fixed = super::mix::current_value(tr, &l.param);
             let lane = tr.lane(&l.param);
             let value = lane.map_or(fixed, |a| a.value_at(at, fixed));
+            let (min, max, _) = l.param.range();
+            let (min, max) = if min <= f32::MIN || max >= f32::MAX { (Value::Null, Value::Null) } else { (json!(min), json!(max)) };
             json!({
                 "index": i, "param": l.param.id(), "label": l.param.label(), "points": lane.map_or(0, |a| a.points.len()),
-                "value": value, "height": l.height, "locked": l.locked, "follow": l.follow, "toggle": l.param.is_toggle(),
+                "value": value, "unit": unit_of(&l.param), "min": min, "max": max, "height": l.height, "locked": l.locked, "follow": l.follow, "toggle": l.param.is_toggle(),
             })
         })
         .collect();
     Ok(json!({"track": id.0, "lanes": lanes}))
+}
+
+/// What a lane's values are measured in.
+fn unit_of(p: &AutoParam) -> &'static str {
+    match p {
+        AutoParam::Volume | AutoParam::SendLevel(_) => "dB",
+        AutoParam::Pan(_) | AutoParam::SendPan(_) => "pan",
+        _ if p.stepped() => "on/off",
+        AutoParam::MidiCc(_) | AutoParam::ChannelPressure => "cc",
+        AutoParam::PitchBend => "bend",
+        _ => "value",
+    }
 }
 
 #[cfg(test)]
@@ -290,6 +308,45 @@ mod tests {
         // A lane written without the optional fields gets the defaults.
         let lane: ShownLane = serde_json::from_value(json!({"param": "Volume"})).unwrap();
         assert_eq!((lane.height, lane.locked, lane.follow), (soundcraft_model::LANE_HEIGHT_DEFAULT, false, false));
+    }
+
+    #[test]
+    fn midi_params_only_on_instrument_and_midi_tracks() {
+        let (mut e, t) = engine();
+        assert!(e.execute("automation.lane_show", &json!({"track": t, "param": "cc11"})).is_err());
+        e.execute("automation.lane_show", &json!({"track": t})).unwrap();
+        assert!(e.execute("automation.lane_set_param", &json!({"track": t, "index": 0, "param": "pitch_bend"})).is_err());
+        assert!(e.execute("automation.set_point", &json!({"track": t, "param": "cc1", "at": 0, "value": 5})).is_err());
+        assert!(e.execute("automation.midi_value", &json!({"track": t, "param": "cc1", "value": 5})).is_err());
+        assert!(e.session().track(TrackId(t)).unwrap().automation.is_empty());
+        for kind in [TrackKind::Instrument, TrackKind::Midi] {
+            let m = e.session_mut().add_track(kind, ChannelFormat::Stereo, None).0;
+            for (i, param) in ["cc11", "cc64", "pitch_bend", "pressure"].into_iter().enumerate() {
+                assert_eq!(e.execute("automation.lane_show", &json!({"track": m, "param": param})).unwrap()["index"], i);
+            }
+            e.execute("automation.lane_set_param", &json!({"track": m, "index": 0, "param": "cc1"})).unwrap();
+            let l = lanes(&mut e, m);
+            assert_eq!((l[0]["param"].as_str(), l[0]["unit"].as_str()), (Some("cc1"), Some("cc")));
+            assert_eq!(l[1]["unit"], "on/off");
+            assert_eq!(l[1]["toggle"], true);
+            assert_eq!((l[2]["unit"].as_str(), l[2]["min"].as_f64(), l[2]["max"].as_f64()), (Some("bend"), Some(-8192.0), Some(8191.0)));
+        }
+    }
+
+    #[test]
+    fn midi_value_writes_a_clamped_breakpoint() {
+        let (mut e, _) = engine();
+        let m = e.session_mut().add_track(TrackKind::Instrument, ChannelFormat::Stereo, None).0;
+        assert_eq!(e.execute("automation.midi_value", &json!({"track": m, "param": "cc11", "value": 300, "at": 10})).unwrap()["value"], 127.0);
+        e.execute("automation.midi_value", &json!({"track": m, "param": "pitch_bend", "value": -99999, "at": 0})).unwrap();
+        assert!(e.execute("automation.midi_value", &json!({"track": m, "param": "volume", "value": 1})).is_err(), "not a MIDI controller");
+        assert!(e.execute("automation.midi_value", &json!({"track": m, "param": "cc11"})).is_err(), "value required");
+        let tr = e.session().track(TrackId(m)).unwrap();
+        assert_eq!(tr.lane(&AutoParam::MidiCc(11)).unwrap().points.len(), 1);
+        assert_eq!(tr.lane(&AutoParam::PitchBend).unwrap().points[0].value, -8192.0);
+        assert!(e.undo());
+        assert!(e.undo());
+        assert!(e.session().track(TrackId(m)).unwrap().automation.is_empty());
     }
 
     #[test]

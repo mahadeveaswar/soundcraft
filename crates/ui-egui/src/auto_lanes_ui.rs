@@ -93,6 +93,7 @@ pub fn static_value(t: &Track, p: &AutoParam) -> f32 {
             ins.and_then(|i| i.params.get(param).copied().or_else(|| soundcraft_dsp::plugin_info(&i.plugin)?.param(param).map(|p| p.default)))
                 .unwrap_or(0.0)
         }
+        AutoParam::MidiCc(_) | AutoParam::PitchBend | AutoParam::ChannelPressure => p.range().2,
     }
 }
 
@@ -114,6 +115,9 @@ pub fn value_text(t: &Track, p: &AutoParam, v: f32) -> String {
         AutoParam::Volume | AutoParam::SendLevel(_) => format!("{v:.1} dB"),
         AutoParam::Pan(_) | AutoParam::SendPan(_) => format!("{v:+.2}"),
         AutoParam::Mute | AutoParam::SendMute(_) => if v > 0.5 { "on" } else { "off" }.into(),
+        AutoParam::MidiCc(_) if p.stepped() => if v >= 64.0 { "on" } else { "off" }.into(),
+        AutoParam::MidiCc(_) | AutoParam::ChannelPressure => format!("{v:.0}"),
+        AutoParam::PitchBend => format!("{v:+.0}"),
         AutoParam::Plugin { .. } => plugin_param(t, p).map_or_else(|| format!("{v:.2}"), |i| i.format(v)),
     }
 }
@@ -142,6 +146,9 @@ fn set_command(id: TrackId, p: &AutoParam, v: f32) -> (&'static str, serde_json:
         AutoParam::SendPan(i) => ("mix.send_level", json!({"track": id.0, "slot": i, "pan": v})),
         AutoParam::SendMute(i) => ("mix.send_level", json!({"track": id.0, "slot": i, "mute": v > 0.5})),
         AutoParam::Plugin { slot, param } => ("mix.insert_param", json!({"track": id.0, "slot": slot, "param": param, "value": v})),
+        AutoParam::MidiCc(_) | AutoParam::PitchBend | AutoParam::ChannelPressure => {
+            ("automation.midi_value", json!({"track": id.0, "param": p.id(), "value": v}))
+        }
     }
 }
 

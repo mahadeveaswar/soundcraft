@@ -2578,16 +2578,7 @@ fn finish_drag(app: &mut SoundApp, s: &Session, tl: Rect, p: Option<Pos2>) {
 }
 
 fn automation_id(p: &AutoParam) -> String {
-    match p {
-        AutoParam::Volume => "volume".into(),
-        AutoParam::Pan(0) => "pan".into(),
-        AutoParam::Pan(_) => "pan2".into(),
-        AutoParam::Mute => "mute".into(),
-        AutoParam::SendLevel(i) => format!("send_{}_level", (b'a' + i) as char),
-        AutoParam::SendPan(i) => format!("send_{}_pan", (b'a' + i) as char),
-        AutoParam::SendMute(i) => format!("send_{}_mute", (b'a' + i) as char),
-        AutoParam::Plugin { slot, param } => format!("plugin:{}:{param}", (b'a' + slot) as char),
-    }
+    p.id()
 }
 
 /// Grid snapping while dragging; holding Cmd/Ctrl swaps Grid and Slip.

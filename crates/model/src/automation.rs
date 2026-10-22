@@ -63,6 +63,12 @@ pub enum AutoParam {
         slot: u8,
         param: String,
     },
+    /// MIDI continuous controller 0..=127 (instrument and MIDI tracks).
+    MidiCc(u8),
+    /// MIDI pitch bend, -8192..=8191.
+    PitchBend,
+    /// MIDI channel pressure, 0..=127.
+    ChannelPressure,
 }
 
 impl AutoParam {
@@ -76,6 +82,9 @@ impl AutoParam {
             AutoParam::SendPan(i) => format!("send {} pan", slot_letter(*i)),
             AutoParam::SendMute(i) => format!("send {} mute", slot_letter(*i)),
             AutoParam::Plugin { slot, param } => format!("insert {} {param}", slot_letter(*slot)),
+            AutoParam::MidiCc(n) => format!("CC{n} {}", cc_name(*n)),
+            AutoParam::PitchBend => "pitch bend".into(),
+            AutoParam::ChannelPressure => "channel pressure".into(),
         }
     }
     /// Parse ids like `volume`, `pan`, `pan2`, `mute`, `send_a_level`, `plugin:a:threshold`.
@@ -86,7 +95,15 @@ impl AutoParam {
             "pan" | "pan1" => return Some(AutoParam::Pan(0)),
             "pan2" => return Some(AutoParam::Pan(1)),
             "mute" => return Some(AutoParam::Mute),
+            "pitch_bend" => return Some(AutoParam::PitchBend),
+            "pressure" => return Some(AutoParam::ChannelPressure),
             _ => {}
+        }
+        if let Some(n) = s.strip_prefix("cc")
+            && !n.is_empty()
+            && n.bytes().all(|b| b.is_ascii_digit())
+        {
+            return n.parse::<u8>().ok().filter(|n| *n <= 127).map(AutoParam::MidiCc);
         }
         if let Some(rest) = s.strip_prefix("send_") {
             let mut it = rest.splitn(2, '_');
@@ -111,7 +128,29 @@ impl AutoParam {
             AutoParam::Pan(_) | AutoParam::SendPan(_) => (-1.0, 1.0, 0.0),
             AutoParam::Mute | AutoParam::SendMute(_) => (0.0, 1.0, 0.0),
             AutoParam::Plugin { .. } => (f32::MIN, f32::MAX, 0.0),
+            AutoParam::MidiCc(n) => {
+                let default = match n {
+                    7 => 100.0,
+                    8 | 10 => 64.0,
+                    11 => 127.0,
+                    _ => 0.0,
+                };
+                (0.0, 127.0, default)
+            }
+            AutoParam::PitchBend => (-8192.0, 8191.0, 0.0),
+            AutoParam::ChannelPressure => (0.0, 127.0, 0.0),
         }
+    }
+
+    /// True for the MIDI controller parameters (only meaningful on instrument and MIDI tracks).
+    pub fn is_midi(&self) -> bool {
+        matches!(self, AutoParam::MidiCc(_) | AutoParam::PitchBend | AutoParam::ChannelPressure)
+    }
+
+    /// Switch-like parameters step between their limits instead of ramping: mute, send mute and
+    /// the on/off controllers 64-69.
+    pub fn stepped(&self) -> bool {
+        matches!(self, AutoParam::Mute | AutoParam::SendMute(_) | AutoParam::MidiCc(64..=69))
     }
 }
 
@@ -143,13 +182,49 @@ impl AutoParam {
             AutoParam::SendPan(i) => format!("send_{}_pan", letter(*i)),
             AutoParam::SendMute(i) => format!("send_{}_mute", letter(*i)),
             AutoParam::Plugin { slot, param } => format!("plugin:{}:{param}", letter(*slot)),
+            AutoParam::MidiCc(n) => format!("cc{n}"),
+            AutoParam::PitchBend => "pitch_bend".into(),
+            AutoParam::ChannelPressure => "pressure".into(),
         }
     }
 
     /// An on/off parameter: shown as a toggle instead of a value field.
     pub fn is_toggle(&self) -> bool {
-        matches!(self, AutoParam::Mute | AutoParam::SendMute(_))
+        self.stepped()
     }
+}
+
+/// Generic name of MIDI controller `n` (own wording).
+pub fn cc_name(n: u8) -> String {
+    let name = match n {
+        0 => "Bank Select",
+        1 => "Modulation",
+        2 => "Breath",
+        4 => "Foot",
+        5 => "Portamento Time",
+        6 => "Data Entry",
+        7 => "Volume",
+        8 => "Balance",
+        10 => "Pan",
+        11 => "Expression",
+        12 => "Effect 1",
+        13 => "Effect 2",
+        16..=19 => return format!("General {}", n - 15),
+        64 => "Sustain",
+        65 => "Portamento",
+        66 => "Sostenuto",
+        67 => "Soft",
+        68 => "Legato",
+        69 => "Hold 2",
+        70..=79 => return format!("Sound {}", n - 69),
+        91 => "Reverb Send",
+        92 => "Tremolo",
+        93 => "Chorus Send",
+        94 => "Detune",
+        95 => "Phaser",
+        _ => return format!("Controller {n}"),
+    };
+    name.into()
 }
 
 /// Default, smallest and largest height (points) of a shown automation lane.
@@ -211,7 +286,7 @@ impl AutomationLane {
         match (pts.get(idx.wrapping_sub(1)), pts.get(idx)) {
             (Some(a), Some(b)) if b.at > a.at => {
                 // Mute-like lanes step instead of ramping.
-                if matches!(self.param, AutoParam::Mute | AutoParam::SendMute(_)) {
+                if self.param.stepped() {
                     return a.value;
                 }
                 a.value + (b.value - a.value) * ((at - a.at) as f32 / (b.at - a.at) as f32)
@@ -261,7 +336,7 @@ impl AutomationLane {
     /// Thin: remove points whose removal changes the curve by less than `tolerance`.
     pub fn thin(&mut self, tolerance: f32) -> usize {
         // Linear thinning would move the transitions of step lanes.
-        if matches!(self.param, AutoParam::Mute | AutoParam::SendMute(_)) || self.points.len() < 3 || tolerance.is_nan() {
+        if self.param.stepped() || self.points.len() < 3 || tolerance.is_nan() {
             return 0;
         }
         let tolerance = f64::from(tolerance);
@@ -388,5 +463,78 @@ mod tests {
         l.set_point(1, 5.0);
         assert_eq!(l.points[0].value, 0.0);
         assert_eq!(l.points[1].value, 1.0);
+    }
+
+    #[test]
+    fn midi_params_round_trip() {
+        let all = [
+            AutoParam::MidiCc(0),
+            AutoParam::MidiCc(1),
+            AutoParam::MidiCc(11),
+            AutoParam::MidiCc(64),
+            AutoParam::MidiCc(127),
+            AutoParam::PitchBend,
+            AutoParam::ChannelPressure,
+        ];
+        for p in all {
+            assert_eq!(AutoParam::parse(&p.id()), Some(p.clone()), "{p:?}");
+            assert!(!p.label().is_empty());
+            assert!(p.is_midi());
+        }
+        assert_eq!(AutoParam::MidiCc(11).label(), "CC11 Expression");
+        assert_eq!(AutoParam::parse("cc128"), None);
+        assert_eq!(AutoParam::parse("cc"), None);
+        assert_eq!(AutoParam::parse("cc99999"), None);
+        assert!(!AutoParam::Volume.is_midi());
+    }
+
+    #[test]
+    fn midi_ranges_and_defaults() {
+        assert_eq!(AutoParam::MidiCc(1).range(), (0.0, 127.0, 0.0));
+        assert_eq!(AutoParam::MidiCc(7).range().2, 100.0);
+        assert_eq!(AutoParam::MidiCc(10).range().2, 64.0);
+        assert_eq!(AutoParam::MidiCc(11).range().2, 127.0);
+        assert_eq!(AutoParam::PitchBend.range(), (-8192.0, 8191.0, 0.0));
+        assert_eq!(AutoParam::ChannelPressure.range(), (0.0, 127.0, 0.0));
+        let mut l = AutomationLane::new(AutoParam::PitchBend);
+        l.set_point(0, -99999.0);
+        l.set_point(1, 99999.0);
+        assert_eq!((l.points[0].value, l.points[1].value), (-8192.0, 8191.0));
+    }
+
+    #[test]
+    fn stepped_params_do_not_ramp() {
+        for n in 64..=69u8 {
+            assert!(AutoParam::MidiCc(n).stepped());
+        }
+        assert!(!AutoParam::MidiCc(63).stepped() && !AutoParam::MidiCc(70).stepped() && !AutoParam::PitchBend.stepped());
+        let mut l = AutomationLane::new(AutoParam::MidiCc(64));
+        l.set_point(0, 0.0);
+        l.set_point(100, 127.0);
+        assert_eq!(l.value_at(50, 0.0), 0.0);
+        assert_eq!(l.value_at(100, 0.0), 127.0);
+        let mut c = AutomationLane::new(AutoParam::MidiCc(11));
+        c.set_point(0, 0.0);
+        c.set_point(100, 100.0);
+        assert!((c.value_at(50, 0.0) - 50.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn cc_names_are_generic() {
+        assert_eq!(cc_name(1), "Modulation");
+        assert_eq!(cc_name(64), "Sustain");
+        assert_eq!(cc_name(16), "General 1");
+        assert_eq!(cc_name(70), "Sound 1");
+        assert_eq!(cc_name(3), "Controller 3");
+    }
+
+    #[test]
+    fn old_session_json_still_loads() {
+        let lane: AutomationLane = serde_json::from_str(r#"{"param":"Volume","points":[{"at":0,"value":1.0}]}"#).unwrap();
+        assert_eq!(lane.param, AutoParam::Volume);
+        let shown: ShownLane = serde_json::from_str(r#"{"param":{"Plugin":{"slot":0,"param":"x"}}}"#).unwrap();
+        assert_eq!(shown.height, LANE_HEIGHT_DEFAULT);
+        let cc: AutoParam = serde_json::from_str(&serde_json::to_string(&AutoParam::MidiCc(11)).unwrap()).unwrap();
+        assert_eq!(cc, AutoParam::MidiCc(11));
     }
 }
