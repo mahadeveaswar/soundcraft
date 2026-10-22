@@ -49,7 +49,7 @@ mod tests {
     }
 
     #[test]
-    fn snapping_follows_the_zoom_level() {
+    fn effective_grid_follows_the_zoom_level() {
         let mut e = Engine::default();
         e.execute("edit.grid_adaptive", &json!({"value": true})).unwrap();
         let s = |e: &Engine, g: GridValue, pos| g.snap(pos, e.session().sample_rate, &e.session().tempo, e.session().frame_rate);

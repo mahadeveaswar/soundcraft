@@ -89,3 +89,6 @@ Merge a platform branch into `custom-release` only when all hold, then tag it:
 ## 8. What each machine uniquely verifies
 - Windows: DX12 rendering, the Windows installer path, hosted VST3 behaviour with the installed plugins.
 - macOS: Metal rendering at Retina scale, CoreAudio device and buffer behaviour, Audio Unit hosting, the native menu bar and its shortcuts (Cmd and Option labels), window and dock behaviour, trackpad scroll and pinch zoom.
+
+## 9. Session format compatibility
+- Sessions that contain MIDI controller automation lanes (MC1: `cc0`..`cc127`, `pitch_bend`, `pressure`) do not open in a build without commit 831ce28, because the older `AutoParam` enum rejects the unknown lane ids. Pull `custom-release` on the other machine before opening such a session there.
