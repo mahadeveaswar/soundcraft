@@ -1,15 +1,58 @@
 //! Design tokens. Colours were chosen by eye to give a dark, studio-style look; they are ours.
 
 use egui::{Color32, FontFamily, FontId};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::cell::Cell;
+use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 /// Palette indexes: Dark is the default, Light and Midnight are opt-in.
 pub const PALETTE_DARK: u8 = 0;
 pub const PALETTE_LIGHT: u8 = 1;
 pub const PALETTE_MIDNIGHT: u8 = 2;
+/// A user theme (`theme_doc::ThemeDoc`) resolved into [`set_custom`].
+pub const PALETTE_CUSTOM: u8 = 3;
 
 /// The active palette index (`PALETTE_DARK`, `PALETTE_LIGHT` or `PALETTE_MIDNIGHT`).
 static PALETTE: AtomicU8 = AtomicU8::new(PALETTE_DARK);
+
+/// The tokens of the custom palette, written only by the UI thread through [`set_custom`].
+static CUSTOM: RwLock<Tokens> = RwLock::new(Tokens::DARK);
+/// Bumped by every [`set_custom`]; readers refresh their thread-local copy when it changes.
+static CUSTOM_GEN: AtomicU32 = AtomicU32::new(0);
+/// Whether the custom palette's egui widgets use the light visuals (its base is Light).
+static CUSTOM_LIGHT: AtomicBool = AtomicBool::new(false);
+
+thread_local! {
+    /// This thread's copy of the custom tokens and the generation it was read at.
+    static CUSTOM_CACHE: Cell<Option<(u32, Tokens)>> = const { Cell::new(None) };
+}
+
+/// Install the custom palette tokens (`light` selects egui's light widget visuals). Call from the
+/// UI thread; select the palette with `apply_palette(ctx, PALETTE_CUSTOM)`.
+pub fn set_custom(tokens: Tokens, light: bool) {
+    let mut guard = CUSTOM.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+    *guard = tokens;
+    CUSTOM_LIGHT.store(light, Ordering::Relaxed);
+    CUSTOM_GEN.fetch_add(1, Ordering::Release);
+}
+
+/// The generation of the custom palette; changes whenever [`set_custom`] runs.
+pub fn custom_generation() -> u32 {
+    CUSTOM_GEN.load(Ordering::Acquire)
+}
+
+/// The custom tokens: one atomic load and a thread-local copy while the generation is unchanged.
+fn custom_tokens() -> Tokens {
+    let generation = custom_generation();
+    CUSTOM_CACHE.with(|cache| match cache.get() {
+        Some((g, tokens)) if g == generation => tokens,
+        _ => {
+            let tokens = *CUSTOM.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+            cache.set(Some((generation, tokens)));
+            tokens
+        }
+    })
+}
 
 /// Unit tests that change or read the process-wide palette must own it until their assertions
 /// finish. The lock is re-entrant per thread, so a test may hold it and still build apps
@@ -81,6 +124,8 @@ pub enum ThemeMode {
     Dark,
     /// A second dark palette: near-black blue-grey, bright grid, translucent clips.
     Midnight,
+    /// A user theme (`ui.theme_*`); not offered in the Theme combo.
+    Custom,
 }
 
 impl ThemeMode {
@@ -92,6 +137,7 @@ impl ThemeMode {
             Self::Light => "Light",
             Self::Dark => "Dark",
             Self::Midnight => "Midnight",
+            Self::Custom => "Custom",
         }
     }
 
@@ -102,6 +148,7 @@ impl ThemeMode {
             Self::Light => "light",
             Self::Dark => "dark",
             Self::Midnight => "midnight",
+            Self::Custom => "custom",
         }
     }
 
@@ -110,7 +157,7 @@ impl ThemeMode {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Tokens {
     pub window_bg: Color32,
     pub panel_bg: Color32,
@@ -617,7 +664,10 @@ impl Tokens {
     };
 
     pub fn current() -> Tokens {
-        Self::for_palette(palette())
+        match palette() {
+            PALETTE_CUSTOM => custom_tokens(),
+            index => Self::for_palette(index),
+        }
     }
 
     /// The tokens of a palette index; unknown indexes use Dark.
@@ -637,7 +687,11 @@ pub fn palette() -> u8 {
 
 /// Whether the Light palette is the active one.
 pub fn is_light() -> bool {
-    palette() == PALETTE_LIGHT
+    match palette() {
+        PALETTE_LIGHT => true,
+        PALETTE_CUSTOM => CUSTOM_LIGHT.load(Ordering::Relaxed),
+        _ => false,
+    }
 }
 
 /// Whether the Midnight palette is the active one.
@@ -650,6 +704,7 @@ pub fn wants_light(ctx: &egui::Context, mode: ThemeMode) -> bool {
     match mode {
         ThemeMode::Light => true,
         ThemeMode::Dark | ThemeMode::Midnight => false,
+        ThemeMode::Custom => CUSTOM_LIGHT.load(Ordering::Relaxed),
         ThemeMode::System => ctx.system_theme() == Some(egui::Theme::Light),
     }
 }
@@ -658,6 +713,7 @@ pub fn wants_light(ctx: &egui::Context, mode: ThemeMode) -> bool {
 pub fn wants_palette(ctx: &egui::Context, mode: ThemeMode) -> u8 {
     match mode {
         ThemeMode::Midnight => PALETTE_MIDNIGHT,
+        ThemeMode::Custom => PALETTE_CUSTOM,
         other if wants_light(ctx, other) => PALETTE_LIGHT,
         _ => PALETTE_DARK,
     }
@@ -731,7 +787,7 @@ pub fn apply(ctx: &egui::Context, light: bool) {
 /// Make the palette with this index the active one and apply its visuals.
 pub fn apply_palette(ctx: &egui::Context, index: u8) {
     PALETTE.store(index, Ordering::Relaxed);
-    let light = index == PALETTE_LIGHT;
+    let light = is_light();
     let t = Tokens::current();
     let mut v = if light { egui::Visuals::light() } else { egui::Visuals::dark() };
     v.panel_fill = t.panel_bg;
@@ -913,6 +969,36 @@ mod tests {
             assert_eq!((tk.spot_bg, tk.spot_ring, tk.spot_ring_inner), (rgb(16, 19, 23), rgb(60, 68, 78), rgb(44, 50, 58)));
             assert_eq!((tk.spot_speaker_ring, tk.spot_object, tk.spot_object_name), (rgb(150, 160, 170), rgb(240, 180, 60), rgb(240, 200, 120)));
         }
+    }
+
+    #[test]
+    fn current_follows_set_custom_and_the_cache_takes_no_lock_when_unchanged() {
+        let _guard = lock_test_palette();
+        let before = palette();
+        let mut tokens = Tokens::DARK;
+        tokens.accent = Color32::from_rgb(1, 2, 3);
+        set_custom(tokens, false);
+        PALETTE.store(PALETTE_CUSTOM, Ordering::Relaxed);
+        assert_eq!(Tokens::current().accent, Color32::from_rgb(1, 2, 3));
+        // Warm this thread's cache, hold the write lock elsewhere and read again: a lock-free hit returns.
+        let (tx, rx) = std::sync::mpsc::channel();
+        let writer = CUSTOM.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let handle = std::thread::spawn(move || {
+            CUSTOM_CACHE.with(|c| c.set(Some((custom_generation(), tokens))));
+            let _ = tx.send(Tokens::current().accent);
+        });
+        let got = rx.recv_timeout(std::time::Duration::from_secs(5));
+        drop(writer);
+        let _ = handle.join();
+        assert_eq!(got, Ok(Color32::from_rgb(1, 2, 3)));
+        let generation = custom_generation();
+        tokens.accent = Color32::from_rgb(9, 9, 9);
+        set_custom(tokens, true);
+        assert_ne!(custom_generation(), generation);
+        assert_eq!(Tokens::current().accent, Color32::from_rgb(9, 9, 9));
+        assert!(is_light());
+        PALETTE.store(before, Ordering::Relaxed);
+        set_custom(Tokens::DARK, false);
     }
 
     #[test]

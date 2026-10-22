@@ -43,6 +43,7 @@ pub mod score_editor;
 pub mod shortcuts;
 pub mod spot;
 pub mod theme;
+pub mod theme_doc;
 pub mod toolbar;
 pub mod toolbar_layout;
 mod toolbar_standard;
@@ -376,7 +377,7 @@ pub struct SoundApp {
     fonts_ready: bool,
     fonts_installed: bool,
     /// The palette last applied to the context (light?), so visuals are set only on a change.
-    theme_applied: Option<u8>,
+    theme_applied: Option<(u8, u32)>,
     /// Last panel host context, used to cancel renderer-owned gestures on explicit replacement.
     pub(crate) docking_context: Option<egui::Context>,
     /// Transport simulation when there is no player (tests, offscreen renders).
@@ -1228,9 +1229,10 @@ impl SoundApp {
             }
         }
         let palette = theme::wants_palette(ctx, self.ui.theme);
-        if self.theme_applied != Some(palette) || theme::palette() != palette {
+        let applied = (palette, if palette == theme::PALETTE_CUSTOM { theme::custom_generation() } else { 0 });
+        if self.theme_applied != Some(applied) || theme::palette() != palette {
             theme::apply_palette(ctx, palette);
-            self.theme_applied = Some(palette);
+            self.theme_applied = Some(applied);
         }
         let now = ctx.input(|i| i.time);
         let dt = self.last_frame.replace(now).map_or(1.0 / 60.0, |t| (now - t) as f32).clamp(0.0, 0.25);
