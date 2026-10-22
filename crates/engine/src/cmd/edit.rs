@@ -305,7 +305,8 @@ fn cut_copy(e: &mut Engine, p: &Value, cut: bool, id: &str) -> Result<Value> {
 /// Remove `r` from a track, closing the gap in Shuffle mode; automation follows when `follow`.
 fn cut_track(s: &mut Session, t: TrackId, r: soundcraft_time::Range, sh: bool, follow: bool) {
     if follow && let Some(tr) = s.track_mut(t) {
-        for l in &mut tr.automation {
+        let locked = crate::edit::locked_params(tr);
+        for l in tr.automation.iter_mut().filter(|l| !locked.contains(&l.param)) {
             l.clear_range(r.start, r.end);
         }
     }
@@ -336,7 +337,8 @@ fn paste(e: &mut Engine, p: &Value) -> Result<Value> {
         }
         pasted += ops::paste(s, *t, at, clips, cb.length, sh).map_err(|why| bad("edit.paste", why))?.len();
         if follow && let (Some(lanes), Some(tr)) = (cb.automation.get(i % cb.automation.len().max(1)), s.track_mut(*t)) {
-            for l in lanes {
+            let locked = crate::edit::locked_params(tr);
+            for l in lanes.iter().filter(|l| !locked.contains(&l.param)) {
                 let dst = tr.lane_mut(&l.param);
                 if !l.points.is_empty() {
                     dst.clear_range(at, at + cb.length);
@@ -394,7 +396,8 @@ fn clear_automation(e: &mut Engine, p: &Value, which: Option<&str>) -> Result<Va
     let mut n = 0;
     for t in &tracks {
         if let Some(tr) = s.track_mut(*t) {
-            for l in &mut tr.automation {
+            let locked = crate::edit::locked_params(tr);
+            for l in tr.automation.iter_mut().filter(|l| !locked.contains(&l.param)) {
                 let hit = match which {
                     None => true,
                     Some("pan") => matches!(l.param, soundcraft_model::AutoParam::Pan(_)),
@@ -568,7 +571,8 @@ fn duplicate(e: &mut Engine, p: &Value) -> Result<Value> {
         let clips = ops::copy_range(s, *t, range);
         n += ops::paste(s, *t, range.end, &clips, range.len(), sh).map_err(|why| bad("edit.duplicate", why))?.len();
         if follow && let Some(tr) = s.track_mut(*t) {
-            for l in &mut tr.automation {
+            let locked = crate::edit::locked_params(tr);
+            for l in tr.automation.iter_mut().filter(|l| !locked.contains(&l.param)) {
                 let pts: Vec<_> = l.points.iter().filter(|p| range.contains(p.at)).copied().collect();
                 for pt in pts {
                     l.set_point(pt.at + range.len(), pt.value);
@@ -620,7 +624,8 @@ fn insert_silence(e: &mut Engine, p: &Value) -> Result<Value> {
         } else {
             ops::clear_range(s, *t, range, false);
             if follow && let Some(tr) = s.track_mut(*t) {
-                for l in &mut tr.automation {
+                let locked = crate::edit::locked_params(tr);
+                for l in tr.automation.iter_mut().filter(|l| !locked.contains(&l.param)) {
                     l.clear_range(range.start, range.end);
                 }
             }

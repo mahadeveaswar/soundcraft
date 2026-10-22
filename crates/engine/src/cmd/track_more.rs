@@ -406,6 +406,9 @@ fn trim_write(e: &mut Engine, p: &Value) -> Result<Value> {
     let s = e.session_mut();
     for t in &tracks {
         if let Some(tr) = s.track_mut(*t) {
+            if crate::edit::locked_params(tr).contains(&trim_param()) {
+                continue;
+            }
             tr.lane_mut(&trim_param()).write_range(r.start, r.end, db, 0.0);
         }
     }
@@ -441,6 +444,10 @@ fn coalesce_trim(e: &mut Engine, p: &Value) -> Result<Value> {
     let mut n = 0;
     for t in &tracks {
         let Some(tr) = s.track_mut(*t) else { continue };
+        let locked = crate::edit::locked_params(tr);
+        if locked.contains(&trim_param()) || locked.contains(&AutoParam::Volume) {
+            continue;
+        }
         let Some(trim) = tr.lane(&trim_param()).cloned() else { continue };
         if !trim.points.is_empty() {
             add_to_volume(tr, &trim, 0.0);
@@ -457,6 +464,9 @@ pub(super) fn clear_trim(e: &mut Engine, p: &Value) -> Result<Value> {
     let mut n = 0;
     for t in &tracks {
         let Some(tr) = s.track_mut(*t) else { continue };
+        if crate::edit::locked_params(tr).contains(&trim_param()) {
+            continue;
+        }
         let before = tr.automation.len();
         tr.automation.retain(|l| l.param != trim_param());
         if tr.automation.len() < before {
@@ -481,11 +491,14 @@ fn coalesce_vca(e: &mut Engine, p: &Value) -> Result<Value> {
     let mut out = Vec::new();
     for v in vcas {
         let Some(vca) = s.track(v).cloned() else { continue };
+        if crate::edit::locked_params(&vca).contains(&AutoParam::Volume) {
+            continue;
+        }
         let lane = vca.lane(&AutoParam::Volume).cloned().unwrap_or_else(|| AutomationLane::new(AutoParam::Volume));
         let level = vca.mixer.volume_db;
         let members: Vec<TrackId> = s.tracks.iter().filter(|t| t.mixer.vca == Some(v.0)).map(|t| t.id).collect();
         for m in &members {
-            if let Some(tr) = s.track_mut(*m) {
+            if let Some(tr) = s.track_mut(*m).filter(|tr| !crate::edit::locked_params(tr).contains(&AutoParam::Volume)) {
                 add_to_volume(tr, &lane, level);
             }
         }

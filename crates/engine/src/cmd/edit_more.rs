@@ -322,7 +322,8 @@ fn auto_copy(e: &mut Engine, p: &Value, which: Lanes, cut: bool, id: &str) -> Re
         let s = e.session_mut();
         for t in &tracks {
             if let Some(tr) = s.track_mut(*t) {
-                for l in tr.automation.iter_mut().filter(|l| which.hit(&l.param)) {
+                let locked = crate::edit::locked_params(tr);
+                for l in tr.automation.iter_mut().filter(|l| which.hit(&l.param) && !locked.contains(&l.param)) {
                     l.clear_range(r.start, r.end);
                 }
             }
@@ -542,6 +543,9 @@ fn paste_to_current_automation(e: &mut Engine, p: &Value) -> Result<Value> {
         let Some(src) = lanes.iter().max_by_key(|l| l.points.len()).filter(|l| !l.points.is_empty()) else { continue };
         let Some(tr) = s.track_mut(*t) else { continue };
         let dst = forced.clone().unwrap_or_else(|| AutoParam::parse(&tr.view).unwrap_or(AutoParam::Volume));
+        if crate::edit::locked_params(tr).contains(&dst) {
+            continue;
+        }
         let lane = tr.lane_mut(&dst);
         lane.clear_range(at, at.saturating_add(cb.length));
         for pt in &src.points {
@@ -563,7 +567,8 @@ fn duplicate_extend(e: &mut Engine, p: &Value) -> Result<Value> {
         let clips = ops::copy_range(s, *t, r);
         n += ops::paste(s, *t, r.end, &clips, r.len(), sh).map_err(|why| bad(id, why))?.len();
         if follow && let Some(tr) = s.track_mut(*t) {
-            for l in &mut tr.automation {
+            let locked = crate::edit::locked_params(tr);
+            for l in tr.automation.iter_mut().filter(|l| !locked.contains(&l.param)) {
                 let pts: Vec<_> = l.points.iter().filter(|pt| r.contains(pt.at)).copied().collect();
                 for pt in pts {
                     l.set_point(pt.at.saturating_add(r.len()), pt.value);
@@ -800,6 +805,9 @@ fn coalesce_volume_to_clip_gain(e: &mut Engine, p: &Value) -> Result<Value> {
         if !tr.kind.has_playlist() || tr.kind.is_midi() {
             continue;
         }
+        if crate::edit::locked_params(tr).contains(&AutoParam::Volume) {
+            continue;
+        }
         let lane = tr.lane(&AutoParam::Volume).cloned();
         let fader = tr.mixer.volume_db;
         let Some(pl) = tr.playlist_mut() else { continue };
@@ -829,6 +837,9 @@ fn coalesce_clip_gain_to_volume(e: &mut Engine, p: &Value) -> Result<Value> {
         let Some(tr) = s.track_mut(*t) else { continue };
         let clips: Vec<Clip> = tr.clips().iter().filter(|c| c.is_audio() && (c.gain_db != 0.0 || !c.gain_env.is_empty())).cloned().collect();
         if clips.is_empty() {
+            continue;
+        }
+        if crate::edit::locked_params(tr).contains(&AutoParam::Volume) {
             continue;
         }
         let lane = tr.lane(&AutoParam::Volume).cloned();
@@ -881,7 +892,8 @@ fn trim_glide(e: &mut Engine, p: &Value, glide: bool, pan_only: bool, id: &str) 
                 }
             }
         }
-        for param in params {
+        let locked = crate::edit::locked_params(tr);
+        for param in params.into_iter().filter(|p| !locked.contains(p)) {
             let cur = super::mix::current_value(tr, &param);
             let (lo, hi, _) = param.range();
             let l = tr.lane_mut(&param);

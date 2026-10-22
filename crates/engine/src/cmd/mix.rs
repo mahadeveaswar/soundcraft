@@ -616,7 +616,8 @@ fn clear_lane(e: &mut Engine, p: &Value) -> Result<Value> {
     let mut n = 0;
     for t in &tracks {
         if let Some(tr) = s.track_mut(*t) {
-            for l in &mut tr.automation {
+            let locked = crate::edit::locked_params(tr);
+            for l in tr.automation.iter_mut().filter(|l| !locked.contains(&l.param)) {
                 if param.as_ref().is_none_or(|x| x == &l.param) {
                     n += l.clear_range(a, b);
                 }
@@ -642,7 +643,8 @@ fn thin(e: &mut Engine, p: &Value, all: bool) -> Result<Value> {
     let mut n = 0;
     for t in &tracks {
         if let Some(tr) = s.track_mut(*t) {
-            for l in tr.automation.iter_mut().filter(|l| only.as_ref().is_none_or(|x| x == &l.param)) {
+            let locked = crate::edit::locked_params(tr);
+            for l in tr.automation.iter_mut().filter(|l| only.as_ref().is_none_or(|x| x == &l.param) && !locked.contains(&l.param)) {
                 n += match (start, end) {
                     (Some(a), Some(b)) => l.thin_range(tol, a, b),
                     _ => l.thin(tol),
@@ -668,7 +670,8 @@ fn write_current(e: &mut Engine, p: &Value, all: bool) -> Result<Value> {
             } else {
                 vec![AutoParam::parse(&tr.view).unwrap_or(AutoParam::Volume)]
             };
-            for param in params {
+            let locked = crate::edit::locked_params(tr);
+            for param in params.into_iter().filter(|p| !locked.contains(p)) {
                 let v = current_value(tr, &param);
                 tr.lane_mut(&param).write_range(r.start, r.end, v, v);
             }

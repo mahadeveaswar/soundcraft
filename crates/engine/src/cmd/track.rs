@@ -763,9 +763,8 @@ fn comments(e: &mut Engine, p: &Value) -> Result<Value> {
 fn color(e: &mut Engine, p: &Value) -> Result<Value> {
     let tracks = tracks_required(e, "track.color", p)?;
     let c = match p.get("color") {
-        Some(Value::Array(a)) if a.len() == 3 => {
-            let v: Vec<u8> = a.iter().map(|x| x.as_u64().unwrap_or(0).min(255) as u8).collect();
-            [v.first().copied().unwrap_or(0), v.get(1).copied().unwrap_or(0), v.get(2).copied().unwrap_or(0)]
+        Some(v @ Value::Array(_)) => {
+            super::track_palette::parse_color(v).ok_or_else(|| bad("track.color", "[r,g,b] needs three whole numbers 0-255"))?
         }
         Some(Value::String(s)) => super::track_palette::parse_hex(s).ok_or_else(|| bad("track.color", "a colour string must be \"#RRGGBB\""))?,
         Some(v) if v.is_u64() => {
@@ -998,6 +997,13 @@ mod tests {
         assert_eq!(kick_color(&e), [0x0A, 0x0B, 0x0C]);
         assert!(run(&mut e, json!(100)).is_err());
         assert!(run(&mut e, json!("#12")).is_err());
+        run(&mut e, json!([1, 2, 255])).unwrap();
+        assert_eq!(kick_color(&e), [1, 2, 255]);
+        for bad in [json!([300, 0, 0]), json!([-1, 0, 0]), json!([1.5, 0, 0]), json!(["a", 0, 0]), json!([1, 2]), json!([null, 0, 0])] {
+            assert!(run(&mut e, bad.clone()).is_err(), "{bad}");
+        }
+        assert_eq!(kick_color(&e), [1, 2, 255]);
+        run(&mut e, json!([0x0A, 0x0B, 0x0C])).unwrap();
         assert_eq!(kick_color(&e), [0x0A, 0x0B, 0x0C]);
     }
 

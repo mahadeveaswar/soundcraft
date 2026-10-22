@@ -22,7 +22,7 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         cmd!(query "template.list", "List Templates", [], None, "{dir?} -> {templates: [{name, path, source: user|shipped}]}", always, list),
         cmd!(view "template.save", "Save As Template...", [], None, "{name, replace?: false, dir?} -> {path}: stores the session without clips or media", always, save),
-        cmd!(view "template.new_session", "New from Template...", [], None, "{name | path, session_name?, dir?}: replaces the session with the template, unsaved (Save asks for a path)", always, new_session),
+        cmd!(noundo "template.new_session", "New from Template...", [], None, "{name | path, session_name?, dir?}: replaces the session with the template, unsaved (Save asks for a path)", always, new_session),
         cmd!(
             "template.instrument_rack",
             "Instrument Rack...",
@@ -103,7 +103,9 @@ fn save(e: &mut Engine, p: &Value) -> Result<Value> {
 fn new_session(e: &mut Engine, p: &Value) -> Result<Value> {
     let id = "template.new_session";
     let file = if let Some(path) = str_param(p, "path") {
-        PathBuf::from(path)
+        let file = PathBuf::from(path);
+        crate::file_access::check_read(&file).map_err(EngineError::Io)?;
+        file
     } else {
         let name = str_param(p, "name").and_then(sanitize).ok_or_else(|| bad(id, "`name` or `path` required"))?;
         let stem = format!("{name}.{EXT}");
@@ -255,5 +257,31 @@ mod tests {
         assert_eq!(st.as_deref(), Some(blob.as_str()));
         assert!(f.execute("template.new_session", &json!({"name": "Missing", "dir": d})).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn new_session_path_outside_the_read_root_is_refused() {
+        let dir = tmp("root");
+        let inside = dir.join("in");
+        let outside = dir.join("out");
+        std::fs::create_dir_all(&inside).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let mut src = Engine::default();
+        let path = outside.join("t.scraft");
+        crate::file_access::unconfined(|| src.execute("template.save", &json!({"name": "T", "dir": outside.to_string_lossy()}))).unwrap();
+        assert!(path.exists());
+        let roots = crate::file_access::AutomationRoots::new(Some(&inside), None).unwrap().unwrap();
+        let mut e = Engine::default();
+        let r = crate::file_access::confine(Some(&roots), || e.execute("template.new_session", &json!({"path": path.to_string_lossy()})));
+        assert!(r.is_err(), "a path outside the read root is refused");
+        let ok = crate::file_access::unconfined(|| e.execute("template.new_session", &json!({"path": path.to_string_lossy()})));
+        assert!(ok.is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn new_session_is_journaled_and_not_undoable_like_session_new() {
+        let spec = |id: &str| crate::cmd::command_specs().iter().find(|c| c.id == id).map(|c| (c.journal, c.undoable, c.view));
+        assert_eq!(spec("template.new_session"), spec("session.new"));
     }
 }
