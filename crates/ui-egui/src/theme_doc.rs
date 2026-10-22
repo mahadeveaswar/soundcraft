@@ -98,6 +98,14 @@ pub struct ColorKey {
     pub label: &'static str,
     pub section: &'static str,
     set: fn(&mut Tokens, Color32, bool),
+    get: fn(&Tokens) -> Color32,
+}
+
+impl ColorKey {
+    /// The colour this key currently shows in `t` (its primary field).
+    pub fn value(&self, t: &Tokens) -> Color32 {
+        (self.get)(t)
+    }
 }
 
 /// Move `c` towards white (dark base) or black (light base) by `k`.
@@ -106,11 +114,12 @@ fn lift(c: Color32, k: f32, light: bool) -> Color32 {
 }
 
 macro_rules! key {
-    ($key:literal, $label:literal, $section:literal, |$t:ident, $c:ident, $light:ident| $body:block) => {
+    ($key:literal, $label:literal, $section:literal, $field:ident, |$t:ident, $c:ident, $light:ident| $body:block) => {
         ColorKey {
             key: $key,
             label: $label,
             section: $section,
+            get: |t: &Tokens| t.$field,
             set: |$t: &mut Tokens, $c: Color32, $light: bool| {
                 let _ = $light;
                 $body
@@ -121,12 +130,12 @@ macro_rules! key {
 
 /// The exposed colours, in window order.
 pub static KEYS: &[ColorKey] = &[
-    key!("window_bg", "Window background", "Surfaces", |t, c, _l| {
+    key!("window_bg", "Window background", "Surfaces", window_bg, |t, c, _l| {
         t.window_bg = c;
         t.menu_bar = c;
         t.universe_bg = c;
     }),
-    key!("panel", "Panel", "Surfaces", |t, c, l| {
+    key!("panel", "Panel", "Surfaces", panel_bg, |t, c, l| {
         t.panel_bg = c;
         t.strip_bg = c;
         t.strip_section = c;
@@ -137,7 +146,7 @@ pub static KEYS: &[ColorKey] = &[
         t.meter_bg = lift(c, -0.6, l);
         t.meter_clip_off = lift(c, 0.1, l);
     }),
-    key!("border", "Border", "Surfaces", |t, c, l| {
+    key!("border", "Border", "Surfaces", border, |t, c, l| {
         t.border = c;
         t.group_border = c;
         t.counter_border = c;
@@ -145,7 +154,7 @@ pub static KEYS: &[ColorKey] = &[
         t.border_light = lift(c, 0.2, l);
         t.edge_light = lift(c, 0.3, l);
     }),
-    key!("button", "Button", "Surfaces", |t, c, l| {
+    key!("button", "Button", "Surfaces", button, |t, c, l| {
         t.button = c;
         t.mode_off = c;
         t.counter_off = c;
@@ -153,28 +162,28 @@ pub static KEYS: &[ColorKey] = &[
         t.slot_empty = c;
         t.button_hi = lift(c, 0.12, l);
     }),
-    key!("arrange_bg", "Arrange background", "Surfaces", |t, c, l| {
+    key!("arrange_bg", "Arrange background", "Surfaces", playlist_bg, |t, c, l| {
         t.playlist_bg = c;
         t.playlist_alt = lift(c, 0.04, l);
         t.playlist_lane = lift(c, -0.04, l);
     }),
-    key!("text", "Text", "Text", |t, c, _l| {
+    key!("text", "Text", "Text", text, |t, c, _l| {
         t.text = c;
         t.header_text = c;
         t.section_label = c;
         t.marker_text = c;
     }),
-    key!("text_dim", "Dim text", "Text", |t, c, _l| {
+    key!("text_dim", "Dim text", "Text", text_dim, |t, c, _l| {
         t.text_dim = c;
         t.mode_off_text = c;
         t.ruler_text = c;
         t.lane_label = c;
     }),
-    key!("text_on_accent", "Text on accent", "Text", |t, c, _l| {
+    key!("text_on_accent", "Text on accent", "Text", text_dark, |t, c, _l| {
         t.text_dark = c;
         t.mode_on_text = c;
     }),
-    key!("accent", "Accent", "Accents", |t, c, l| {
+    key!("accent", "Accent", "Accents", accent, |t, c, l| {
         t.accent = c;
         t.mode_on = c;
         t.knob_pointer = c;
@@ -183,16 +192,16 @@ pub static KEYS: &[ColorKey] = &[
         t.row_selected = lift(c, -0.6, l);
         t.name_field_sel = lift(c, -0.6, l);
     }),
-    key!("selection", "Selection", "Accents", |t, c, _l| {
+    key!("selection", "Selection", "Accents", selection, |t, c, _l| {
         t.selection = c;
         t.header_selected = c;
         t.strip_selected = c;
     }),
-    key!("playhead", "Playhead", "Accents", |t, c, _l| {
+    key!("playhead", "Playhead", "Accents", playhead, |t, c, _l| {
         t.playhead = c;
         t.insertion = c;
     }),
-    key!("ruler", "Ruler", "Grid", |t, c, l| {
+    key!("ruler", "Ruler", "Grid", ruler_bg, |t, c, l| {
         t.ruler_bg = c;
         t.ruler_label_bg = c;
         t.tempo_ruler = c;
@@ -200,42 +209,42 @@ pub static KEYS: &[ColorKey] = &[
         t.marker_ruler = c;
         t.ruler_tick = lift(c, 0.35, l);
     }),
-    key!("bar_lines", "Bar lines", "Grid", |t, c, _l| {
+    key!("bar_lines", "Bar lines", "Grid", grid_bar, |t, c, _l| {
         t.grid_bar = c;
         t.bar_line = c;
     }),
-    key!("beat_lines", "Beat lines", "Grid", |t, c, _l| {
+    key!("beat_lines", "Beat lines", "Grid", grid_beat, |t, c, _l| {
         t.grid_beat = c;
         t.grid_line = c;
     }),
-    key!("counter", "Counter", "Transport", |t, c, l| {
+    key!("counter", "Counter", "Transport", counter_bg, |t, c, l| {
         t.counter_bg = c;
         t.big_counter_bg = c;
         t.counter_text = c;
         t.counter_label = lift(c, -0.3, l);
         t.counter_rule = lift(c, -0.5, l);
     }),
-    key!("record", "Record", "Transport", |t, c, _l| {
+    key!("record", "Record", "Transport", rec, |t, c, _l| {
         t.rec = c;
         t.auto_write = c;
     }),
-    key!("solo", "Solo", "Transport", |t, c, _l| {
+    key!("solo", "Solo", "Transport", solo, |t, c, _l| {
         t.solo = c;
         t.auto_touch = c;
     }),
-    key!("mute", "Mute", "Transport", |t, c, _l| {
+    key!("mute", "Mute", "Transport", mute, |t, c, _l| {
         t.mute = c;
     }),
-    key!("meter_low", "Meter low", "Meters", |t, c, _l| {
+    key!("meter_low", "Meter low", "Meters", meter_green, |t, c, _l| {
         t.meter_green = c;
     }),
-    key!("meter_mid", "Meter mid", "Meters", |t, c, _l| {
+    key!("meter_mid", "Meter mid", "Meters", meter_yellow, |t, c, _l| {
         t.meter_yellow = c;
     }),
-    key!("meter_high", "Meter high", "Meters", |t, c, _l| {
+    key!("meter_high", "Meter high", "Meters", meter_red, |t, c, _l| {
         t.meter_red = c;
     }),
-    key!("roll_row", "Piano roll rows", "Piano roll", |t, c, l| {
+    key!("roll_row", "Piano roll rows", "Piano roll", roll_row_white, |t, c, l| {
         t.roll_row_white = c;
         t.roll_row_black = lift(c, -0.15, l);
         t.roll_grid = lift(c, 0.12, l);
@@ -243,14 +252,14 @@ pub static KEYS: &[ColorKey] = &[
         t.roll_bar = lift(c, 0.3, l);
         t.lane_zero = lift(c, 0.2, l);
     }),
-    key!("note_soft", "MIDI notes soft", "Piano roll", |t, c, _l| {
+    key!("note_soft", "MIDI notes soft", "Piano roll", midi_vel_lo, |t, c, _l| {
         t.midi_vel_lo = c;
     }),
-    key!("note_hard", "MIDI notes hard", "Piano roll", |t, c, _l| {
+    key!("note_hard", "MIDI notes hard", "Piano roll", midi_vel_hi, |t, c, _l| {
         t.midi_vel_hi = c;
         t.midi_vel_mid = t.midi_vel_lo.lerp_to_gamma(c, 0.5);
     }),
-    key!("automation", "Automation", "Automation", |t, c, _l| {
+    key!("automation", "Automation", "Automation", automation_line, |t, c, _l| {
         t.automation_line = c;
         t.auto_read = c;
         t.auto_latch = c;

@@ -169,6 +169,7 @@ fn services() -> Services {
             let d = match purpose {
                 "session.open" => d.add_filter("SoundCraft Session", &["scraft"]),
                 "file.import_midi" => d.add_filter("MIDI", &["mid", "midi", "smf"]),
+                "ui.theme_import" => d.add_filter("SoundCraft Theme", &["json"]),
                 _ => d.add_filter(
                     "Audio",
                     &["wav", "wave", "bwf", "aif", "aiff", "aifc", "flac", "mp3", "ogg", "oga", "m4a", "m4b", "aac", "mp4", "caf", "mkv", "webm"],
@@ -180,6 +181,7 @@ fn services() -> Services {
             let path = std::path::Path::new(default);
             let mut d = match purpose {
                 "file.bounce_mix" => rfd::FileDialog::new().add_filter("Audio", &["wav", "aif", "aiff", "flac"]),
+                "ui.theme_export" => rfd::FileDialog::new().add_filter("SoundCraft Theme", &["json"]),
                 _ => rfd::FileDialog::new().add_filter("SoundCraft Session", &["scraft"]),
             };
             if let Some(dir) = path.parent().filter(|dir| dir.is_dir()) {
@@ -194,6 +196,7 @@ fn services() -> Services {
             rfd::FileDialog::new().set_directory(start).pick_folder().map(|p| p.to_string_lossy().into_owned())
         })),
         free_space: Some(Box::new(|path: &std::path::Path| fs4::available_space(path).ok())),
+        themes_dir: if prefs_enabled() { config_dir().map(|d| d.join("themes")) } else { None },
     }
 }
 

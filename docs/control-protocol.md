@@ -87,6 +87,22 @@ When the integration cannot report an appearance, System uses Dark. Manual Light
 fixed when the OS appearance changes. An offscreen render without `--system-theme` supplies no
 OS appearance and therefore resolves System to Dark.
 
+## Themes
+
+`ui.theme_*` commands edit a custom colour theme on top of Dark, Light or Midnight. The first
+edit forks an unsaved "Custom (from Dark)" copy that is saved with the UI preferences.
+`ui.theme_get {}` returns the name, base, `dirty`, every colour as `#RRGGBB`, the settings and
+contrast warnings. `ui.theme_list {}` lists built-in and saved themes.
+`ui.theme_set_color {key, color}` (an unknown key lists the valid ones),
+`ui.theme_set_param {key, value}` (`clip_opacity`, `clip_opacity_selected`, `grid_strength`,
+`track_tint`, `grid_beat_always`), `ui.theme_set_track_color {index 0-15, color}` and
+`ui.theme_reset {key?}` change the working copy. `ui.theme_load`, `ui.theme_save {name?}`,
+`ui.theme_rename {from, to}`, `ui.theme_delete`, `ui.theme_duplicate {name, to}`,
+`ui.theme_export {path?}` and `ui.theme_import {path?}` manage themes; built-in names cannot be
+overwritten, renamed or deleted. Saved themes are JSON files in the `themes` folder next to
+`ui.json`; with `SOUNDCRAFT_NO_PREFS` they stay in memory. A theme's track palette is pushed to
+the engine with `track_palette.set` when the theme applies and cleared for built-in themes.
+
 ## Panel docking
 
 Tracks and Groups, Clips, MIDI Editor, Memory Locations, and Undo History use movable panels. Commands target the active Edit or Mix view; floating panels stay inside the current viewport. Edit and Mix retain separate arrangements; Clips and MIDI Editor belong to Edit. Transport, plug-in, and specialist utility windows retain their existing hosts. The document/session view is protected. Layouts, active tabs, panel visibility, and floating rectangles are saved with the app's existing UI preferences. These operations do not edit document contents.
