@@ -23,54 +23,7 @@ pub fn step_row_h(row_h: f32, delta: f32) -> f32 {
     (row_h + delta).clamp(ROW_H_RANGE.0, ROW_H_RANGE.1)
 }
 
-/// Default height of the velocity / controller lane in pixels.
-pub const LANE_H_DEFAULT: f32 = 64.0;
-const LANE_H_MIN: f32 = 40.0;
-/// The piano roll keeps at least this much of the editor height when the lane grows.
-const ROLL_MIN_H: f32 = 120.0;
-/// Height of the drag handle between the piano roll and the lane.
-const LANE_HANDLE_H: f32 = 6.0;
-/// Gap between the lane and the bottom edge of the editor.
-const LANE_GAP: f32 = 2.0;
-
-/// Clamp a lane height: at least 40 px, at most `avail_h` (the editor height below the header and
-/// the ruler) minus 120 px for the roll. A small panel shrinks the lane first, never below 40.
-pub fn clamp_lane_h(h: f32, avail_h: f32) -> f32 {
-    let max = (avail_h - ROLL_MIN_H - LANE_HANDLE_H - LANE_GAP).max(LANE_H_MIN);
-    if h.is_finite() { h.clamp(LANE_H_MIN, max) } else { LANE_H_DEFAULT.clamp(LANE_H_MIN, max) }
-}
-
-/// The drag handle in the gap between the piano roll and the lane: drag to resize the lane,
-/// double-click to reset it. UI state only. The lane height follows the pointer position (not
-/// deltas of a rect that moves under it): `bottom` is the lane area's bottom edge.
-fn lane_handle(ui: &mut Ui, app: &mut SoundApp, r: Rect, bottom: f32, avail_h: f32, cid: ClipId) {
-    let id = ui.id().with(("lane_handle", cid.0));
-    let resp = ui.interact(r, id, Sense::click_and_drag());
-    ui.ctx().data_mut(|d| d.insert_temp(Id::new("soundcraft-midi-lane-handle"), r));
-    if resp.hovered() || resp.dragged() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
-    }
-    let grab_id = id.with("grab");
-    if resp.double_clicked() {
-        app.midi.lane_h = LANE_H_DEFAULT;
-        ui.ctx().data_mut(|d| d.remove::<f32>(grab_id));
-    } else if resp.drag_started() {
-        // The press point, not the current one: egui starts a drag after a small movement.
-        let grab = ui.input(|i| i.pointer.press_origin()).map_or(0.0, |p| p.y - r.min.y);
-        ui.ctx().data_mut(|d| d.insert_temp(grab_id, grab));
-    } else if resp.dragged() {
-        let grab = ui.ctx().data(|d| d.get_temp::<f32>(grab_id));
-        if let (Some(grab), Some(p)) = (grab, resp.interact_pointer_pos()) {
-            app.midi.lane_h = clamp_lane_h(bottom - LANE_HANDLE_H - (p.y - grab), avail_h);
-        }
-    }
-    let t = Tokens::current();
-    let active = resp.hovered() || resp.dragged();
-    let col = if active { t.header_text } else { t.text_dim.gamma_multiply(0.6) };
-    let c = r.center();
-    ui.painter().line_segment([pos2(c.x - 14.0, c.y), pos2(c.x + 14.0, c.y)], Stroke::new(if active { 2.0 } else { 1.0 }, col));
-    resp.on_hover_text("Drag to resize the lane, double-click to reset");
-}
+pub use crate::midi_lanes::{LANE_H_DEFAULT, Lane, LaneCfg, clamp_lane_h};
 
 /// Parts of the editor header, in the order they are given up as the panel narrows (last first).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -82,6 +35,9 @@ pub enum HeaderItem {
     Audition,
     Zoom,
     Ops,
+    Inspector,
+    Snap,
+    Clip,
     Overflow,
     Label,
 }
@@ -92,12 +48,25 @@ const GLYPHS_W: f32 = 67.0;
 const LOOP_W: f32 = 106.0;
 const AUDITION_W: f32 = 70.0;
 const ZOOM_W: f32 = 160.0;
-const OPS_W: f32 = 246.0;
+const OPS_W: f32 = 296.0;
+const SNAP_W: f32 = 120.0;
+const CLIP_W: f32 = 140.0;
 const OVERFLOW_W: f32 = 26.0;
+const INSPECTOR_BTN_W: f32 = 74.0;
 const LABEL_W: f32 = 190.0;
 const HEADER_GAP: f32 = 6.0;
-/// Default width of the floating panel (keeps every header group visible).
-pub const FLOAT_W: f32 = 1040.0;
+/// Width at which every header group is visible. The floating panel opens at this width when the
+/// window is wide enough, else at the window width less a margin (see [`float_rect`]).
+pub const FLOAT_W: f32 = 1460.0;
+
+/// Where the panel floats by default: `[x, y, width, height]`, kept inside a window of `screen`.
+pub fn float_rect(screen: Rect) -> [f32; 4] {
+    let margin = 16.0;
+    let w = FLOAT_W.min((screen.width() - 2.0 * margin).max(360.0));
+    let x = (screen.width() - w - margin).clamp(margin, 160.0);
+    let h = 380.0_f32.min((screen.height() - 140.0).max(200.0));
+    [x, 120.0_f32.min((screen.height() - h - margin).max(0.0)), w, h]
+}
 
 /// Where each visible header item goes (left to right, never overlapping) for a header rect.
 #[derive(Debug, Clone, Default)]
@@ -133,19 +102,39 @@ pub fn header_layout(header: Rect, has_clip: bool) -> HeaderLayout {
         let tools_end = (tools_start + TOOLS_W).min(tools_limit).max(tools_start);
         items.push((HeaderItem::Tools, at(tools_start, tools_end)));
         let free = (glyph_left - HEADER_GAP - tools_end - HEADER_GAP).max(0.0);
-        let groups = [(HeaderItem::LoopFollow, LOOP_W), (HeaderItem::Audition, AUDITION_W), (HeaderItem::Zoom, ZOOM_W), (HeaderItem::Ops, OPS_W)];
+        // Kept longest first (priority), and where each sits left to right (display order).
+        let groups = [
+            (HeaderItem::Inspector, INSPECTOR_BTN_W),
+            (HeaderItem::Snap, SNAP_W),
+            (HeaderItem::LoopFollow, LOOP_W),
+            (HeaderItem::Audition, AUDITION_W),
+            (HeaderItem::Zoom, ZOOM_W),
+            (HeaderItem::Clip, CLIP_W),
+            (HeaderItem::Ops, OPS_W),
+        ];
+        let display = [
+            HeaderItem::Inspector,
+            HeaderItem::Snap,
+            HeaderItem::Clip,
+            HeaderItem::Ops,
+            HeaderItem::Zoom,
+            HeaderItem::Audition,
+            HeaderItem::LoopFollow,
+        ];
         let need = |k: usize| -> f32 {
             let sum: f32 = groups.iter().take(k).map(|g| g.1 + HEADER_GAP).sum();
             if k < groups.len() { sum + OVERFLOW_W + HEADER_GAP } else { sum }
         };
         let shown = (0..=groups.len()).rev().find(|k| need(*k) <= free).unwrap_or(0);
-        // Right to left from the glyphs: overflow button, then Zoom, Loop/Follow, Ops.
+        let kept: Vec<HeaderItem> = groups.iter().take(shown).map(|g| g.0).collect();
+        // Right to left from the glyphs: overflow button, then the kept groups in reverse display order.
         let mut right = glyph_left - HEADER_GAP;
         if shown < groups.len() {
             items.push((HeaderItem::Overflow, at(right - OVERFLOW_W, right)));
             right -= OVERFLOW_W + HEADER_GAP;
         }
-        for (item, w) in groups.iter().take(shown) {
+        for item in display.iter().rev().filter(|i| kept.contains(i)) {
+            let w = groups.iter().find(|g| g.0 == *item).map_or(0.0, |g| g.1);
             items.push((*item, at(right - w, right)));
             right -= w + HEADER_GAP;
         }
@@ -172,11 +161,20 @@ fn header_child(ui: &mut Ui, r: Rect) -> Ui {
     c
 }
 
+/// The button that opens or closes the inspector strip.
+fn inspector_toggle(app: &mut SoundApp, ui: &mut Ui) {
+    if crate::midi_editor_toolbar::toggle_label(ui, app.midi.inspector_open, "Inspector")
+        .on_hover_text("Show or hide the inspector strip (quantize, transpose, length, velocity, scale, chords)")
+        .clicked()
+    {
+        app.midi.inspector_open = !app.midi.inspector_open;
+    }
+}
+
 /// Loop and Follow buttons.
 fn loop_follow_group(app: &mut SoundApp, ui: &mut Ui, cid: ClipId) {
     let looping = app.engine.session().edit.loop_playback;
-    if ui
-        .selectable_label(looping, "Loop")
+    if crate::midi_editor_toolbar::toggle_label(ui, looping, "Loop")
         .on_hover_text("Loop this clip: selects the clip and turns loop playback on. Press Space to play it.")
         .clicked()
     {
@@ -187,14 +185,15 @@ fn loop_follow_group(app: &mut SoundApp, ui: &mut Ui, cid: ClipId) {
             let _ = app.run("options.loop_playback", json!({"value": true}));
         }
     }
-    if ui.selectable_label(!app.midi.no_follow, "Follow").on_hover_text("Scroll the view with the playhead").clicked() {
+    if crate::midi_editor_toolbar::toggle_label(ui, !app.midi.no_follow, "Follow").on_hover_text("Scroll the view with the playhead").clicked() {
         app.midi.no_follow = !app.midi.no_follow;
     }
 }
 
 /// The Audition toggle: play notes as they are clicked, drawn or moved.
 fn audition_group(app: &mut SoundApp, ui: &mut Ui) {
-    if ui.selectable_label(app.ui.audition, "Audition").on_hover_text("Play notes as you click, draw or move them").clicked() {
+    if crate::midi_editor_toolbar::toggle_label(ui, app.ui.audition, "Audition").on_hover_text("Play notes as you click, draw or move them").clicked()
+    {
         app.ui.audition = !app.ui.audition;
         if !app.ui.audition {
             crate::midi_audition::stop(app);
@@ -223,11 +222,12 @@ fn zoom_group(app: &mut SoundApp, ui: &mut Ui) {
 }
 
 /// Whole-clip operations; returns the command to run.
-fn ops_group(ui: &mut Ui, grid_ticks: i64) -> Option<(&'static str, serde_json::Value)> {
+fn ops_group(app: &mut SoundApp, ui: &mut Ui, grid_ticks: i64) -> Option<(&'static str, serde_json::Value)> {
     let mut op = None;
     if ui.small_button("Quantize").on_hover_text("Quantize to the grid").clicked() {
-        op = Some(("event.quantize", json!({"grid": grid_ticks, "strength": 100})));
+        op = Some(("event.quantize", json!({"grid": grid_ticks, "strength": app.midi.quant_strength})));
     }
+    crate::midi_editor_toolbar::strength_field(app, ui);
     if ui.small_button("Vel +10").clicked() {
         op = Some(("event.change_velocity", json!({"add": 10})));
     }
@@ -248,8 +248,16 @@ pub struct MidiEditorState {
     pub clip: Option<ClipId>,
     /// Rubber-band selection start (screen position).
     pub band: Option<egui::Pos2>,
-    /// What the lane under the piano roll edits.
-    pub lane: Lane,
+    /// The controller lanes under the piano roll, top to bottom.
+    pub lanes: Vec<LaneCfg>,
+    /// The lane last used (target of the Line tool in the roll).
+    pub active_lane: usize,
+    /// Press point, lane and whether it started in the roll, of a Line tool drag in progress.
+    pub line: Option<(egui::Pos2, Lane, bool)>,
+    /// The left inspector strip is open.
+    pub inspector_open: bool,
+    /// Values of the inspector strip and the note-entry assists.
+    pub insp: crate::midi_editor_inspector::InspectorState,
     /// Last point written while drawing in a controller lane: (tick, value).
     pub ctrl_last: Option<(i64, i32)>,
     /// Horizontal zoom in pixels per tick; `None` fits the whole clip to the panel.
@@ -273,8 +281,12 @@ pub struct MidiEditorState {
     pub zoom_h: Option<f32>,
     /// The panel is collapsed to its header.
     pub minimized: bool,
-    /// Height of the velocity / controller lane in pixels (drag the handle above it).
-    pub lane_h: f32,
+    /// What notes snap to in this editor (default: follow the session grid).
+    pub snap: crate::midi_editor_state::MidiSnap,
+    /// Quantize strength 0..=100 used by the header Quantize button.
+    pub quant_strength: u8,
+    /// The last rejected entry in the info strip.
+    pub info_error: Option<String>,
     /// The panel is currently a floating panel (set by the dock before each frame).
     pub floating: bool,
     /// A docking operation requested by the header controls; run by the dock after the frame.
@@ -293,7 +305,11 @@ impl Default for MidiEditorState {
             scroll: 0.0,
             clip: None,
             band: None,
-            lane: Lane::default(),
+            lanes: crate::midi_lanes::default_lanes(),
+            active_lane: 0,
+            line: None,
+            inspector_open: false,
+            insp: crate::midi_editor_inspector::InspectorState::default(),
             ctrl_last: None,
             ppt: None,
             view_start: 0.0,
@@ -305,7 +321,9 @@ impl Default for MidiEditorState {
             row_h: DEFAULT_ROW_H,
             zoom_h: None,
             minimized: false,
-            lane_h: LANE_H_DEFAULT,
+            snap: crate::midi_editor_state::MidiSnap::default(),
+            quant_strength: 100,
+            info_error: None,
             floating: false,
             dock_request: None,
             audition: crate::midi_audition::Audition::default(),
@@ -326,6 +344,14 @@ pub enum MidiTool {
     Erase,
     /// Click a note to cut it in two at the grid line.
     Split,
+    /// Click a note to join it with the next note of the same pitch.
+    Glue,
+    /// Click a note to mute or unmute it.
+    Mute,
+    /// Click to zoom in, Alt-click to zoom out.
+    Zoom,
+    /// Drag in a controller lane to draw a straight ramp.
+    Line,
 }
 
 /// Move the playhead from the ruler: an explicit locate, remembered so Space plays from there.
@@ -346,145 +372,11 @@ pub fn placed_position(play_from: Option<(i64, soundcraft_time::Range)>, sel: so
     play_from.filter(|(at, placed_in)| *placed_in == sel && (sel.is_empty() || sel.contains(*at))).map(|(at, _)| at)
 }
 
-/// Height of the bar ruler above the piano roll.
-const RULER_H: f32 = 16.0;
-
-/// The lane under the piano roll.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Lane {
-    #[default]
-    Velocity,
-    Modulation,
-    Expression,
-    Sustain,
-    PitchBend,
-}
-
-impl Lane {
-    const ALL: [Lane; 5] = [Lane::Velocity, Lane::Modulation, Lane::Expression, Lane::Sustain, Lane::PitchBend];
-
-    fn label(self) -> &'static str {
-        match self {
-            Lane::Velocity => "Velocity",
-            Lane::Modulation => "Modulation (CC1)",
-            Lane::Expression => "Expression (CC11)",
-            Lane::Sustain => "Sustain (CC64)",
-            Lane::PitchBend => "Pitch Bend",
-        }
-    }
-
-    fn short(self) -> &'static str {
-        match self {
-            Lane::Velocity => "Vel",
-            Lane::Modulation => "CC1",
-            Lane::Expression => "CC11",
-            Lane::Sustain => "CC64",
-            Lane::PitchBend => "Bend",
-        }
-    }
-
-    /// `(lane, cc)` for the `midi.ctrl_*` commands, and the value range.
-    fn command(self) -> (&'static str, i64, i32, i32) {
-        match self {
-            Lane::Velocity => ("cc", 0, 0, 127),
-            Lane::Modulation => ("cc", 1, 0, 127),
-            Lane::Expression => ("cc", 11, 0, 127),
-            Lane::Sustain => ("cc", 64, 0, 127),
-            Lane::PitchBend => ("pitch_bend", 0, -8192, 8191),
-        }
-    }
-
-    fn kind(self) -> soundcraft_midi::CtrlKind {
-        match self {
-            Lane::PitchBend => soundcraft_midi::CtrlKind::PitchBend,
-            other => soundcraft_midi::CtrlKind::Cc(other.command().1 as u8),
-        }
-    }
-}
-
-/// A controller lane under the piano roll. Drag to draw (values follow the pointer, one point per
-/// grid step), Shift+drag to erase, right-click to clear the lane. Sustain draws on/off steps.
-#[allow(clippy::too_many_arguments)]
-fn ctrl_lane(
-    app: &mut SoundApp,
-    ui: &mut Ui,
-    cid: ClipId,
-    sequence: &soundcraft_midi::Sequence,
-    r: Rect,
-    x_of: &dyn Fn(i64) -> f32,
-    tick_at: &dyn Fn(f32) -> i64,
-    grid_ticks: i64,
-    base: Color32,
-) {
-    let t = Tokens::current();
-    let lane = app.midi.lane;
-    let (name, cc, lo, hi) = lane.command();
-    let painter = ui.painter().with_clip_rect(r);
-    painter.rect_filled(r, 0.0, Color32::from_rgb(28, 28, 30));
-    let span = (hi - lo) as f32;
-    let y_of = |v: i32| r.max.y - 2.0 - (r.height() - 4.0) * (v - lo) as f32 / span;
-    let zero = if lane == Lane::PitchBend { 0 } else { lo };
-    painter.line_segment([pos2(r.min.x, y_of(zero)), pos2(r.max.x, y_of(zero))], Stroke::new(1.0, Color32::from_rgb(60, 60, 66)));
-    painter.text(pos2(r.max.x - 6.0, r.min.y + 3.0), Align2::RIGHT_TOP, lane.label(), regular(9.0), t.text_dim);
-    // Events as a stepped line: the value holds until the next event.
-    let kind = lane.kind();
-    let evs: Vec<_> = sequence.ctrls.iter().filter(|c| c.channel == 0 && c.kind == kind).collect();
-    let col = Color32::from_rgb(base.r().saturating_add(40), base.g().saturating_add(40), base.b().saturating_add(40));
-    let mut prev = (r.min.x, y_of(zero));
-    for c in &evs {
-        let (x, y) = (x_of(c.tick), y_of(c.value));
-        painter.line_segment([pos2(prev.0, prev.1), pos2(x, prev.1)], Stroke::new(1.5, col));
-        painter.line_segment([pos2(x, prev.1), pos2(x, y)], Stroke::new(1.5, col));
-        painter.circle_filled(pos2(x, y), 2.5, col);
-        prev = (x, y);
-    }
-    painter.line_segment([pos2(prev.0, prev.1), pos2(r.max.x, prev.1)], Stroke::new(1.5, col));
-
-    let resp = ui.interact(r, ui.id().with(("ctrl", cid.0)), Sense::click_and_drag());
-    let merge = format!("ctrl:{}:{name}:{cc}", cid.0);
-    if resp.secondary_clicked() {
-        let _ = app.run("midi.ctrl_clear", json!({"clip": cid.0, "lane": name, "cc": cc}));
-    }
-    if (resp.dragged() || resp.clicked())
-        && let Some(p) = resp.interact_pointer_pos()
-    {
-        let tick = (tick_at(p.x).max(0) / grid_ticks) * grid_ticks;
-        if ui.input(|i| i.modifiers.shift) {
-            let from = app.midi.ctrl_last.map_or(tick, |l| l.0).min(tick);
-            let to = app.midi.ctrl_last.map_or(tick, |l| l.0).max(tick) + grid_ticks;
-            let _ = app.engine.execute_merged(
-                "midi.ctrl_clear",
-                &json!({"clip": cid.0, "lane": name, "cc": cc, "start_ticks": from, "end_ticks": to}),
-                &merge,
-            );
-            app.midi.ctrl_last = Some((tick, 0));
-        } else {
-            let frac = ((r.max.y - 2.0 - p.y) / (r.height() - 4.0)).clamp(0.0, 1.0);
-            let mut value = lo + (frac * span).round() as i32;
-            if lane == Lane::Sustain {
-                value = if frac > 0.5 { 127 } else { 0 };
-            }
-            // One point per grid step between the last point and this one, so fast drags leave no gaps.
-            let (from, from_v) = app.midi.ctrl_last.unwrap_or((tick, value));
-            let (a, b) = (from.min(tick), from.max(tick));
-            let n = ((b - a) / grid_ticks).clamp(0, 2048);
-            let points: Vec<_> = (0..=n)
-                .map(|i| {
-                    let tk = a + i * grid_ticks;
-                    let f = if b == a { 1.0 } else { (tk - from) as f32 / (tick - from) as f32 };
-                    let v = if lane == Lane::Sustain { value } else { from_v + ((value - from_v) as f32 * f.clamp(0.0, 1.0)).round() as i32 };
-                    json!({"tick": tk, "value": v})
-                })
-                .collect();
-            let _ = app.engine.execute_merged("midi.ctrl_set", &json!({"clip": cid.0, "lane": name, "cc": cc, "points": points}), &merge);
-            app.midi.ctrl_last = Some((tick, value));
-        }
-    }
-    if resp.drag_stopped() || (!resp.dragged() && !resp.clicked()) {
-        app.midi.ctrl_last = None;
-    }
-    resp.on_hover_text("Drag: draw · Shift+drag: erase · right-click: clear lane");
-}
+use crate::midi_ruler::RULER_H;
+/// Width of the right-edge column that holds the vertical zoom slider.
+const VZOOM_W: f32 = 18.0;
+/// Height of the bottom strip that holds the horizontal zoom slider.
+const HZOOM_H: f32 = 16.0;
 
 #[derive(Debug, Clone)]
 pub struct NoteDrag {
@@ -561,26 +453,9 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
     let Some((track, clip)) = app.engine.session().find_clip(cid).map(|(t, c)| (t, c.clone())) else { return };
     let ClipContent::Midi { sequence } = &clip.content else { return };
     let track_color = app.engine.session().track(track).map_or([120, 120, 200], |t| t.color);
-    // Tool palette: Select, Pencil, Erase, Split, and the Glue action.
+    // Tool palette: eight tools drawn as icons, and the Glue action.
     let tools_rect = layout.rect(HeaderItem::Tools).unwrap_or(header);
-    let mut tl = header_child(ui, tools_rect);
-    for (tool, label, tip) in [
-        (MidiTool::Select, "Select", "Click to select, drag to move or resize, double-click empty space to add a note"),
-        (MidiTool::Pencil, "Pencil", "Click or drag to draw notes"),
-        (MidiTool::Erase, "Erase", "Click or drag across notes to delete them"),
-        (MidiTool::Split, "Split", "Click a note to cut it at the grid line"),
-    ] {
-        if tl.selectable_label(app.midi.tool == tool, label).on_hover_text(tip).clicked() {
-            if app.midi.tool != tool {
-                crate::midi_audition::stop(app);
-            }
-            app.midi.tool = tool;
-        }
-    }
-    if tl.small_button("Glue").on_hover_text("Join the selected notes of the same pitch into one").clicked() && !app.midi.selected.is_empty() {
-        let _ = app.run("midi.notes_glue", json!({"clip": cid.0, "indices": app.midi.selected}));
-        app.midi.selected.clear();
-    }
+    crate::midi_tools_ui::palette(app, ui, tools_rect, cid);
     if let Some(r) = layout.rect(HeaderItem::Label) {
         ui.painter().with_clip_rect(r).text(
             pos2(r.min.x, header.center().y),
@@ -590,7 +465,7 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
             t.text_dim,
         );
     }
-    let grid_ticks = match app.engine.session().edit.grid {
+    let session_grid = match app.engine.session().edit.grid {
         soundcraft_time::GridValue::Note { value, dotted, triplet } => {
             let mut g = value.ticks();
             if dotted {
@@ -603,12 +478,31 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
         }
         _ => TICKS_PER_QUARTER / 4,
     };
+    let (snap_display, snap_ticks, bar_ticks) = {
+        let ses = app.engine.session();
+        let start_tick = ses.tempo.samples_to_ticks(clip.start, ses.sample_rate);
+        let bar = ses.tempo.meter_at_tick(start_tick).ticks_per_bar();
+        (app.midi.snap.display_ticks(session_grid, bar), app.midi.snap.ticks(session_grid, bar), bar)
+    };
+    let grid_ticks = snap_display;
     // Header toolbar: view controls and whole-clip operations; what does not fit goes in a menu.
     let old_row_h = app.midi.row_h;
     let mut op: Option<(&str, serde_json::Value)> = None;
     if let Some(r) = layout.rect(HeaderItem::Ops) {
         let mut c = header_child(ui, r);
-        op = ops_group(&mut c, grid_ticks);
+        op = ops_group(app, &mut c, grid_ticks);
+    }
+    if let Some(r) = layout.rect(HeaderItem::Inspector) {
+        let mut c = header_child(ui, r);
+        inspector_toggle(app, &mut c);
+    }
+    if let Some(r) = layout.rect(HeaderItem::Snap) {
+        let mut c = header_child(ui, r);
+        crate::midi_editor_toolbar::snap_group(app, &mut c, session_grid);
+    }
+    if let Some(r) = layout.rect(HeaderItem::Clip) {
+        let mut c = header_child(ui, r);
+        crate::midi_editor_toolbar::clip_group(app, &mut c, cid, &clip.name);
     }
     if let Some(r) = layout.rect(HeaderItem::LoopFollow) {
         let mut c = header_child(ui, r);
@@ -633,6 +527,15 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
             ui.painter().circle_filled(r.center() + vec2(dx, 0.0), 1.5, t.header_text);
         }
         egui::Popup::menu(&resp).show(|menu| {
+            if !layout.visible(HeaderItem::Inspector) {
+                inspector_toggle(app, menu);
+            }
+            if !layout.visible(HeaderItem::Snap) {
+                crate::midi_editor_toolbar::snap_group(app, menu, session_grid);
+            }
+            if !layout.visible(HeaderItem::Clip) {
+                crate::midi_editor_toolbar::clip_group(app, menu, cid, &clip.name);
+            }
             if !layout.visible(HeaderItem::LoopFollow) {
                 loop_follow_group(app, menu, cid);
             }
@@ -643,28 +546,28 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
                 zoom_group(app, menu);
             }
             if !layout.visible(HeaderItem::Ops) {
-                op = ops_group(menu, grid_ticks);
+                op = ops_group(app, menu, grid_ticks);
             }
         });
     }
-    if let Some((id, mut p)) = op {
-        p["clips"] = json!([cid.0]);
-        let _ = app.run(id, p);
+    if let Some((id, p)) = op {
+        crate::midi_editor_inspector::act(app, cid, id, p);
     }
     let s = app.engine.session_arc();
     let sr = s.sample_rate;
     let base_tick = s.tempo.samples_to_ticks(clip.start, sr);
     let len_ticks = (s.tempo.samples_to_ticks(clip.end(), sr) - base_tick).max(1);
-    let ruler = Rect::from_min_max(pos2(full.min.x + KEY_W, header.max.y), pos2(full.max.x - 4.0, header.max.y + RULER_H));
-    let avail_h = full.max.y - ruler.max.y;
-    let lane_h = clamp_lane_h(app.midi.lane_h, avail_h);
-    let roll =
-        Rect::from_min_max(pos2(ruler.min.x, ruler.max.y), pos2(full.max.x - 4.0, (full.max.y - lane_h - LANE_GAP - LANE_HANDLE_H).max(ruler.max.y)));
-    let keys = Rect::from_min_max(pos2(full.min.x, roll.min.y), pos2(roll.min.x, roll.max.y));
+    let body_left = if app.midi.inspector_open { full.min.x + crate::midi_editor_inspector::INSPECTOR_W } else { full.min.x };
+    let info = Rect::from_min_max(pos2(body_left, header.max.y), pos2(full.max.x, header.max.y + crate::midi_info_bar::INFO_H));
+    crate::midi_info_bar::show(app, ui, info, cid, &sequence.notes, base_tick, &s.tempo);
+    let right = full.max.x - VZOOM_W;
+    let bottom = full.max.y - HZOOM_H;
+    let ruler = Rect::from_min_max(pos2(body_left + KEY_W, info.max.y), pos2(right - 4.0, info.max.y + RULER_H));
+    let avail_h = bottom - ruler.max.y;
+    let (lane_rects, roll_bottom) = crate::midi_lanes::layout(&app.midi.lanes, ruler.min.x, right - 4.0, bottom, avail_h);
+    let roll = Rect::from_min_max(pos2(ruler.min.x, ruler.max.y), pos2(right - 4.0, roll_bottom.max(ruler.max.y)));
+    let keys = Rect::from_min_max(pos2(body_left, roll.min.y), pos2(roll.min.x, roll.max.y));
     ui.ctx().data_mut(|d| d.insert_temp(Id::new("soundcraft-midi-roll"), roll));
-    let handle = Rect::from_min_max(pos2(full.min.x, roll.max.y), pos2(roll.max.x, roll.max.y + LANE_HANDLE_H));
-    let vel = Rect::from_min_max(pos2(roll.min.x, handle.max.y), pos2(roll.max.x, full.max.y - 2.0));
-    lane_handle(ui, app, handle, full.max.y - 2.0, avail_h, cid);
     let row_h = app.midi.row_h;
     // Vertical range: centre on the notes the first time.
     let rows = (roll.height() / row_h).floor() as i32;
@@ -742,6 +645,10 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
     }
     view_start = view_start.clamp(0.0, (len_ticks as f64 - visible_ticks).max(0.0));
     app.midi.view_start = view_start;
+    let hz = Rect::from_min_max(pos2(right - 4.0 - 190.0, bottom), pos2(right - 4.0, full.max.y - 1.0));
+    let vz = Rect::from_min_max(pos2(right, roll.min.y), pos2(full.max.x - 2.0, roll.max.y));
+    crate::midi_zoom::show(app, ui, hz, vz, ppt, (min_ppt, max_ppt), roll.height(), ROW_H_RANGE, ZOOM_STEP);
+    crate::midi_lanes::add_button(ui, app, Rect::from_min_size(pos2(body_left + 4.0, bottom + 1.0), vec2(22.0, HZOOM_H - 2.0)));
     let px_per_tick = ppt;
     let x_of = |tick: i64| roll.min.x + ((tick as f64 - view_start) as f32) * px_per_tick;
     let tick_at = |x: f32| -> i64 { (view_start + f64::from((x - roll.min.x) / px_per_tick)).floor() as i64 };
@@ -749,24 +656,25 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
     let pitch_at = |y: f32| 127 - ((y - roll.min.y + scroll) / row_h).floor() as i32;
     let painter = ui.painter().with_clip_rect(roll.union(keys));
     let roll_p = ui.painter().with_clip_rect(roll);
-    // Background rows and keys.
+    // Background rows and keys; pitches sounding at the playhead are tinted.
+    let active = crate::midi_keys::active_pitches(&sequence.notes, playhead_tick.round() as i64);
+    let scale = if app.midi.insp.highlight_rows { crate::midi_editor_inspector::scale_of(&s, cid) } else { None };
     let top = pitch_at(roll.min.y);
     for r in 0..=rows + 1 {
         let pitch = top - r;
         let y = y_of(pitch);
         let row = Rect::from_min_size(pos2(roll.min.x, y), vec2(roll.width(), row_h));
-        painter.rect_filled(row, 0.0, if is_black(pitch) { Color32::from_rgb(30, 30, 32) } else { Color32::from_rgb(40, 40, 42) });
-        let key = Rect::from_min_size(pos2(keys.min.x, y), vec2(KEY_W - 2.0, row_h - 1.0));
-        painter.rect_filled(key, 1.0, if is_black(pitch) { Color32::from_rgb(20, 20, 20) } else { Color32::from_rgb(225, 225, 225) });
+        let lit = (0..=127).contains(&pitch) && active.get(pitch as usize).copied().unwrap_or(false);
+        painter.rect_filled(row, 0.0, crate::midi_keys::row_fill(is_black(pitch), lit));
+        if let Some(sc) = scale
+            && (0..=127).contains(&pitch)
+            && !sc.contains(pitch as u8)
+        {
+            painter.rect_filled(row, 0.0, crate::midi_keys::OUT_OF_SCALE);
+        }
+        crate::midi_keys::draw_key(&painter, keys.min.x, KEY_W, y, row_h, pitch, is_black(pitch), lit);
         if pitch.rem_euclid(12) == 0 && (0..=127).contains(&pitch) {
-            painter.text(
-                pos2(key.max.x - 3.0, key.center().y),
-                Align2::RIGHT_CENTER,
-                soundcraft_midi::note_name(pitch as u8),
-                regular(8.0),
-                Color32::from_rgb(40, 40, 40),
-            );
-            painter.line_segment([pos2(roll.min.x, y + row_h), pos2(roll.max.x, y + row_h)], Stroke::new(1.0, Color32::from_rgb(64, 64, 68)));
+            painter.line_segment([pos2(roll.min.x, y + row_h), pos2(roll.max.x, y + row_h)], Stroke::new(1.0, Tokens::current().roll_octave));
         }
     }
     // Keyboard gutter: press a key to hear it; sliding along the keys moves the sounding pitch.
@@ -791,30 +699,13 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
     let mut tick = (view_start.floor() as i64 / step.max(1)) * step.max(1);
     while tick <= len_ticks && x_of(tick) <= roll.max.x {
         let x = x_of(tick);
-        roll_p.line_segment([pos2(x, roll.min.y), pos2(x, roll.max.y)], Stroke::new(1.0, Color32::from_rgb(50, 50, 54)));
+        roll_p.line_segment([pos2(x, roll.min.y), pos2(x, roll.max.y)], Stroke::new(1.0, Tokens::current().roll_grid));
         tick += step.max(1);
     }
-    // Bar ruler (meter-aware) with a stronger bar line through the roll.
-    let rp = ui.painter().with_clip_rect(ruler);
-    rp.rect_filled(ruler, 0.0, t.panel_bg2);
-    let first_bar = s.tempo.bar_beat_at_tick(base_tick.saturating_add(view_start.floor() as i64)).bar;
-    let bar_px = (x_of(s.tempo.bar_start_tick(first_bar + 1) - base_tick) - x_of(s.tempo.bar_start_tick(first_bar) - base_tick)).max(1.0);
-    let label_every = ((30.0 / bar_px).ceil() as i64).max(1);
-    for bar in first_bar..first_bar.saturating_add(4096) {
-        let tk = s.tempo.bar_start_tick(bar) - base_tick;
-        let x = x_of(tk);
-        if x > roll.max.x || tk > len_ticks {
-            break;
-        }
-        if x < roll.min.x - 1.0 {
-            continue;
-        }
-        roll_p.line_segment([pos2(x, roll.min.y), pos2(x, roll.max.y)], Stroke::new(1.0, Color32::from_rgb(80, 80, 86)));
-        rp.line_segment([pos2(x, ruler.min.y + 3.0), pos2(x, ruler.max.y)], Stroke::new(1.0, t.text_dim));
-        if (bar - first_bar) % label_every == 0 {
-            rp.text(pos2(x + 3.0, ruler.center().y), Align2::LEFT_CENTER, bar.to_string(), regular(9.5), t.text_dim);
-        }
-    }
+    // Ruler: clip band with its name, bar numbers, and the stronger bar lines through the roll.
+    let band = Color32::from_rgb(track_color[0], track_color[1], track_color[2]);
+    let rc = crate::midi_ruler::RulerClip { name: &clip.name, color: band, base_tick, len_ticks, view_start };
+    crate::midi_ruler::draw(ui, ruler, roll, &s, &rc, &x_of);
     // Click or drag on the ruler to move the playhead.
     let rresp = ui.interact(ruler, ui.id().with(("ruler", cid.0)), Sense::click_and_drag());
     if (rresp.clicked() || rresp.dragged())
@@ -826,6 +717,7 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
     // Notes.
     let base = egui::Color32::from_rgb(track_color[0], track_color[1], track_color[2]);
     let drag = app.midi.drag.clone();
+    let single_colour = s.edit.flag("midi.single_colour");
     for (i, n) in sequence.notes.iter().enumerate() {
         let (mut st, mut ln, mut p) = (n.start, n.length, i32::from(n.pitch));
         if let Some(d) = &drag
@@ -842,13 +734,8 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
         }
         let r = Rect::from_min_max(pos2(x_of(st), y_of(p) + 1.0), pos2(x_of(st + ln).max(x_of(st) + 3.0), y_of(p) + row_h - 1.0));
         let sel = app.midi.selected.contains(&i);
-        let k = 0.45 + 0.55 * f32::from(n.velocity) / 127.0;
-        let fill = if sel {
-            Color32::WHITE
-        } else {
-            Color32::from_rgb((f32::from(base.r()) * k) as u8, (f32::from(base.g()) * k) as u8, (f32::from(base.b()) * k) as u8)
-        };
-        roll_p.rect(r, 2.0, fill, Stroke::new(1.0, Color32::BLACK), StrokeKind::Inside);
+        let single = single_colour.then_some(base);
+        crate::midi_note_paint::paint_note(&roll_p, r, p.clamp(0, 127) as u8, n.velocity, sel, single, sequence.is_muted(i), &t);
     }
     // Interaction.
     let resp = ui.interact(roll, ui.id().with(("roll", cid.0)), Sense::click_and_drag());
@@ -861,19 +748,19 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
             r.contains(pos).then_some((i, pos.x > r.max.x - 5.0))
         })
     };
-    let snap = |tk: f32| -> i64 { ((tk / grid_ticks as f32).round() as i64) * grid_ticks };
+    let snap = |tk: f32| -> i64 { ((tk / snap_ticks as f32).round() as i64) * snap_ticks };
     let tool = if app.midi.tool == MidiTool::Select && s.edit.tool == Tool::Pencil { MidiTool::Pencil } else { app.midi.tool };
     if resp.hovered() && matches!(tool, MidiTool::Pencil | MidiTool::Split) {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
     }
-    let grid_floor = |tk: i64| (tk.max(0) / grid_ticks) * grid_ticks;
+    let grid_floor = |tk: i64| (tk.max(0) / snap_ticks) * snap_ticks;
     if resp.drag_started()
         && let Some(p) = ui.input(|i| i.pointer.press_origin()).or_else(|| resp.interact_pointer_pos())
     {
         // The press point, not the current one: egui starts a drag after a small movement, which
         // can already be off the row of a thin note.
         match (tool, hit(p)) {
-            (MidiTool::Erase | MidiTool::Split, _) => {}
+            (MidiTool::Erase | MidiTool::Split | MidiTool::Glue | MidiTool::Mute | MidiTool::Zoom | MidiTool::Line, _) => {}
             (_, Some((i, edge))) => {
                 if !app.midi.selected.contains(&i) {
                     app.midi.selected = vec![i];
@@ -897,8 +784,7 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
         let r = Rect::from_min_max(pos2(x_of(start), y_of(pitch) + 1.0), pos2(x_of(end), y_of(pitch) + row_h - 1.0));
         roll_p.rect(r, 2.0, Color32::from_rgba_unmultiplied(255, 255, 255, 120), Stroke::new(1.0, Color32::WHITE), StrokeKind::Inside);
         if resp.drag_stopped() {
-            let _ =
-                app.run("midi.note_add", json!({"clip": cid.0, "pitch": pitch, "start_ticks": start, "length_ticks": end - start, "velocity": 100}));
+            crate::midi_editor_inspector::place(app, cid, pitch, start, end - start);
             app.midi.pencil = None;
             crate::midi_audition::stop(app);
         }
@@ -940,15 +826,50 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
         }
     }
     if resp.dragged()
-        && let (Some(d), Some(p)) = (&mut app.midi.drag, resp.interact_pointer_pos())
+        && let (Some(dd), Some(p)) = (app.midi.drag.clone(), resp.interact_pointer_pos())
     {
-        d.dx_ticks = snap((p.x - d.start.x) / px_per_tick);
-        d.dy_semi = -((p.y - d.start.y) / row_h).round() as i64;
-        if !d.resize
-            && let Some(n) = sequence.notes.get(d.index)
+        let raw = -((p.y - dd.start.y) / row_h).round() as i64;
+        let dy = match sequence.notes.get(dd.index) {
+            Some(n) if !dd.resize => crate::midi_editor_inspector::snap_drag(app, cid, n.pitch, raw),
+            _ => raw,
+        };
+        if let Some(d) = &mut app.midi.drag {
+            d.dx_ticks = snap((p.x - d.start.x) / px_per_tick);
+            d.dy_semi = dy;
+        }
+        if !dd.resize
+            && let Some(n) = sequence.notes.get(dd.index)
         {
-            let pitch = (i32::from(n.pitch) + d.dy_semi as i32).clamp(0, 127);
+            let pitch = (i32::from(n.pitch) + dy as i32).clamp(0, 127);
             crate::midi_audition::moved(app, pitch);
+        }
+    }
+    // Line tool dragged in the roll: a ramp in the active controller lane.
+    if tool == MidiTool::Line {
+        let lane = app.midi.lanes.get(app.midi.active_lane).map(|l| l.lane).filter(|l| *l != Lane::Velocity);
+        if resp.drag_started()
+            && let (Some(lane), Some(p)) = (lane, ui.input(|i| i.pointer.press_origin()).or_else(|| resp.interact_pointer_pos()))
+        {
+            app.midi.line = Some((p, lane, true));
+        }
+        if let Some((start, lane, true)) = app.midi.line
+            && let Some(now) = ui.ctx().pointer_latest_pos()
+        {
+            roll_p.line_segment([start, pos2(now.x, now.y.clamp(roll.min.y, roll.max.y))], Stroke::new(2.0, Color32::WHITE));
+            if resp.drag_stopped() {
+                let (name, cc, lo, hi) = lane.command();
+                let tk = |x: f32| (tick_at(x).max(0) / grid_ticks) * grid_ticks;
+                let pts = crate::midi_lanes::ramp_points(
+                    tk(start.x),
+                    crate::midi_lanes::value_at(start.y, roll, lo, hi),
+                    tk(now.x),
+                    crate::midi_lanes::value_at(now.y, roll, lo, hi),
+                    grid_ticks,
+                );
+                let points: Vec<_> = pts.iter().map(|(tick, value)| json!({"tick": tick, "value": value})).collect();
+                let _ = app.run("midi.ctrl_set", json!({"clip": cid.0, "lane": name, "cc": cc, "points": points}));
+                app.midi.line = None;
+            }
         }
     }
     if resp.drag_stopped() {
@@ -980,6 +901,24 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
                 app.midi.selected.clear();
             }
             (MidiTool::Split, None) => {}
+            (MidiTool::Glue, Some((i, _))) => {
+                if let Some(j) = crate::midi_tools_ui::next_same_pitch(&sequence.notes, i) {
+                    let _ = app.run("midi.notes_glue", json!({"clip": cid.0, "indices": [i, j]}));
+                    app.midi.selected.clear();
+                }
+            }
+            (MidiTool::Mute, Some((i, _))) => {
+                let targets = crate::midi_tools_ui::mute_targets(&app.midi.selected, i);
+                let _ = app.run("midi.notes_mute", json!({"clip": cid.0, "indices": targets}));
+            }
+            (MidiTool::Zoom, _) => {
+                let alt = ui.input(|i| i.modifiers.alt);
+                let (np, nv) = crate::midi_tools_ui::zoom_click(ppt, view_start, p.x - roll.min.x, alt, ZOOM_STEP, min_ppt, max_ppt);
+                app.midi.ppt = Some(np);
+                app.midi.view_start = nv;
+            }
+            (MidiTool::Glue | MidiTool::Mute | MidiTool::Line, None) => {}
+            (MidiTool::Line, Some(_)) => {}
             (_, Some((i, _))) => {
                 if ui.input(|x| x.modifiers.shift) {
                     if !app.midi.selected.contains(&i) {
@@ -993,11 +932,9 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
                 }
             }
             (MidiTool::Pencil, None) => {
-                let _ = app.run(
-                    "midi.note_add",
-                    json!({"clip": cid.0, "pitch": pitch_at(p.y).clamp(0, 127), "start_ticks": grid_floor(tick_at(p.x)), "length_ticks": grid_ticks, "velocity": 100}),
-                );
-                crate::midi_audition::start_default(app, ui.ctx(), track, pitch_at(p.y), true);
+                let pitch = i32::from(crate::midi_editor_inspector::entry_pitch(app, cid, pitch_at(p.y)));
+                crate::midi_editor_inspector::place(app, cid, pitch, grid_floor(tick_at(p.x)), grid_ticks);
+                crate::midi_audition::start_default(app, ui.ctx(), track, pitch, true);
                 app.midi.selected.clear();
             }
             (MidiTool::Select, None) => {
@@ -1006,11 +943,12 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
                 let abs = base_tick.saturating_add(grid_floor(tick_at(p.x)).min(len_ticks));
                 mark_play_from(app, s.tempo.tick_to_samples(abs, sr));
                 if resp.double_clicked() {
+                    let pitch = i32::from(crate::midi_editor_inspector::entry_pitch(app, cid, pitch_at(p.y)));
                     let _ = app.run(
                         "midi.note_add",
-                        json!({"clip": cid.0, "pitch": pitch_at(p.y).clamp(0, 127), "start_ticks": grid_floor(tick_at(p.x)), "length_ticks": grid_ticks, "velocity": 100}),
+                        json!({"clip": cid.0, "pitch": pitch, "start_ticks": grid_floor(tick_at(p.x)), "length_ticks": grid_ticks, "velocity": 100}),
                     );
-                    crate::midi_audition::start_default(app, ui.ctx(), track, pitch_at(p.y), true);
+                    crate::midi_audition::start_default(app, ui.ctx(), track, pitch, true);
                 }
             }
         }
@@ -1095,28 +1033,49 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
     ui.painter().rect_filled(htrack, 3.0, sb_track);
     ui.painter().rect_filled(Rect::from_min_size(pos2(hthumb_x, htrack.min.y + 1.0), vec2(hthumb_w, bar_w - 2.0)), 3.0, sb_thumb);
 
-    // Lane selector in the gutter: velocity or a controller lane.
-    let sel_rect = Rect::from_min_size(pos2(full.min.x + 2.0, vel.min.y + 2.0), vec2(KEY_W - 4.0, 18.0));
-    let mut lane_ui = ui.new_child(egui::UiBuilder::new().max_rect(sel_rect));
-    egui::ComboBox::from_id_salt("midi_lane").selected_text(app.midi.lane.short()).width(KEY_W - 14.0).show_ui(&mut lane_ui, |ui| {
-        for l in Lane::ALL {
-            ui.selectable_value(&mut app.midi.lane, l, l.label());
-        }
-    });
-    if app.midi.lane != Lane::Velocity {
-        ctrl_lane(app, ui, cid, sequence, vel, &x_of, &tick_at, grid_ticks, base);
-        playhead(ui, x_of(playhead_tick.round() as i64), ruler.min.y, vel.max.y, roll.min.x, roll.max.x);
-        return;
+    // Lanes: velocity and controllers, each with its label, splitter and contents.
+    let lane_bottom = lane_rects.last().map_or(roll.max.y, |r| r.area.max.y);
+    let mut vel_lane = |app: &mut SoundApp, ui: &mut Ui, r: Rect| velocity_lane(app, ui, cid, sequence, r, &x_of, base, single_colour, &t);
+    crate::midi_lanes::show_all(app, ui, cid, sequence, &lane_rects, avail_h, &x_of, &tick_at, grid_ticks, base, &mut vel_lane);
+    playhead(ui, x_of(playhead_tick.round() as i64), ruler.min.y, lane_bottom, roll.min.x, roll.max.x);
+    if app.midi.inspector_open {
+        let rect = Rect::from_min_max(pos2(full.min.x, header.max.y), pos2(body_left, full.max.y));
+        crate::midi_editor_inspector::show(app, ui, rect, cid, sequence, playhead_tick.round() as i64, bar_ticks);
     }
-    // Velocity lane.
-    ui.painter().rect_filled(vel, 0.0, Color32::from_rgb(28, 28, 30));
-    ui.painter().text(pos2(full.min.x + 6.0, vel.max.y - 10.0), Align2::LEFT_CENTER, "Velocity", regular(9.0), t.text_dim);
+}
+
+/// The velocity lane: one bar per note, drag a bar to change that note's velocity.
+#[allow(clippy::too_many_arguments)]
+fn velocity_lane(
+    app: &mut SoundApp,
+    ui: &mut Ui,
+    cid: ClipId,
+    sequence: &soundcraft_midi::Sequence,
+    vel: Rect,
+    x_of: &dyn Fn(i64) -> f32,
+    base: Color32,
+    single_colour: bool,
+    t: &Tokens,
+) {
+    ui.painter().rect_filled(vel, 0.0, Tokens::current().lane_bg);
     let vresp = ui.interact(vel, ui.id().with(("vel", cid.0)), Sense::click_and_drag());
+    if vresp.is_pointer_button_down_on() {
+        app.midi.active_lane = app.midi.lanes.iter().position(|l| l.lane == Lane::Velocity).unwrap_or(0);
+    }
     let vp = ui.painter().with_clip_rect(vel);
     for (i, n) in sequence.notes.iter().enumerate() {
         let x = x_of(n.start);
         let h = (vel.height() - 4.0) * f32::from(n.velocity) / 127.0;
-        let col = if app.midi.selected.contains(&i) { Color32::WHITE } else { base };
+        let mut col = if app.midi.selected.contains(&i) {
+            Color32::WHITE
+        } else if single_colour {
+            base
+        } else {
+            crate::midi_note_paint::vel_color(n.velocity, t)
+        };
+        if sequence.is_muted(i) {
+            col = col.gamma_multiply(0.4);
+        }
         vp.line_segment([pos2(x + 1.0, vel.max.y - 2.0), pos2(x + 1.0, vel.max.y - 2.0 - h)], Stroke::new(3.0, col));
         vp.circle_filled(pos2(x + 1.0, vel.max.y - 2.0 - h), 2.5, col);
     }
@@ -1128,7 +1087,6 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
         let v = (((vel.max.y - 2.0 - p.y) / (vel.height() - 4.0)) * 127.0).round().clamp(1.0, 127.0) as i64;
         let _ = app.engine.execute_merged("midi.note_edit", &json!({"clip": cid.0, "index": i, "velocity": v}), &format!("vel:{}", cid.0));
     }
-    playhead(ui, x_of(playhead_tick.round() as i64), ruler.min.y, vel.max.y, roll.min.x, roll.max.x);
 }
 
 /// The playhead: a vertical line from the ruler through the lanes, with a small marker on the ruler.
@@ -1189,7 +1147,7 @@ fn panel_controls(app: &mut SoundApp, ui: &mut Ui, header: Rect) {
                 _ if floating => {
                     app.midi.dock_request = Some(json!({"operation": "move", "panel": "midi", "target": "canvas", "zone": "bottom"}));
                 }
-                _ => app.midi.dock_request = Some(json!({"operation": "float", "panel": "midi", "rect": [160.0, 120.0, FLOAT_W, 380.0]})),
+                _ => app.midi.dock_request = Some(json!({"operation": "float", "panel": "midi", "rect": float_rect(ui.ctx().content_rect())})),
             }
         }
     }
@@ -1252,15 +1210,18 @@ mod tests {
         let order = [
             HeaderItem::Label,
             HeaderItem::Ops,
+            HeaderItem::Clip,
             HeaderItem::Zoom,
             HeaderItem::Audition,
             HeaderItem::LoopFollow,
+            HeaderItem::Snap,
+            HeaderItem::Inspector,
             HeaderItem::Glyphs,
             HeaderItem::Tools,
             HeaderItem::Title,
         ];
         let mut width = 420.0;
-        let mut seen = [false; 8];
+        let mut seen = [false; 11];
         while width <= 1800.0 {
             let l = laid_out(width);
             for (i, (a, ra)) in l.items.iter().enumerate() {
@@ -1277,14 +1238,24 @@ mod tests {
                 }
             }
             // Overflow appears exactly when a group is hidden.
-            let hidden = [HeaderItem::LoopFollow, HeaderItem::Audition, HeaderItem::Zoom, HeaderItem::Ops].iter().any(|g| !l.visible(*g));
+            let hidden = [
+                HeaderItem::Inspector,
+                HeaderItem::Snap,
+                HeaderItem::LoopFollow,
+                HeaderItem::Audition,
+                HeaderItem::Zoom,
+                HeaderItem::Clip,
+                HeaderItem::Ops,
+            ]
+            .iter()
+            .any(|g| !l.visible(*g));
             assert_eq!(l.visible(HeaderItem::Overflow), hidden, "overflow at {width}");
             width += 10.0;
         }
         assert!(seen.iter().all(|v| *v), "every item shows up at some width");
         assert!(!laid_out(760.0).visible(HeaderItem::Label));
         assert!(laid_out(super::FLOAT_W).visible(HeaderItem::Ops), "the default floating width keeps all groups");
-        assert!(laid_out(1600.0).visible(HeaderItem::Label));
+        assert!(laid_out(1700.0).visible(HeaderItem::Label), "the clip label fits once the Inspector button is accounted for");
         // Very narrow: the glyphs stay and nothing overlaps even with the palette squeezed.
         let tiny = laid_out(200.0);
         assert!(tiny.visible(HeaderItem::Glyphs));

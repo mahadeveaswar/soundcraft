@@ -158,6 +158,17 @@ pub struct Tokens {
     pub strip_bg: Color32,
     pub strip_section: Color32,
     pub slot_bg: Color32,
+    /// Piano-roll controller lane background.
+    pub lane_bg: Color32,
+    /// Piano-roll rows of black keys and of white keys.
+    pub roll_row_black: Color32,
+    pub roll_row_white: Color32,
+    /// Piano-roll grid line, octave line, bar line, and controller-lane zero line / label.
+    pub roll_grid: Color32,
+    pub roll_octave: Color32,
+    pub roll_bar: Color32,
+    pub lane_zero: Color32,
+    pub lane_label: Color32,
     pub automation_line: Color32,
     /// Menu bar background.
     pub menu_bar: Color32,
@@ -210,6 +221,10 @@ pub struct Tokens {
     pub slot_face: [Color32; 2],
     pub slot_bypassed: [Color32; 2],
     pub slot_mark: Color32,
+    /// Piano-roll note colours from soft to hard: low, middle and high velocity.
+    pub midi_vel_lo: Color32,
+    pub midi_vel_mid: Color32,
+    pub midi_vel_hi: Color32,
 }
 
 impl Tokens {
@@ -268,6 +283,14 @@ impl Tokens {
         strip_bg: Color32::from_rgb(46, 46, 48),
         strip_section: Color32::from_rgb(36, 36, 38),
         slot_bg: Color32::from_rgb(28, 28, 29),
+        lane_bg: Color32::from_rgb(28, 28, 30),
+        roll_row_black: Color32::from_rgb(30, 30, 32),
+        roll_row_white: Color32::from_rgb(40, 40, 42),
+        roll_grid: Color32::from_rgb(50, 50, 54),
+        roll_octave: Color32::from_rgb(64, 64, 68),
+        roll_bar: Color32::from_rgb(80, 80, 86),
+        lane_zero: Color32::from_rgb(60, 60, 66),
+        lane_label: Color32::from_rgb(150, 150, 158),
         automation_line: Color32::from_rgb(240, 240, 240),
         menu_bar: Color32::from_rgb(22, 22, 23),
         group_border: Color32::from_rgb(8, 8, 8),
@@ -296,6 +319,9 @@ impl Tokens {
         slot_face: [Color32::from_rgb(92, 92, 92), Color32::from_rgb(75, 75, 75)],
         slot_bypassed: [Color32::from_rgb(66, 96, 146), Color32::from_rgb(50, 76, 120)],
         slot_mark: Color32::from_rgb(159, 159, 159),
+        midi_vel_lo: Color32::from_rgb(70, 112, 228),
+        midi_vel_mid: Color32::from_rgb(200, 84, 172),
+        midi_vel_hi: Color32::from_rgb(238, 62, 62),
     };
 
     pub const LIGHT: Tokens = Tokens {
@@ -353,6 +379,14 @@ impl Tokens {
         strip_bg: Color32::from_rgb(198, 200, 204),
         strip_section: Color32::from_rgb(210, 212, 216),
         slot_bg: Color32::from_rgb(194, 196, 201),
+        lane_bg: Color32::from_rgb(226, 228, 232),
+        roll_row_black: Color32::from_rgb(212, 214, 220),
+        roll_row_white: Color32::from_rgb(234, 235, 238),
+        roll_grid: Color32::from_rgb(204, 206, 212),
+        roll_octave: Color32::from_rgb(170, 173, 181),
+        roll_bar: Color32::from_rgb(150, 153, 162),
+        lane_zero: Color32::from_rgb(180, 183, 190),
+        lane_label: Color32::from_rgb(80, 82, 90),
         automation_line: Color32::from_rgb(30, 32, 38),
         menu_bar: Color32::from_rgb(204, 206, 210),
         group_border: Color32::from_rgb(118, 121, 127),
@@ -381,6 +415,9 @@ impl Tokens {
         slot_face: [Color32::from_rgb(244, 245, 247), Color32::from_rgb(214, 216, 220)],
         slot_bypassed: [Color32::from_rgb(190, 210, 240), Color32::from_rgb(160, 186, 228)],
         slot_mark: Color32::from_rgb(92, 95, 102),
+        midi_vel_lo: Color32::from_rgb(48, 88, 200),
+        midi_vel_mid: Color32::from_rgb(176, 58, 148),
+        midi_vel_hi: Color32::from_rgb(210, 40, 40),
     };
 
     pub fn current() -> Tokens {

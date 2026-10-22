@@ -268,6 +268,7 @@ fn main_area_content(app: &mut SoundApp, ui: &mut Ui) {
         } else if resp.clicked() {
             let _ = app.run("edit.select_none", json!({}));
         }
+        resp.context_menu(|ui| crate::track_add_menu::add_track_items(app, ui, None));
     }
     overlay(app, ui, tl, Rect::from_min_max(pos2(tl.min.x, rulers_rect.min.y), tl.max));
     let _ = header;
@@ -952,8 +953,13 @@ fn track_header(app: &mut SoundApp, ui: &mut Ui, track: &Track, head: Rect, sele
     // The strip's round button opens a folder, or any other track's options.
     let round = at(2.0, 2.0, 10.0, 10.0);
     let rresp = ui.interact(round, ui.id().with(("options", id.0)), Sense::click());
-    ui.painter().circle_filled(round.center(), 5.0, shade(strip, if rresp.hovered() { 0.6 } else { 0.45 }));
-    arrow(ui.painter(), round.center(), !track.is_folder() || track.folder_open, ink);
+    if track.is_folder() {
+        crate::folder_ui::draw_fold_triangle(ui.painter(), round, track.folder_open, shade(strip, if rresp.hovered() { 0.6 } else { 0.45 }), ink);
+    } else {
+        ui.painter().circle_filled(round.center(), 5.0, shade(strip, if rresp.hovered() { 0.6 } else { 0.45 }));
+        arrow(ui.painter(), round.center(), true, ink);
+    }
+    crate::folder_ui::draw_child_guides(ui.painter(), head, app.engine.session(), track);
     if track.is_folder() {
         if rresp.on_hover_text(if track.folder_open { "Close folder" } else { "Open folder" }).clicked() {
             let _ = app.run("track.folder_toggle", json!({"track": id.0}));
@@ -1441,6 +1447,8 @@ pub(crate) fn track_context_menu(app: &mut SoundApp, ui: &mut Ui, id: TrackId) {
         let selected = &app.engine.session().edit.selected_tracks;
         if selected.contains(&id) { selected.iter().map(|track| track.0).collect() } else { vec![tid] }
     };
+    ui.menu_button("Add Track", |ui| crate::track_add_menu::add_track_items(app, ui, Some(id)));
+    ui.separator();
     for (label, cmd) in items {
         if ui.button(label).clicked() {
             if cmd == "ui.rename_track" {

@@ -537,3 +537,39 @@ fn panel_limits(panel: &Panel) -> PanelLimits {
     };
     PanelLimits { min, max: egui::vec2(max_width, 1_000_000.0) }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The MIDI editor starts in a lower zone across the full width, under the track list, canvas
+    /// and clip list.
+    #[test]
+    fn default_layout_puts_the_midi_editor_in_a_full_width_lower_zone() {
+        let w = Workspace::default();
+        let Some(Node::Split { axis, size, first, second }) = &w.layout.root else { panic!("root must be a split") };
+        assert!(matches!(axis, SplitAxis::Vertical));
+        assert!(matches!(size, SplitSize::FixedSecond(_)), "the lower zone has a fixed height");
+        assert!(matches!(&**second, Node::Tabs { panels, .. } if panels == &vec![Panel::Midi]));
+        let mut upper = vec![&**first];
+        let mut has_canvas = false;
+        while let Some(n) = upper.pop() {
+            match n {
+                Node::Split { first, second, .. } => upper.extend([&**first, &**second]),
+                Node::Tabs { panels, .. } => has_canvas |= panels.contains(&Panel::Canvas),
+                _ => {}
+            }
+        }
+        assert!(has_canvas, "the canvas sits above the editor");
+        assert!(w.validate().is_ok());
+    }
+
+    #[test]
+    fn old_or_empty_saved_layouts_still_load() {
+        let empty: Workspace =
+            serde_json::from_str("{}").unwrap_or_else(|_| Workspace { layout: Layout { root: None, floating: vec![] }, hidden: vec![] });
+        assert!(empty.layout.root.is_some(), "missing fields fall back to the default layout");
+        let json = serde_json::to_string(&Workspace::default()).unwrap_or_default();
+        assert!(serde_json::from_str::<Workspace>(&json).is_ok_and(|w| w.validate().is_ok()));
+    }
+}

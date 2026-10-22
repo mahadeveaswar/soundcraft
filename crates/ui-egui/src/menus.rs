@@ -74,6 +74,13 @@ pub const UI_COMMANDS: &[(&str, &str, &str, Option<&str>)] = &[
     ("ui.bounce_dialog", "Bounce Mix…", "", None),
     ("ui.set", "Set UI State", "", None),
     ("ui.theme", "Appearance", "", None),
+    ("ui.midi_tool", "MIDI Editor Tool", "", None),
+    ("ui.midi_snap", "MIDI Editor Snap", "", None),
+    ("ui.midi_lane_add", "MIDI Editor Add Lane", "", None),
+    ("ui.midi_lane_remove", "MIDI Editor Remove Lane", "", None),
+    ("ui.midi_lane_height", "MIDI Editor Lane Height", "", None),
+    ("ui.midi_inspector", "MIDI Editor Inspector", "", None),
+    ("ui.midi_assist", "MIDI Editor Note Entry Assists", "", None),
 ];
 
 /// Extra catalog mappings handled by the UI layer.
@@ -511,6 +518,9 @@ fn wants_dialog(id: &str) -> bool {
 pub fn run_ui_command(app: &mut SoundApp, id: &str, p: &Value) -> Option<Result<Value, String>> {
     if matches!(id, "ui.dock" | "ui.dock.reset") {
         return Some(crate::docking::command(app, id == "ui.dock.reset", p));
+    }
+    if let Some(r) = crate::midi_editor_state::run_ui_command(app, id, p) {
+        return Some(r);
     }
     if let Some(v) = crate::extra_windows::run(app, id, p) {
         return Some(Ok(v));

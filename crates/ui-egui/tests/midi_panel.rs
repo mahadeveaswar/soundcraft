@@ -16,6 +16,11 @@ fn panel(ctx: &egui::Context) -> Rect {
     ctx.data(|data| data.get_temp::<Rect>(Id::new("soundcraft-midi-body"))).unwrap()
 }
 
+/// The roll itself (below the header, info strip and ruler).
+fn roll(ctx: &egui::Context) -> Rect {
+    ctx.data(|data| data.get_temp::<Rect>(Id::new("soundcraft-midi-roll"))).unwrap()
+}
+
 fn button(pos: Pos2, pressed: bool) -> Event {
     Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Default::default() }
 }
@@ -185,7 +190,7 @@ fn only_pencil_inserts_notes_in_the_midi_roll() {
         frame(&ctx, &mut app, vec![]);
     }
     let body = panel(&ctx);
-    let point = pos2(body.left() + 200.0, body.top() + 60.0);
+    let point = pos2(body.left() + 200.0, roll(&ctx).top() + 22.0);
     for tool in Tool::ALL.into_iter().filter(|tool| *tool != Tool::Pencil).chain([Tool::Pencil]) {
         app.run("edit.tool", json!({"tool": tool.id()})).unwrap();
         // Idle frames first: egui counts a click soon after the last one as a double-click, which adds a note.
@@ -221,7 +226,7 @@ fn double_clicking_the_empty_midi_roll_adds_one_note() {
         frame(&ctx, &mut app, vec![]);
     }
     let body = panel(&ctx);
-    let point = pos2(body.left() + 200.0, body.top() + 60.0);
+    let point = pos2(body.left() + 200.0, roll(&ctx).top() + 22.0);
     let notes = |app: &SoundApp| match &app.engine.session().find_clip(clip).unwrap().1.content {
         ClipContent::Midi { sequence } => sequence.notes.len(),
         _ => panic!("MIDI clip required"),
@@ -343,7 +348,7 @@ fn header_items(h: &egui_kittest::Harness<'_, SoundApp>) -> Vec<(midi_editor::He
 fn the_header_controls_never_overlap_at_any_panel_width() {
     use egui_kittest::kittest::Queryable;
     use midi_editor::HeaderItem;
-    for width in [760.0, 1100.0, 1600.0] {
+    for width in [760.0, 1100.0, 1700.0] {
         let h = midi_harness_sized(true, width);
         let items = header_items(&h);
         assert!(items.len() >= 5, "header laid out at {width}: {items:?}");
@@ -360,7 +365,7 @@ fn the_header_controls_never_overlap_at_any_panel_width() {
         assert_eq!(has(HeaderItem::Overflow), h.query_by_label("Quantize").is_none(), "Quantize is in the header or the menu at {width}");
         assert_eq!(has(HeaderItem::Overflow), h.query_by_label("More MIDI editor actions").is_some(), "{width}");
     }
-    let wide = header_items(&midi_harness_sized(true, 1600.0));
+    let wide = header_items(&midi_harness_sized(true, 1700.0));
     assert!(wide.iter().any(|(i, _)| *i == HeaderItem::Label), "the clip label shows when there is room");
     assert!(!wide.iter().any(|(i, _)| *i == HeaderItem::Overflow));
     let narrow = header_items(&midi_harness_sized(true, 760.0));
@@ -387,12 +392,12 @@ fn drag_handle_by(h: &mut egui_kittest::Harness<'_, SoundApp>, dy: f32) {
 fn dragging_the_lane_handle_resizes_the_lane_and_leaves_the_session_alone() {
     let mut h = midi_harness(true);
     let before = h.state().engine.session().clone();
-    assert_eq!(h.state().midi.lane_h, midi_editor::LANE_H_DEFAULT);
+    assert_eq!(h.state().midi.lanes[0].height, midi_editor::LANE_H_DEFAULT);
     drag_handle_by(&mut h, -60.0);
-    let taller = h.state().midi.lane_h;
+    let taller = h.state().midi.lanes[0].height;
     assert!(taller > midi_editor::LANE_H_DEFAULT + 40.0, "dragging up grows the lane: {taller}");
     drag_handle_by(&mut h, 500.0);
-    assert_eq!(h.state().midi.lane_h, 40.0, "dragging far down clamps to the minimum");
+    assert_eq!(h.state().midi.lanes[0].height, 40.0, "dragging far down clamps to the minimum");
     assert!(*h.state().engine.session() == before, "resizing the lane must not change the session");
 }
 
@@ -402,20 +407,20 @@ fn double_clicking_the_lane_handle_resets_the_lane_height() {
     app.ui.show_midi_editor = true;
     let created = app.run("midi.new_clip", json!({"track": "Keys", "start": 0, "length": 96000})).unwrap();
     app.run("edit.select", json!({"clips": [created["clip"].as_u64().unwrap()]})).unwrap();
-    app.midi.lane_h = 150.0;
+    app.midi.lanes[0].height = 150.0;
     let ctx = egui::Context::default();
     for _ in 0..66 {
         frame(&ctx, &mut app, vec![]);
     }
     let p = ctx.data(|d| d.get_temp::<Rect>(Id::new("soundcraft-midi-lane-handle"))).unwrap().center();
-    assert_eq!(app.midi.lane_h, 150.0, "a taller lane stays put while idle");
+    assert_eq!(app.midi.lanes[0].height, 150.0, "a taller lane stays put while idle");
     frame(&ctx, &mut app, vec![Event::PointerMoved(p)]);
     frame(&ctx, &mut app, vec![button(p, true)]);
     frame(&ctx, &mut app, vec![button(p, false)]);
-    assert_eq!(app.midi.lane_h, 150.0, "one click does not reset");
+    assert_eq!(app.midi.lanes[0].height, 150.0, "one click does not reset");
     frame(&ctx, &mut app, vec![button(p, true)]);
     frame(&ctx, &mut app, vec![button(p, false)]);
-    assert_eq!(app.midi.lane_h, midi_editor::LANE_H_DEFAULT);
+    assert_eq!(app.midi.lanes[0].height, midi_editor::LANE_H_DEFAULT);
 }
 
 fn lane_app(lane_h: f32) -> (egui::Context, SoundApp) {
@@ -423,7 +428,7 @@ fn lane_app(lane_h: f32) -> (egui::Context, SoundApp) {
     app.ui.show_midi_editor = true;
     let created = app.run("midi.new_clip", json!({"track": "Keys", "start": 0, "length": 96000})).unwrap();
     app.run("edit.select", json!({"clips": [created["clip"].as_u64().unwrap()]})).unwrap();
-    app.midi.lane_h = lane_h;
+    app.midi.lanes[0].height = lane_h;
     let ctx = egui::Context::default();
     for _ in 0..66 {
         frame(&ctx, &mut app, vec![]);
@@ -445,15 +450,17 @@ fn real_drag(ctx: &egui::Context, app: &mut SoundApp, dy: f32) {
 }
 
 #[test]
-fn a_real_pointer_drag_up_80_points_grows_the_lane_by_about_80() {
+fn a_real_pointer_drag_up_40_points_grows_the_lane_by_about_40() {
     let (ctx, mut app) = lane_app(midi_editor::LANE_H_DEFAULT);
     let before = app.engine.session().clone();
-    real_drag(&ctx, &mut app, -80.0);
-    let grown = app.midi.lane_h - midi_editor::LANE_H_DEFAULT;
-    assert!((grown - 80.0).abs() <= 4.0, "lane grew by {grown}");
+    // The info strip, taller ruler and zoom row take 48 pt of the 320 pt panel, so the roll keeps
+    // its 120 pt minimum with about 42 pt of lane growth available (it was 80 before).
+    real_drag(&ctx, &mut app, -40.0);
+    let grown = app.midi.lanes[0].height - midi_editor::LANE_H_DEFAULT;
+    assert!((grown - 40.0).abs() <= 4.0, "lane grew by {grown}");
     assert!(*app.engine.session() == before, "resizing must not change the session");
     real_drag(&ctx, &mut app, 400.0);
-    assert_eq!(app.midi.lane_h, 40.0, "dragging down past the minimum clamps");
+    assert_eq!(app.midi.lanes[0].height, 40.0, "dragging down past the minimum clamps");
 }
 
 #[test]
@@ -468,7 +475,7 @@ fn a_double_click_on_the_handle_resets_without_moving_the_lane() {
     for _ in 0..3 {
         frame(&ctx, &mut app, vec![]);
     }
-    assert_eq!(app.midi.lane_h, midi_editor::LANE_H_DEFAULT);
+    assert_eq!(app.midi.lanes[0].height, midi_editor::LANE_H_DEFAULT);
 }
 
 /// Audition requests the UI queued since the last call (the next frame's logic would drop them).
