@@ -423,6 +423,14 @@ pub struct Tokens {
     pub gesture_outline: Color32,
     /// Paler clip bodies with a deep waveform and dark MIDI notes (the Light palette's clip style).
     pub clip_style_light: bool,
+
+    // --- P10-T: glossy rounded clips and headers (see `clip_paint`) ---
+    /// Gloss strength 0..=1 (0 is a flat fill); on by default, softer in Midnight.
+    pub clip_gloss: f32,
+    /// Corner radius of clip bodies and name bars in points (0..=8).
+    pub clip_corner: u8,
+    /// Corner radius of track header blocks and colour strips in points (0..=8).
+    pub header_corner: u8,
 }
 
 impl Tokens {
@@ -608,6 +616,9 @@ impl Tokens {
         fader_popup_cap_edge: Color32::from_rgb(20, 20, 20),
         gesture_outline: Color32::WHITE,
         clip_style_light: false,
+        clip_gloss: 1.0,
+        clip_corner: 4,
+        header_corner: 3,
     };
 
     pub const LIGHT: Tokens = Tokens {
@@ -715,6 +726,7 @@ impl Tokens {
         sel_strip_bg: Color32::from_rgb(210, 212, 216),
         status_warn: Color32::from_rgb(176, 96, 8),
         clip_style_light: true,
+        clip_gloss: 0.8,
         ..Tokens::DARK
     };
 
@@ -803,6 +815,7 @@ impl Tokens {
         grid_bar: Color32::from_rgb(86, 100, 132),
         grid_beat: Color32::from_rgb(44, 52, 70),
         grid_beat_always: true,
+        clip_gloss: 0.6,
         ..Tokens::DARK
     };
 
@@ -1164,6 +1177,14 @@ mod tests {
             assert_eq!(tk.gesture_outline, Color32::WHITE);
         }
         assert_eq!([Tokens::DARK, Tokens::LIGHT, Tokens::MIDNIGHT].map(|tk| tk.clip_style_light), [false, true, false]);
+        // P10-T: gloss and corner tokens have in-range values in every palette; Midnight is softer.
+        for tk in [Tokens::DARK, Tokens::LIGHT, Tokens::MIDNIGHT] {
+            assert!(tk.clip_gloss > 0.0 && tk.clip_gloss <= 1.0);
+            assert!(tk.clip_corner <= 8 && tk.header_corner <= 8);
+            assert_eq!((tk.clip_corner, tk.header_corner), (4, 3));
+        }
+        assert_eq!(Tokens::DARK.clip_gloss, 1.0);
+        assert!(Tokens::MIDNIGHT.clip_gloss < Tokens::DARK.clip_gloss);
     }
     #[test]
     fn current_follows_set_custom_and_the_cache_takes_no_lock_when_unchanged() {
