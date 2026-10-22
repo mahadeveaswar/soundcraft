@@ -212,10 +212,20 @@ pub fn body(painter: &Painter, r: Rect, p: &ClipPaint) {
     if base.a() == 255 {
         painter.rect_filled(r, cr, base);
     }
-    let c = f32::from(rad) * 0.3;
+    let c = f32::from(rad) * CORNER_CUT;
     gradient(painter, r, &gloss_stops(base, gloss), c, c);
     highlight(painter, r, &ClipPaint { base, gloss, ..*p }, f32::from(rad));
     painter.rect_stroke(r, cr, Stroke::new(stroke_w, stroke_color), StrokeKind::Inside);
+}
+
+/// How much of the corner radius the gradient's diagonal corner cut takes: enough that no
+/// gradient shows outside the rounded corner's arc.
+const CORNER_CUT: f32 = 0.6;
+
+/// The selection outline, drawn last (over the name bar) whatever the clip's fill state.
+pub fn selection_outline(painter: &Painter, r: Rect, radius: u8) {
+    let rad = corner(r.size(), radius);
+    painter.rect_stroke(r, CornerRadius::same(rad), Stroke::new(1.5, Tokens::current().text), StrokeKind::Inside);
 }
 
 /// Draw a clip name bar (the bar over the top of a clip): rounded top corners only, same gradient,
@@ -231,7 +241,7 @@ pub fn name_bar(painter: &Painter, r: Rect, p: &ClipPaint) {
     if base.a() == 255 {
         painter.rect_filled(r, cr, base);
     }
-    gradient(painter, r, &gloss_stops(base, gloss), f32::from(rad) * 0.3, 0.0);
+    gradient(painter, r, &gloss_stops(base, gloss), f32::from(rad) * CORNER_CUT, 0.0);
 }
 
 /// Draw a track header colour strip: fully rounded with radius `min(token, w/2)`, same gradient.
@@ -247,7 +257,7 @@ pub fn strip(painter: &Painter, r: Rect, p: &ClipPaint) {
     if base.a() == 255 {
         painter.rect_filled(r, cr, base);
     }
-    let c = f32::from(rad) * 0.3;
+    let c = f32::from(rad) * CORNER_CUT;
     gradient(painter, r, &gloss_stops(base, gloss), c, c);
 }
 
@@ -255,6 +265,19 @@ pub fn strip(painter: &Painter, r: Rect, p: &ClipPaint) {
 mod tests {
     use super::*;
     use egui::vec2;
+
+    #[test]
+    fn selection_outline_is_a_stroke_even_on_a_muted_clip() {
+        let ctx = egui::Context::default();
+        let painter = egui::Painter::new(ctx, egui::LayerId::background(), Rect::from_min_size(egui::pos2(0.0, 0.0), vec2(200.0, 100.0)));
+        let r = Rect::from_min_size(egui::pos2(10.0, 10.0), vec2(120.0, 40.0));
+        let p = ClipPaint::from_tokens(&Tokens::current(), Color32::from_rgb(200, 80, 80), Color32::BLACK, ClipState::Muted, 1);
+        body(&painter, r, &p);
+        selection_outline(&painter, r, p.radius);
+        let ctx = painter.ctx().clone();
+        let last = ctx.graphics_mut(|g| g.entry(egui::LayerId::background()).all_entries().last().map(|s| s.shape.clone()));
+        assert!(last.is_some_and(|s| matches!(s, egui::Shape::Rect(ref rs) if rs.stroke.width == 1.5)));
+    }
 
     #[test]
     fn corner_shrinks_with_the_rectangle_and_vanishes_when_tiny() {

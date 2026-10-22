@@ -194,9 +194,12 @@ fn colour_list(app: &mut SoundApp, ui: &mut Ui, t: &Tokens, st: &mut PageState) 
     let checks = theme_doc::contrast_checks(t);
     for section in sections {
         egui::CollapsingHeader::new(RichText::new(section).font(bold(11.0)).color(t.text)).default_open(true).show(ui, |ui| {
-            for k in theme_doc::KEYS.iter().filter(|k| k.section == section) {
-                colour_row(app, ui, t, st, k, &checks);
-            }
+            egui::Grid::new(("settings_colours", section)).num_columns(4).spacing(vec2(10.0, 4.0)).show(ui, |ui| {
+                for k in theme_doc::KEYS.iter().filter(|k| k.section == section) {
+                    colour_row(app, ui, t, st, k, &checks);
+                    ui.end_row();
+                }
+            });
         });
     }
 }
@@ -209,13 +212,16 @@ fn colour_row(app: &mut SoundApp, ui: &mut Ui, t: &Tokens, st: &mut PageState, k
         .filter(|(label, ratio, min)| ratio < min && checks_for(k.key).contains(label))
         .map(|(label, ratio, _)| format!("Contrast {ratio:.1}:1 - {label}"))
         .collect();
+    ui.allocate_ui_with_layout(vec2(160.0, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.set_min_size(vec2(160.0, 18.0));
+        ui.add(egui::Label::new(RichText::new(k.label).font(regular(11.0)).color(t.text)).truncate());
+    });
+    let mut c = current;
+    if ui.color_edit_button_srgba(&mut c).changed() && c != current {
+        exec(app, st, "ui.theme_set_color", json!({"key": k.key, "color": theme_doc::format_hex(c)}));
+    }
+    hex_field(app, ui, st, k.key, current);
     ui.horizontal(|ui| {
-        ui.add_sized(vec2(150.0, 18.0), egui::Label::new(RichText::new(k.label).font(regular(11.0)).color(t.text)).truncate());
-        let mut c = current;
-        if ui.color_edit_button_srgba(&mut c).changed() && c != current {
-            exec(app, st, "ui.theme_set_color", json!({"key": k.key, "color": theme_doc::format_hex(c)}));
-        }
-        hex_field(app, ui, st, k.key, current);
         let r = ui
             .add_enabled_ui(overridden, |ui| crate::widgets::icon_button(ui, vec2(20.0, 20.0), "reset", false, &format!("Reset {}", k.label)))
             .inner;
@@ -236,7 +242,8 @@ pub(crate) fn hex_edit(ui: &mut Ui, id: Id, current: Color32, width: f32) -> Res
     let mut text = ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| shown.clone());
     let t = Tokens::current();
     let color = if theme_doc::parse_hex(&text).is_some() { t.text } else { t.rec };
-    let resp = ui.add(TextEdit::singleline(&mut text).id(id.with("edit")).desired_width(width).char_limit(9).font(regular(11.0)).text_color(color));
+    let resp =
+        ui.add_sized(vec2(width, 20.0), TextEdit::singleline(&mut text).id(id.with("edit")).char_limit(9).font(regular(11.0)).text_color(color));
     let mut out = Ok(None);
     if resp.lost_focus() {
         out = match theme_doc::parse_hex(&text) {
@@ -259,7 +266,7 @@ pub(crate) fn bad_colour_message(text: &str) -> String {
 }
 
 fn hex_field(app: &mut SoundApp, ui: &mut Ui, st: &mut PageState, key: &str, current: Color32) {
-    match hex_edit(ui, Id::new(("settings_hex", key)), current, 76.0) {
+    match hex_edit(ui, Id::new(("settings_hex", key)), current, 92.0) {
         Ok(Some(c)) => {
             exec(app, st, "ui.theme_set_color", json!({"key": key, "color": theme_doc::format_hex(c)}));
         }
