@@ -110,7 +110,10 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
     let t = Tokens::current();
     crate::auto_lanes_ui::follow_update(app, ui.ctx());
     drive_drag(app, ui.ctx());
-    egui::Panel::top("edit_toolbar").exact_size(toolbar::HEIGHT).frame(egui::Frame::NONE.fill(t.toolbar_bg)).show(ui, |ui| toolbar::show(app, ui));
+    egui::Panel::top("edit_toolbar")
+        .exact_size(toolbar::height(app))
+        .frame(egui::Frame::NONE.fill(t.toolbar_bg))
+        .show(ui, |ui| toolbar::show(app, ui));
     egui::Panel::bottom("edit_status").exact_size(22.0).frame(egui::Frame::NONE.fill(t.toolbar_bg)).show(ui, |ui| status_bar(app, ui));
     crate::transport_bar::show_docked(app, ui, "transport_bar");
     egui::Panel::bottom("lower_dock_tabs").exact_size(22.0).frame(egui::Frame::NONE.fill(t.panel_bg2)).show(ui, |ui| dock_tabs(app, ui));
@@ -2799,6 +2802,16 @@ fn overlay(app: &mut SoundApp, ui: &mut Ui, tl: Rect, area: Rect) {
     let sel = s.edit.selection;
     // Timeline selection markers on the main ruler.
     if !sel.is_empty() {
+        // The selected range doubles as the loop range: a band across the rulers, outlined
+        // while loop playback is on.
+        let (x0, x1) = (x_of(s, tl, sel.start).max(tl.min.x), x_of(s, tl, sel.end).min(tl.max.x));
+        if x1 > x0 {
+            let band = Rect::from_min_max(pos2(x0, area.min.y), pos2(x1, area.max.y));
+            painter.rect_filled(band, 0.0, t.ruler_loop_band);
+            if s.edit.loop_playback {
+                painter.rect_stroke(band, 0.0, Stroke::new(1.5, t.accent), egui::StrokeKind::Inside);
+            }
+        }
         for x in [x_of(s, tl, sel.start), x_of(s, tl, sel.end)] {
             painter.add(Shape::convex_polygon(
                 vec![pos2(x - 5.0, area.min.y + 2.0), pos2(x + 5.0, area.min.y + 2.0), pos2(x, area.min.y + 9.0)],
@@ -3074,6 +3087,34 @@ mod tests {
             Shape::LineSegment { points, stroke } if stroke.color == Tokens::current().insertion => Some((points[0].y + points[1].y) / 2.0),
             _ => None,
         })
+    }
+
+    fn loop_band_rects(h: &Harness<SoundApp>) -> Vec<Rect> {
+        h.output()
+            .shapes
+            .iter()
+            .filter_map(|c| match &c.shape {
+                Shape::Rect(r) if r.fill == Tokens::current().ruler_loop_band => Some(r.rect),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_selection_paints_a_band_across_the_ruler_and_none_without() {
+        let mut h = harness(2);
+        h.step();
+        assert!(loop_band_rects(&h).is_empty(), "no selection, no band");
+        h.state_mut().engine.execute("edit.select", &json!({"start": {"seconds": 1.0}, "end": {"seconds": 3.0}})).unwrap();
+        h.step();
+        let tl = timeline(&h);
+        let s = h.state().engine.session();
+        let bands = loop_band_rects(&h);
+        assert_eq!(bands.len(), 1, "{bands:?}");
+        let band = bands[0];
+        assert!((band.min.x - x_of(s, tl, s.edit.selection.start)).abs() < 1.0);
+        assert!((band.max.x - x_of(s, tl, s.edit.selection.end)).abs() < 1.0);
+        assert!(band.min.y < tl.min.y, "the band sits on the ruler above the lanes");
     }
 
     #[test]

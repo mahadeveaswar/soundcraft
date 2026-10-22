@@ -238,6 +238,77 @@ pub fn draw(painter: &Painter, r: Rect, name: &str, c: Color32) {
                 painter.line_segment([p(r, x, 0.5 - h), p(r, x, 0.5 + h)], s);
             }
         }
+        "undo" | "redo" => {
+            let flip = name == "redo";
+            let q = |x: f32, y: f32| p(r, if flip { 1.0 - x } else { x }, y);
+            let arc: Vec<Pos2> = (0..=10)
+                .map(|i| {
+                    let a = std::f32::consts::PI * i as f32 / 10.0;
+                    q(0.5 + 0.3 * a.cos(), 0.6 - 0.34 * a.sin())
+                })
+                .collect();
+            painter.add(Shape::line(arc, s));
+            painter.add(Shape::convex_polygon(vec![q(0.2, 0.62), q(0.06, 0.4), q(0.34, 0.4)], c, Stroke::NONE));
+        }
+        "magnet" => {
+            let arc: Vec<Pos2> = (0..=10)
+                .map(|i| {
+                    let a = std::f32::consts::PI * i as f32 / 10.0;
+                    p(r, 0.5 + 0.24 * a.cos(), 0.46 - 0.3 * a.sin())
+                })
+                .collect();
+            painter.add(Shape::line(arc, s));
+            for x in [0.26, 0.74] {
+                painter.line_segment([p(r, x, 0.46), p(r, x, 0.74)], s);
+                painter.rect_filled(Rect::from_min_max(p(r, x - 0.1, 0.72), p(r, x + 0.1, 0.86)), 0.0, c);
+            }
+        }
+        "adapt" => {
+            painter.line_segment([p(r, 0.14, 0.5), p(r, 0.86, 0.5)], s);
+            painter.add(Shape::convex_polygon(vec![p(r, 0.06, 0.5), p(r, 0.24, 0.36), p(r, 0.24, 0.64)], c, Stroke::NONE));
+            painter.add(Shape::convex_polygon(vec![p(r, 0.94, 0.5), p(r, 0.76, 0.36), p(r, 0.76, 0.64)], c, Stroke::NONE));
+            for x in [0.38, 0.5, 0.62] {
+                painter.line_segment([p(r, x, 0.32), p(r, x, 0.68)], Stroke::new(s.width * 0.7, c));
+            }
+        }
+        "split" => {
+            painter.line_segment([p(r, 0.5, 0.08), p(r, 0.5, 0.92)], s);
+            painter.rect_stroke(Rect::from_min_max(p(r, 0.1, 0.3), p(r, 0.4, 0.7)), 1.0, s, egui::StrokeKind::Middle);
+            painter.rect_stroke(Rect::from_min_max(p(r, 0.6, 0.3), p(r, 0.9, 0.7)), 1.0, s, egui::StrokeKind::Middle);
+        }
+        "glue" => {
+            painter.rect_stroke(Rect::from_min_max(p(r, 0.08, 0.3), p(r, 0.46, 0.7)), 1.0, s, egui::StrokeKind::Middle);
+            painter.rect_stroke(Rect::from_min_max(p(r, 0.54, 0.3), p(r, 0.92, 0.7)), 1.0, s, egui::StrokeKind::Middle);
+            painter.rect_filled(Rect::from_min_max(p(r, 0.42, 0.44), p(r, 0.58, 0.56)), 0.0, c);
+        }
+        "delete" => {
+            painter.add(Shape::closed_line(vec![p(r, 0.16, 0.6), p(r, 0.56, 0.16), p(r, 0.88, 0.44), p(r, 0.5, 0.86)], s));
+            painter.line_segment([p(r, 0.36, 0.38), p(r, 0.7, 0.7)], s);
+        }
+        "smart" => {
+            for i in 0..4 {
+                let a = i as f32 * std::f32::consts::FRAC_PI_4;
+                let d = vec2(a.cos(), a.sin()) * r.width() * 0.4;
+                painter.line_segment([r.center() - d, r.center() + d], s);
+            }
+            painter.circle_filled(r.center(), r.width() * 0.09, c);
+        }
+        "tracks" => {
+            for y in [0.2, 0.44, 0.68] {
+                painter.rect_filled(Rect::from_min_max(p(r, 0.14, y), p(r, 0.86, y + 0.14)), 1.0, c);
+            }
+        }
+        "clips" => {
+            painter.rect_stroke(Rect::from_min_max(p(r, 0.1, 0.2), p(r, 0.7, 0.5)), 1.0, s, egui::StrokeKind::Middle);
+            painter.rect_stroke(Rect::from_min_max(p(r, 0.3, 0.5), p(r, 0.9, 0.8)), 1.0, s, egui::StrokeKind::Middle);
+        }
+        "inspector" => {
+            painter.rect_stroke(Rect::from_min_max(p(r, 0.12, 0.16), p(r, 0.88, 0.84)), 1.0, s, egui::StrokeKind::Middle);
+            painter.line_segment([p(r, 0.4, 0.16), p(r, 0.4, 0.84)], s);
+            for y in [0.34, 0.5, 0.66] {
+                painter.line_segment([p(r, 0.5, y), p(r, 0.78, y)], Stroke::new(s.width * 0.7, c));
+            }
+        }
         "track_record" => {
             painter.circle_filled(r.center(), r.width() * 0.26, c);
         }

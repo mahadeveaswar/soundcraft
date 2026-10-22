@@ -186,6 +186,19 @@ fn ui_customization(app: &mut SoundApp, ctx: &egui::Context) {
                     let _ = app.run("ui.header_style", json!({"style": s.id()}));
                 }
                 ui.end_row();
+                ui.label("Menu layout");
+                let mut layout = None;
+                egui::ComboBox::from_id_salt("menu_layout").selected_text(app.ui.menu_layout.label()).show_ui(ui, |ui| {
+                    for m in crate::menu_layout::MenuLayout::ALL {
+                        if ui.selectable_label(app.ui.menu_layout == m, m.label()).clicked() {
+                            layout = Some(m);
+                        }
+                    }
+                });
+                if let Some(m) = layout {
+                    let _ = app.run("ui.menu_layout", json!({"layout": m.id()}));
+                }
+                ui.end_row();
                 ui.label("Auto-update configuration");
                 crate::widgets::checkbox(ui, &mut app.extra.auto_update_config, "");
                 ui.end_row();

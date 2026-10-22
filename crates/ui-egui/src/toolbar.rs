@@ -11,6 +11,25 @@ use soundcraft_time::{TimeFormat, format_length};
 
 pub const HEIGHT: f32 = 78.0;
 
+/// The toolbar actually drawn. Standard has no room for the counters and transport cluster, so
+/// with the transport on top the Classic toolbar (which carries them) is shown instead.
+pub fn effective_style(app: &SoundApp) -> crate::toolbar_layout::ToolbarStyle {
+    use crate::toolbar_layout::ToolbarStyle;
+    if app.ui.toolbar_style == ToolbarStyle::Standard && app.ui.transport_position != crate::transport_bar::TransportPosition::Top {
+        ToolbarStyle::Standard
+    } else {
+        ToolbarStyle::Classic
+    }
+}
+
+/// Height of the toolbar panel.
+pub fn height(app: &SoundApp) -> f32 {
+    match effective_style(app) {
+        crate::toolbar_layout::ToolbarStyle::Classic => HEIGHT,
+        crate::toolbar_layout::ToolbarStyle::Standard => crate::toolbar_layout::ROW_H,
+    }
+}
+
 fn group(ui: &mut Ui, w: f32, h: f32, add: impl FnOnce(&mut Ui, Rect)) {
     let t = Tokens::current();
     let (r, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
@@ -20,6 +39,13 @@ fn group(ui: &mut Ui, w: f32, h: f32, add: impl FnOnce(&mut Ui, Rect)) {
 }
 
 pub fn show(app: &mut SoundApp, ui: &mut Ui) {
+    match effective_style(app) {
+        crate::toolbar_layout::ToolbarStyle::Classic => show_classic(app, ui),
+        crate::toolbar_layout::ToolbarStyle::Standard => crate::toolbar_standard::show(app, ui),
+    }
+}
+
+fn show_classic(app: &mut SoundApp, ui: &mut Ui) {
     let t = Tokens::current();
     let full = ui.max_rect();
     ui.painter().rect_filled(full, 0.0, t.toolbar_bg);
@@ -96,7 +122,7 @@ fn edit_modes(app: &mut SoundApp, ui: &mut Ui) {
 
 /// Shift adds Snap to Grid to Shuffle, Slip and Spot (on Grid it toggles it for the current mode);
 /// Cmd/Ctrl on Shuffle toggles Shuffle Lock.
-fn mode_click(app: &mut SoundApp, m: EditMode, mods: egui::Modifiers) {
+pub(crate) fn mode_click(app: &mut SoundApp, m: EditMode, mods: egui::Modifiers) {
     let cur = app.engine.session().edit.edit_mode;
     let _ = if m == EditMode::Shuffle && mods.command {
         app.run("edit.shuffle_lock", json!({}))
@@ -292,7 +318,7 @@ fn grid_nudge(app: &mut SoundApp, ui: &mut Ui) {
     }
 }
 
-fn value_menu(app: &mut SoundApp, resp: &egui::Response, cmd: &str) {
+pub(crate) fn value_menu(app: &mut SoundApp, resp: &egui::Response, cmd: &str) {
     egui::Popup::menu(resp).show(|ui| {
         for v in ["1 bar", "1/2", "1/4", "1/8", "1/16", "1/32", "1/64", "1/8t", "1/16t", "1/4."] {
             if ui.button(v).clicked() {

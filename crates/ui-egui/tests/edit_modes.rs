@@ -216,7 +216,9 @@ fn mode_keys_add_snap_to_grid_and_cycle_past_a_locked_shuffle() {
 fn toolbar_clicks_add_snap_to_grid_lock_shuffle_and_switch_grid_modes_despite_the_keyboard_lock() {
     let mut e = Engine::default();
     e.execute("edit.mode", &json!({"mode": "slip"})).unwrap();
-    let app = SoundApp::new(e, None, Services::default());
+    let mut app = SoundApp::new(e, None, Services::default());
+    // This test clicks the classic toolbar's cells by position.
+    app.ui.toolbar_style = soundcraft_ui_egui::toolbar_layout::ToolbarStyle::Classic;
     let mut h = egui_kittest::Harness::builder().with_size(vec2(1600.0, 1000.0)).build_ui_state(
         |ui, app: &mut SoundApp| {
             let ctx = ui.ctx().clone();
