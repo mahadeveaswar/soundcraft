@@ -42,6 +42,7 @@ pub mod sampler_window;
 pub mod score_editor;
 pub mod shortcuts;
 pub mod spot;
+pub mod template_ui;
 pub mod theme;
 pub mod toolbar;
 pub mod toolbar_layout;
@@ -351,6 +352,7 @@ pub struct SoundApp {
     pub preset_dir: Option<std::path::PathBuf>,
     last_autosave: Option<std::time::Instant>,
     pub dialogs: dialogs::Dialogs,
+    pub templates: template_ui::TemplateUi,
     pub meters: HashMap<TrackId, MeterDisplay>,
     pub main_meter: MeterDisplay,
     /// Reused multichannel snapshot; populated at an adaptive rate by `logic`.
@@ -439,6 +441,7 @@ impl SoundApp {
             preset_dir: None,
             last_autosave: None,
             dialogs: dialogs::Dialogs::default(),
+            templates: template_ui::TemplateUi::default(),
             meters: HashMap::new(),
             main_meter: MeterDisplay::default(),
             meter_snapshot: soundcraft_playback::MeterSnapshot::default(),
@@ -484,7 +487,9 @@ impl SoundApp {
 
     /// Run a command; errors go to the status line. Returns the result.
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
-        if matches!(id, "session.new" | "session.open" | "session.close" | "session.revert") && bounce::refuses_session_switch(self) {
+        if matches!(id, "session.new" | "session.open" | "session.close" | "session.revert" | "template.new_session")
+            && bounce::refuses_session_switch(self)
+        {
             return Err(self.ui.status.clone());
         }
         if let Some(r) = menus::run_ui_command(self, id, &params) {
@@ -494,7 +499,7 @@ impl SoundApp {
             // Third-party plugins keep state the session can't see: store it first.
             self.capture_plugin_states();
         }
-        let replacing = matches!(id, "session.new" | "session.open" | "session.close" | "session.revert");
+        let replacing = matches!(id, "session.new" | "session.open" | "session.close" | "session.revert" | "template.new_session");
         match self.engine.execute(id, &params) {
             Ok(v) => {
                 if replacing || (id.starts_with("session.save") && !self.engine.is_dirty()) {
@@ -1348,6 +1353,7 @@ impl SoundApp {
         score_editor::show(self, &ctx);
         palette::show(self, &ctx);
         dialogs::show(self, &ctx);
+        template_ui::show(self, &ctx);
         // Here, not in logic(): a covered or minimized window runs only logic(), with no vsync to pace it.
         if self.meters_live() {
             let hz = if self.ui.window == MainWindow::Mix { 60 } else { 30 };

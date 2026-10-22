@@ -94,6 +94,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str, Option<&str>)] = &[
 /// Extra catalog mappings handled by the UI layer.
 pub fn ui_aliases() -> Vec<(&'static str, &'static str)> {
     let mut v: Vec<(&str, &str)> = UI_COMMANDS.iter().filter(|c| !c.2.is_empty()).map(|c| (c.2, c.0)).collect();
+    v.extend([("File > New from Template...", "template.new_session"), ("File > Instrument Rack...", "template.instrument_rack")]);
     v.extend(mix_view_aliases().iter().copied());
     v.extend(AUDIOSUITE.iter().map(|(p, _)| (*p, "audiosuite.process")));
     v.extend(MENU_WINDOWS.iter().copied());
@@ -224,6 +225,16 @@ pub fn tree() -> Vec<MenuNode> {
     let mut roots: Vec<MenuNode> = Vec::new();
     for line in catalog::catalog() {
         insert_path(&mut roots, line);
+    }
+    // Template items: Save As Template... is already in the catalog; the others sit right below it.
+    for (i, line) in ["File > New from Template...", "File > Instrument Rack..."].into_iter().enumerate() {
+        insert_path(&mut roots, line);
+        if let Some(file) = roots.iter_mut().find(|n| n.label == "File")
+            && let Some(at) = file.children.iter().position(|n| n.label == "Save As Template...")
+            && let Some(node) = file.children.pop()
+        {
+            file.children.insert(at + 1 + i, node);
+        }
     }
     insert_path(&mut roots, "Window > Reset Panel Layout");
     insert_path(&mut roots, "Window > Show All Panels");
@@ -533,6 +544,10 @@ pub fn invoke_menu(app: &mut SoundApp, id: &str, path: &str) {
     if id == "audiosuite.process" {
         let p = params_for(path, id);
         app.ui.audiosuite = p.get("process").and_then(Value::as_str).map(str::to_string);
+        return;
+    }
+    if crate::template_ui::is_template_command(id, path) {
+        crate::template_ui::open_for_menu(app, id, path);
         return;
     }
     if wants_dialog(id) && app.dialogs.open_for_command(&app.engine, id) {
