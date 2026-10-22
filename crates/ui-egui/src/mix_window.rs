@@ -48,11 +48,12 @@ pub(crate) fn content(app: &mut SoundApp, ui: &mut Ui) {
     let ids: Vec<TrackId> = app.engine.session().tracks.iter().filter(|x| !x.hidden && x.kind != TrackKind::Video).map(|x| x.id).collect();
     // Per-channel peaks for multichannel meters (read once per frame).
     let snap = app.player.as_ref().filter(|_| app.meters_live()).map(|p| p.meters());
+    let opts = StripOpts::default();
     egui::ScrollArea::horizontal().auto_shrink([false, false]).show(ui, |ui| {
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = 1.0;
             for id in ids {
-                strip(app, ui, id, snap.as_ref());
+                strip(app, ui, id, snap.as_ref(), &opts);
             }
             let rest = Rect::from_min_max(pos2(ui.cursor().min.x, ui.clip_rect().min.y), ui.clip_rect().max);
             if rest.width() > 4.0 && ui.interact(rest, ui.id().with("past_strips"), Sense::click()).double_clicked() {
@@ -171,14 +172,52 @@ pub(crate) fn route_popup(app: &mut SoundApp, resp: &egui::Response, id: TrackId
     egui::Popup::menu(resp).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| route_menu(app, ui, id, input));
 }
 
-fn strip(app: &mut SoundApp, ui: &mut Ui, id: TrackId, snap: Option<&MeterSnapshot>) {
+/// How one channel strip is drawn. The default is the Mix window's strip, unchanged; the bottom
+/// Mixer pane passes its own options.
+#[derive(Clone, Debug, Default)]
+pub struct StripOpts {
+    /// A narrow strip whose inserts and sends collapse to a count badge.
+    pub compact: bool,
+    /// The sections to draw (`mix_views` ids); `None` follows the Mix window's View settings.
+    pub rows: Option<Vec<String>>,
+    /// The least strip height; `None` keeps the Mix window's 560.
+    pub min_height: Option<f32>,
+    /// Clicking the strip's background selects its track (the name always does).
+    pub select_on_click: bool,
+    /// Outline a selected strip in the accent colour.
+    pub outline_selected: bool,
+    /// Fill the name chip with the track's colour.
+    pub color_chip: bool,
+}
+
+/// The least height of a Mix window strip.
+const STRIP_MIN_HEIGHT: f32 = 560.0;
+
+/// The strip's width for `opts` (a compact or Narrow Mix strip is narrow).
+pub(crate) fn opts_width(app: &SoundApp, opts: &StripOpts) -> f32 {
+    strip_width(opts.compact || app.ui.narrow_mix)
+}
+
+/// Black or white text, whichever reads on `fill`.
+fn chip_text(fill: Color32, t: &Tokens) -> Color32 {
+    let lum = 0.299 * f32::from(fill.r()) + 0.587 * f32::from(fill.g()) + 0.114 * f32::from(fill.b());
+    if lum > 140.0 { t.text_dark } else { t.text }
+}
+
+pub(crate) fn strip(app: &mut SoundApp, ui: &mut Ui, id: TrackId, snap: Option<&MeterSnapshot>, opts: &StripOpts) {
     let t = Tokens::current();
     let session = app.engine.session_arc();
     let Some(track) = session.track(id) else { return };
-    let narrow = app.ui.narrow_mix;
+    let narrow = opts.compact || app.ui.narrow_mix;
     let w = strip_width(narrow);
-    let h = ui.available_height().max(560.0);
-    let (r, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
+    let h = ui.available_height().max(opts.min_height.unwrap_or(STRIP_MIN_HEIGHT));
+    let (r, body) = ui.allocate_exact_size(vec2(w, h), if opts.select_on_click { Sense::click() } else { Sense::hover() });
+    if opts.select_on_click {
+        body.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Strip {}", track.name)));
+    }
+    if opts.select_on_click && body.clicked() {
+        crate::edit_window::click_track(app, id, ui.input(|i| i.modifiers), |_, t| !t.hidden && t.kind != TrackKind::Video);
+    }
     let selected = app.engine.session().edit.selected_tracks.contains(&id);
     let bg = if selected { t.strip_selected } else { t.strip_bg };
     vgradient(ui.painter(), r, shade(bg, 0.06), bg);
@@ -186,7 +225,7 @@ fn strip(app: &mut SoundApp, ui: &mut Ui, id: TrackId, snap: Option<&MeterSnapsh
     let mut y = r.min.y + 4.0;
     let inner_w = w - 8.0;
     let x0 = r.min.x + 4.0;
-    let views = app.ui.mix_views.clone();
+    let views = opts.rows.clone().unwrap_or_else(|| app.ui.mix_views.clone());
     let has = |v: &str| views.iter().any(|x| x == v);
     let all = has("all");
     // Preamp, instrument and object rows keep their height on every strip so sections line up;
@@ -246,6 +285,25 @@ fn strip(app: &mut SoundApp, ui: &mut Ui, id: TrackId, snap: Option<&MeterSnapsh
         ("sends_fj", "SENDS F-J", 5, true),
     ] {
         if !(all || has(key)) {
+            continue;
+        }
+        if opts.compact {
+            // Inserts and sends fold into a count of the slots in use.
+            let sec = Rect::from_min_size(pos2(x0, y), vec2(inner_w, 34.0));
+            inset(ui.painter(), sec, t.strip_section);
+            section_label(ui, sec, title, narrow);
+            let used = if is_send {
+                track.mixer.sends.iter().skip(off).take(5).filter(|s| s.is_some()).count()
+            } else {
+                track.mixer.inserts.iter().skip(off).take(5).filter(|s| s.is_some()).count()
+            };
+            let badge = Rect::from_center_size(pos2(sec.center().x, sec.min.y + 24.0), vec2(26.0, 13.0));
+            inset(ui.painter(), badge, t.counter_bg);
+            let color = if used > 0 { t.counter_text } else { t.text_dim };
+            ui.painter().text(badge.center(), Align2::CENTER_CENTER, used.to_string(), bold(10.0), color);
+            let tip = format!("{title}: {used} of 5 in use");
+            ui.interact(sec, ui.id().with(("compact-count", id.0, key)), Sense::hover()).on_hover_text(tip);
+            y = sec.max.y + 4.0;
             continue;
         }
         let sec = Rect::from_min_size(pos2(x0, y), vec2(inner_w, 16.0 + 5.0 * 17.0));
@@ -483,14 +541,16 @@ fn strip(app: &mut SoundApp, ui: &mut Ui, id: TrackId, snap: Option<&MeterSnapsh
     };
     ui.painter().text(pos2(vr.center().x, vr.max.y + 9.0), Align2::CENTER_CENTER, kind, regular(9.5), t.text_dim);
     let nr = Rect::from_min_size(pos2(x0, r.max.y - 26.0), vec2(inner_w, 18.0));
-    ui.painter().rect(
-        nr,
-        CornerRadius::same(2),
-        if selected { t.name_field_sel } else { t.name_field },
-        Stroke::new(1.0, Color32::BLACK),
-        StrokeKind::Inside,
-    );
-    ui.painter().with_clip_rect(nr).text(nr.center(), Align2::CENTER_CENTER, &track.name, bold(12.0), t.text_dark);
+    let chip = if opts.color_chip {
+        rgb(track.color)
+    } else if selected {
+        t.name_field_sel
+    } else {
+        t.name_field
+    };
+    let chip_ink = if opts.color_chip { chip_text(chip, &t) } else { t.text_dark };
+    ui.painter().rect(nr, CornerRadius::same(2), chip, Stroke::new(1.0, Color32::BLACK), StrokeKind::Inside);
+    ui.painter().with_clip_rect(nr).text(nr.center(), Align2::CENTER_CENTER, &track.name, bold(12.0), chip_ink);
     let nresp = ui.interact(nr, ui.id().with(("strip_name", id.0)), Sense::click());
     if nresp.clicked() {
         crate::edit_window::click_track(app, id, ui.input(|i| i.modifiers), |_, t| !t.hidden && t.kind != TrackKind::Video);
@@ -503,6 +563,9 @@ fn strip(app: &mut SoundApp, ui: &mut Ui, id: TrackId, snap: Option<&MeterSnapsh
         ui.painter().rect_filled(Rect::from_min_size(pos2(r.min.x, r.max.y - 5.0), vec2(w, 5.0)), 0.0, rgb(track.color));
     }
     ui.painter().line_segment([pos2(r.max.x, r.min.y), pos2(r.max.x, r.max.y)], Stroke::new(1.0, t.border));
+    if opts.outline_selected && selected {
+        ui.painter().rect_stroke(r.shrink(1.0), 0.0, Stroke::new(2.0, t.accent), StrokeKind::Inside);
+    }
 }
 
 /// An instrument track's INSTRUMENT row: click opens a hosted instrument's plugin window,
@@ -1313,8 +1376,23 @@ fn route_menu(app: &mut SoundApp, ui: &mut Ui, id: TrackId, input: bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::{dragged_send_db, editable_readout, parse_db, parse_pan};
+    use super::{StripOpts, dragged_send_db, editable_readout, opts_width, parse_db, parse_pan, strip_width};
+    use crate::SoundApp;
     use egui::{Event, Modifiers, PointerButton, Rect, pos2, vec2};
+
+    #[test]
+    fn compact_strips_are_narrower_and_default_options_follow_narrow_mix() {
+        let mut app = SoundApp::new(soundcraft_engine::demo::demo_engine(), None, crate::Services::default());
+        let default = StripOpts::default();
+        assert!(!default.compact && default.rows.is_none() && default.min_height.is_none());
+        assert!(!default.select_on_click && !default.outline_selected && !default.color_chip);
+        assert_eq!(opts_width(&app, &default), strip_width(false));
+        let compact = StripOpts { compact: true, ..Default::default() };
+        assert_eq!(opts_width(&app, &compact), strip_width(true));
+        assert!(opts_width(&app, &compact) < opts_width(&app, &default));
+        app.ui.narrow_mix = true;
+        assert_eq!(opts_width(&app, &default), strip_width(true));
+    }
 
     #[test]
     fn typed_db_accepts_console_notation_and_clamps() {

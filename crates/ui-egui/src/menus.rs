@@ -33,6 +33,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str, Option<&str>)] = &[
     ("window.meter_panel", "Meters", "", None),
     ("window.loudness_panel", "Loudness", "", None),
     ("window.inspector", "Inspector", "Window > Inspector", None),
+    ("window.mixer_panel", "Mixer", "", None),
     ("window.universe", "Universe", "View > Other Displays > Universe", Some("Alt+7")),
     ("window.video", "Video", "Window > Video", Some("Cmd+9")),
     ("window.video_universe", "Video Universe", "Window > Video Universe", None),
@@ -455,6 +456,7 @@ fn checked_state(app: &SoundApp, path: &str, id: Option<&str>) -> bool {
         Some("window.meter_panel") => app.ui.show_meter_panel,
         Some("window.loudness_panel") => app.ui.show_loudness_panel,
         Some("window.inspector") => app.ui.show_inspector,
+        Some("window.mixer_panel") => app.ui.show_mixer_panel,
         Some("window.narrow_mix") => app.ui.narrow_mix,
         Some("window.renderer") => app.extra.show_renderer,
         Some("window.settings") | Some("window.ui_customization") => app.extra.show_settings,
@@ -696,6 +698,7 @@ pub fn run_ui_command(app: &mut SoundApp, id: &str, p: &Value) -> Option<Result<
         "window.meter_panel" => toggle(&mut app.ui.show_meter_panel),
         "window.loudness_panel" => toggle(&mut app.ui.show_loudness_panel),
         "window.inspector" => toggle(&mut app.ui.show_inspector),
+        "window.mixer_panel" => toggle(&mut app.ui.show_mixer_panel),
         "window.midi_front" => {
             app.ui.show_midi_editor = true;
             json!({"value": true})

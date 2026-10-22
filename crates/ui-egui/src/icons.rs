@@ -302,6 +302,12 @@ pub fn draw(painter: &Painter, r: Rect, name: &str, c: Color32) {
             painter.rect_stroke(Rect::from_min_max(p(r, 0.1, 0.2), p(r, 0.7, 0.5)), 1.0, s, egui::StrokeKind::Middle);
             painter.rect_stroke(Rect::from_min_max(p(r, 0.3, 0.5), p(r, 0.9, 0.8)), 1.0, s, egui::StrokeKind::Middle);
         }
+        "mixer" => {
+            for (x, y) in [(0.25, 0.6), (0.5, 0.35), (0.75, 0.5)] {
+                painter.line_segment([p(r, x, 0.16), p(r, x, 0.84)], Stroke::new(s.width * 0.7, c));
+                painter.rect_filled(Rect::from_center_size(p(r, x, y), vec2(r.width() * 0.26, r.height() * 0.14)), 1.0, c);
+            }
+        }
         "inspector" => {
             painter.rect_stroke(Rect::from_min_max(p(r, 0.12, 0.16), p(r, 0.88, 0.84)), 1.0, s, egui::StrokeKind::Middle);
             painter.line_segment([p(r, 0.4, 0.16), p(r, 0.4, 0.84)], s);
