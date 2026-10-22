@@ -23,7 +23,8 @@ pub struct ThemeState {
 }
 
 /// Help text for the control protocol: the valid parameter keys.
-const PARAM_KEYS: &[&str] = &["clip_opacity", "clip_opacity_selected", "grid_strength", "track_tint", "grid_beat_always"];
+const PARAM_KEYS: &[&str] =
+    &["clip_opacity", "clip_opacity_selected", "grid_strength", "track_tint", "grid_beat_always", "clip_gloss", "clip_corner", "header_corner"];
 
 fn same_content(a: &ThemeDoc, b: &ThemeDoc) -> bool {
     a.base == b.base && a.colors == b.colors && a.params == b.params && a.track_palette == b.track_palette
@@ -243,6 +244,9 @@ fn describe(app: &SoundApp) -> Value {
             "grid_strength": doc.params.grid_strength.unwrap_or(1.0),
             "grid_beat_always": r.tokens.grid_beat_always,
             "track_tint": app.ui.track_tint,
+            "clip_gloss": r.tokens.clip_gloss,
+            "clip_corner": r.tokens.clip_corner,
+            "header_corner": r.tokens.header_corner,
         },
         "track_palette": hexes(&doc),
         "ignored": r.ignored,
@@ -284,6 +288,9 @@ fn set_param(app: &mut SoundApp, p: &Value) -> Result<Value, String> {
         "clip_opacity_selected" => doc.params.clip_opacity_selected = Some(num(0.0, 1.0)?),
         "grid_strength" => doc.params.grid_strength = Some(num(0.0, 2.0)?),
         "track_tint" => doc.params.track_tint = Some(num(0.0, 1.0)?),
+        "clip_gloss" => doc.params.clip_gloss = Some(num(0.0, 1.0)?),
+        "clip_corner" => doc.params.clip_corner = Some(num(0.0, 8.0)?),
+        "header_corner" => doc.params.header_corner = Some(num(0.0, 8.0)?),
         "grid_beat_always" => doc.params.grid_beat_always = Some(value.as_bool().ok_or("`grid_beat_always` must be true or false")?),
         _ => return Err(format!("unknown setting `{key}`; valid keys: {}", PARAM_KEYS.join(", "))),
     }
@@ -333,6 +340,9 @@ fn reset(app: &mut SoundApp, p: &Value) -> Result<Value, String> {
         Some("grid_strength") => doc.params.grid_strength = None,
         Some("grid_beat_always") => doc.params.grid_beat_always = None,
         Some("track_tint") => doc.params.track_tint = None,
+        Some("clip_gloss") => doc.params.clip_gloss = None,
+        Some("clip_corner") => doc.params.clip_corner = None,
+        Some("header_corner") => doc.params.header_corner = None,
         Some("track_palette") => doc.track_palette.clear(),
         Some(k) => {
             return Err(format!("unknown key `{k}`; valid colours: {}; settings: {}", theme_doc::key_names().join(", "), PARAM_KEYS.join(", ")));

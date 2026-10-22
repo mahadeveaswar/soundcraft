@@ -61,6 +61,12 @@ pub struct Params {
     pub grid_beat_always: Option<bool>,
     /// Track colour tint 0..=1 in the Edit window.
     pub track_tint: Option<f32>,
+    /// Glossy clips: gloss strength 0..=1 (0 is flat).
+    pub clip_gloss: Option<f32>,
+    /// Clip corner radius in points, 0..=8.
+    pub clip_corner: Option<f32>,
+    /// Track header corner radius in points, 0..=8.
+    pub header_corner: Option<f32>,
 }
 
 /// A theme file.
@@ -332,6 +338,11 @@ fn alpha_of(opacity: f32) -> u8 {
     (opacity.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
+/// A corner radius param (points) as the token value, clamped to 0..=8.
+fn radius_of(points: f32) -> u8 {
+    if points.is_finite() { points.clamp(0.0, 8.0).round() as u8 } else { 0 }
+}
+
 /// Resolve a document to tokens: the base preset, then colour overrides, then params.
 pub fn resolve(doc: &ThemeDoc) -> Resolved {
     let mut tokens = doc.base.tokens();
@@ -354,6 +365,15 @@ pub fn resolve(doc: &ThemeDoc) -> Resolved {
     }
     if let Some(o) = p.clip_opacity_selected {
         tokens.clip_fill_alpha_selected = alpha_of(o);
+    }
+    if let Some(g) = p.clip_gloss {
+        tokens.clip_gloss = g.clamp(0.0, 1.0);
+    }
+    if let Some(c) = p.clip_corner {
+        tokens.clip_corner = radius_of(c);
+    }
+    if let Some(c) = p.header_corner {
+        tokens.header_corner = radius_of(c);
     }
     if let Some(b) = p.grid_beat_always {
         tokens.grid_beat_always = b;
@@ -532,6 +552,7 @@ mod tests {
                 grid_strength: Some(0.0),
                 grid_beat_always: Some(true),
                 track_tint: None,
+                ..Params::default()
             },
             ..ThemeDoc::default()
         };
@@ -541,6 +562,25 @@ mod tests {
         assert_eq!(r.tokens.grid_bar, Tokens::DARK.playlist_bg);
         let same = resolve(&ThemeDoc { params: Params { grid_strength: Some(1.0), ..Params::default() }, ..ThemeDoc::default() });
         assert_eq!(same.tokens, Tokens::DARK);
+    }
+
+    #[test]
+    fn gloss_and_corner_params_resolve_clamp_and_round_trip() {
+        let doc = ThemeDoc {
+            base: Base::Midnight,
+            params: Params { clip_gloss: Some(0.0), clip_corner: Some(7.6), header_corner: Some(99.0), ..Params::default() },
+            ..ThemeDoc::default()
+        };
+        let r = resolve(&doc);
+        assert_eq!((r.tokens.clip_gloss, r.tokens.clip_corner, r.tokens.header_corner), (0.0, 8, 8));
+        let back = from_json(&to_json(&doc).unwrap_or_default()).unwrap_or_default();
+        assert_eq!(back.params, doc.params);
+        let nan = resolve(&ThemeDoc { params: Params { clip_corner: Some(f32::NAN), ..Params::default() }, ..ThemeDoc::default() });
+        assert_eq!(nan.tokens.clip_corner, 0);
+        // An older file without the keys keeps the base values.
+        let old = from_json(r#"{"format":"soundcraft-theme","version":1,"base":"midnight","params":{"clip_opacity":0.5}}"#).unwrap_or_default();
+        let (o, m) = (resolve(&old).tokens, Tokens::MIDNIGHT);
+        assert_eq!((o.clip_gloss, o.clip_corner, o.header_corner), (m.clip_gloss, m.clip_corner, m.header_corner));
     }
 
     #[test]

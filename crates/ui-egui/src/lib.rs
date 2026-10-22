@@ -6,6 +6,7 @@
 
 pub mod auto_lanes_ui;
 pub mod bounce;
+pub mod clip_paint;
 pub mod control;
 pub mod credits;
 pub mod dialogs;
