@@ -69,6 +69,11 @@ pub(crate) fn view_menu(app: &mut SoundApp, ui: &mut Ui) {
                 ui.close();
             }
         }
+        ui.separator();
+        if ui.button("Reset Width").clicked() {
+            let _ = app.run("ui.header_width", json!({"reset": true}));
+            ui.close();
+        }
     });
 }
 

@@ -9,7 +9,7 @@ use egui::{Align2, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use serde_json::{Value, json};
 
 /// The panels a user can hide and show, in menu order.
-pub const LIST: [Panel; 5] = [Panel::Tracks, Panel::Clips, Panel::Midi, Panel::Memory, Panel::History];
+pub const LIST: [Panel; 6] = [Panel::Tracks, Panel::Clips, Panel::Midi, Panel::Memory, Panel::History, Panel::Master];
 
 const HINT_THICKNESS: f32 = 20.0;
 const BUTTON: f32 = 18.0;
@@ -22,13 +22,14 @@ pub fn is_visible(app: &SoundApp, panel: Panel) -> bool {
         Panel::Midi => app.ui.show_midi_editor,
         Panel::Memory => app.ui.show_memory_locations,
         Panel::History => app.ui.show_undo_history,
+        Panel::Master => app.ui.show_master_panel,
         Panel::Canvas => true,
     }
 }
 
 /// The panels that exist in a window (Clips and the MIDI editor belong to Edit).
 pub fn panels_for(edit: bool) -> Vec<Panel> {
-    LIST.iter().copied().filter(|p| edit || !matches!(p, Panel::Clips | Panel::Midi)).collect()
+    LIST.iter().copied().filter(|p| edit || !matches!(p, Panel::Clips | Panel::Midi | Panel::Master)).collect()
 }
 
 /// `(panel, label, visible)` for the panel list of the current window.
@@ -209,7 +210,8 @@ mod tests {
     fn mix_has_no_clips_or_midi_entries() {
         let mix = panels_for(false);
         assert!(!mix.contains(&Panel::Clips) && !mix.contains(&Panel::Midi));
-        assert_eq!(panels_for(true).len(), 5);
+        assert_eq!(panels_for(true).len(), 6);
+        assert!(!mix.contains(&Panel::Master));
     }
 
     #[test]

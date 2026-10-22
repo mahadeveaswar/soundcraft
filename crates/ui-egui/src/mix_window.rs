@@ -16,13 +16,7 @@ pub fn strip_width(narrow: bool) -> f32 {
 }
 
 pub fn show(app: &mut SoundApp, ui: &mut Ui) {
-    if app.ui.transport_position == crate::transport_bar::TransportPosition::Bottom {
-        let t = crate::theme::Tokens::current();
-        egui::Panel::bottom("mix_transport_bar")
-            .exact_size(crate::transport_bar::HEIGHT)
-            .frame(egui::Frame::NONE.fill(t.toolbar_bg))
-            .show(ui, |ui| crate::transport_bar::show(app, ui));
-    }
+    crate::transport_bar::show_docked(app, ui, "mix_transport_bar");
     crate::docking::show(app, ui, crate::MainWindow::Mix);
 }
 
@@ -66,6 +60,27 @@ pub(crate) fn content(app: &mut SoundApp, ui: &mut Ui) {
             }
         });
     });
+}
+
+/// The master level as the Mix master strip shows it (also the transport bar's mini meter).
+pub(crate) fn master_display(app: &SoundApp) -> crate::MeterDisplay {
+    let master = app.engine.session().tracks.iter().find(|t| t.kind == TrackKind::Master).map(|t| t.id);
+    master.and_then(|id| app.meters.get(&id).copied()).unwrap_or(app.main_meter)
+}
+
+/// A strip's volume fader in `fr`; a drag sets the track volume (one merged undo step).
+pub(crate) fn strip_fader(app: &mut SoundApp, ui: &mut Ui, fr: Rect, id: TrackId, volume_db: f32) {
+    if let Some(db) = fader(ui, fr, volume_db, ui.id().with(("fader", id.0))) {
+        app.gesture = Some(crate::Gesture::Fader { track: id, start_db: volume_db });
+        let _ = app.engine.execute_merged("mix.volume", &json!({"track": id.0, "db": db}), &format!("fader:{}", id.0));
+    }
+}
+
+/// Two side-by-side level meters in `mr`.
+pub(crate) fn stereo_meters(ui: &Ui, mr: Rect, md: &crate::MeterDisplay) {
+    let mw = mr.width() / 2.0 - 1.0;
+    meter(ui, Rect::from_min_size(mr.min, vec2(mw, mr.height())), md.level[0], md.hold[0], md.clip);
+    meter(ui, Rect::from_min_size(pos2(mr.min.x + mw + 2.0, mr.min.y), vec2(mw, mr.height())), md.level[1], md.hold[1], md.clip);
 }
 
 /// Format of the destination a track's output feeds (the main mix, a bus, or stereo).
@@ -417,10 +432,7 @@ fn strip(app: &mut SoundApp, ui: &mut Ui, id: TrackId, snap: Option<&MeterSnapsh
     let fh = (r.max.y - bottom_h - y).max(120.0);
     let wide_meter = (if track.kind == TrackKind::Master { app.engine.session().main_format() } else { track.format }).channels() > 2;
     let fr = Rect::from_min_size(pos2(x0, y), vec2(inner_w * if wide_meter { 0.45 } else { 0.6 }, fh));
-    if let Some(db) = fader(ui, fr, track.mixer.volume_db, ui.id().with(("fader", id.0))) {
-        app.gesture = Some(crate::Gesture::Fader { track: id, start_db: track.mixer.volume_db });
-        let _ = app.engine.execute_merged("mix.volume", &json!({"track": id.0, "db": db}), &format!("fader:{}", id.0));
-    }
+    strip_fader(app, ui, fr, id, track.mixer.volume_db);
     let md = app.meters.get(&id).copied().unwrap_or_default();
     let slot = fader_slot(fr);
     let mr = Rect::from_min_max(pos2(fr.max.x + 4.0, slot.min.y - 5.0), pos2(x0 + inner_w - 2.0, slot.max.y + if wide_meter { 17.0 } else { 1.0 }));
@@ -437,9 +449,7 @@ fn strip(app: &mut SoundApp, ui: &mut Ui, id: TrackId, snap: Option<&MeterSnapsh
         let labels: Vec<String> = (0..all_chans).map(|c| strip_fmt.channel_label(c)).collect();
         multi_meter(ui, mr, &lv, &labels, md.clip);
     } else if chans >= 2 {
-        let mw = mr.width() / 2.0 - 1.0;
-        meter(ui, Rect::from_min_size(mr.min, vec2(mw, mr.height())), md.level[0], md.hold[0], md.clip);
-        meter(ui, Rect::from_min_size(pos2(mr.min.x + mw + 2.0, mr.min.y), vec2(mw, mr.height())), md.level[1], md.hold[1], md.clip);
+        stereo_meters(ui, mr, &md);
     } else {
         meter(ui, mr, md.level[0], md.hold[0], md.clip);
     }

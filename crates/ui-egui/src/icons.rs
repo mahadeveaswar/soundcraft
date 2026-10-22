@@ -129,6 +129,62 @@ pub fn draw(painter: &Painter, r: Rect, name: &str, c: Color32) {
         "triangle_down" => {
             painter.add(Shape::convex_polygon(vec![p(r, 0.25, 0.35), p(r, 0.75, 0.35), p(r, 0.5, 0.68)], c, Stroke::NONE));
         }
+        "triangle_up" => {
+            painter.add(Shape::convex_polygon(vec![p(r, 0.25, 0.65), p(r, 0.75, 0.65), p(r, 0.5, 0.32)], c, Stroke::NONE));
+        }
+        "rec_mode" => {
+            // A record dot inside a ring with a small arrow: record behaviour.
+            painter.circle_filled(r.center(), r.width() * 0.17, c);
+            painter.circle_stroke(r.center(), r.width() * 0.36, s);
+        }
+        "quantize" => {
+            // Three notes snapping to a grid line.
+            for (x, y) in [(0.22, 0.34), (0.5, 0.66), (0.78, 0.34)] {
+                painter.rect_filled(Rect::from_center_size(p(r, x, y), vec2(r.width() * 0.2, r.height() * 0.16)), 1.0, c);
+            }
+            painter.line_segment([p(r, 0.1, 0.5), p(r, 0.9, 0.5)], Stroke::new(s.width * 0.6, c));
+        }
+        "flag_l" | "flag_r" => {
+            // A locator flag on a pole; the left one points left of the pole's top, the right one right.
+            let right = name == "flag_r";
+            let (pole, tip) = if right { (0.3, 0.82) } else { (0.7, 0.18) };
+            painter.line_segment([p(r, pole, 0.14), p(r, pole, 0.88)], s);
+            painter.add(Shape::convex_polygon(vec![p(r, pole, 0.14), p(r, tip, 0.3), p(r, pole, 0.46)], c, Stroke::NONE));
+        }
+        "clock" => {
+            painter.circle_stroke(r.center(), r.width() * 0.36, s);
+            painter.line_segment([r.center(), p(r, 0.5, 0.26)], s);
+            painter.line_segment([r.center(), p(r, 0.68, 0.5)], s);
+        }
+        "count_off" => {
+            // A metronome body with a swinging arm.
+            painter.add(Shape::convex_polygon(vec![p(r, 0.3, 0.88), p(r, 0.7, 0.88), p(r, 0.6, 0.14), p(r, 0.4, 0.14)], Color32::TRANSPARENT, s));
+            painter.line_segment([p(r, 0.5, 0.74), p(r, 0.7, 0.26)], s);
+            painter.circle_filled(p(r, 0.62, 0.44), r.width() * 0.07, c);
+        }
+        "pre_post" => {
+            // A span with brackets at both ends: the roll before and after the take.
+            painter.line_segment([p(r, 0.14, 0.5), p(r, 0.86, 0.5)], s);
+            for (x, dx) in [(0.14, 0.12), (0.86, -0.12)] {
+                painter.line_segment([p(r, x, 0.24), p(r, x, 0.76)], s);
+                painter.line_segment([p(r, x, 0.24), p(r, x + dx, 0.24)], s);
+                painter.line_segment([p(r, x, 0.76), p(r, x + dx, 0.76)], s);
+            }
+        }
+        "float" => {
+            // A small window lifting out of a larger frame.
+            painter.rect_stroke(Rect::from_min_max(p(r, 0.12, 0.3), p(r, 0.62, 0.84)), 1.0, s, egui::StrokeKind::Middle);
+            painter.rect_filled(Rect::from_min_max(p(r, 0.42, 0.14), p(r, 0.9, 0.58)), 1.0, c);
+        }
+        "dock" => {
+            // A bar attached along the bottom of a frame.
+            painter.rect_stroke(Rect::from_min_max(p(r, 0.12, 0.16), p(r, 0.88, 0.84)), 1.0, s, egui::StrokeKind::Middle);
+            painter.rect_filled(Rect::from_min_max(p(r, 0.12, 0.6), p(r, 0.88, 0.84)), 1.0, c);
+        }
+        "close" => {
+            painter.line_segment([p(r, 0.28, 0.28), p(r, 0.72, 0.72)], s);
+            painter.line_segment([p(r, 0.72, 0.28), p(r, 0.28, 0.72)], s);
+        }
         "keyboard" => {
             // Piano keys: an outlined body, three white-key dividers, two black keys.
             let body = Rect::from_min_max(p(r, 0.1, 0.25), p(r, 0.9, 0.75));

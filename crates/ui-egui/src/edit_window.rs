@@ -41,8 +41,9 @@ pub fn edit_columns(s: &Session) -> Vec<Column> {
     COLUMNS.into_iter().filter(|c| all || s.edit.flag(&format!("edit_view.{}", c.0))).collect()
 }
 
-pub fn header_width(cols: &[Column]) -> f32 {
-    HEADER_W + cols.iter().map(|c| c.3).sum::<f32>()
+/// Width of the header column plus its optional columns, for a base width of `base`.
+pub fn header_width(cols: &[Column], base: f32) -> f32 {
+    base + cols.iter().map(|c| c.3).sum::<f32>()
 }
 pub const RULER_H: f32 = 17.0;
 
@@ -53,6 +54,8 @@ pub struct EditLayout {
     pub rows: Vec<(u64, [f32; 4])>,
     pub scroll_y: f32,
     pub content_h: f32,
+    /// Width of the header column this frame (0: the default), see `header_width`.
+    pub header_base: f32,
     /// While Zoom Toggle is on: the vertical scroll to go back to.
     zoom_back: Option<f32>,
     /// Follow-hold: the view was moved by something other than the playhead
@@ -109,12 +112,7 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
     drive_drag(app, ui.ctx());
     egui::Panel::top("edit_toolbar").exact_size(toolbar::HEIGHT).frame(egui::Frame::NONE.fill(t.toolbar_bg)).show(ui, |ui| toolbar::show(app, ui));
     egui::Panel::bottom("edit_status").exact_size(22.0).frame(egui::Frame::NONE.fill(t.toolbar_bg)).show(ui, |ui| status_bar(app, ui));
-    if app.ui.transport_position == crate::transport_bar::TransportPosition::Bottom {
-        egui::Panel::bottom("transport_bar")
-            .exact_size(crate::transport_bar::HEIGHT)
-            .frame(egui::Frame::NONE.fill(t.toolbar_bg))
-            .show(ui, |ui| crate::transport_bar::show(app, ui));
-    }
+    crate::transport_bar::show_docked(app, ui, "transport_bar");
     egui::Panel::bottom("lower_dock_tabs").exact_size(22.0).frame(egui::Frame::NONE.fill(t.panel_bg2)).show(ui, |ui| dock_tabs(app, ui));
     if app.ui.show_universe {
         egui::Panel::top("universe").exact_size(64.0).frame(egui::Frame::NONE.fill(Tokens::current().universe_bg)).show(ui, |ui| universe(app, ui));
@@ -164,23 +162,36 @@ fn universe(app: &mut SoundApp, ui: &mut Ui) {
 fn dock_tabs(app: &mut SoundApp, ui: &mut Ui) {
     let t = Tokens::current();
     let r = ui.max_rect();
-    let mut x = r.min.x + 10.0;
-    for (label, on, id) in [
-        ("MIDI EDITOR", app.ui.show_midi_editor, "window.midi_editor"),
-        ("MEMORY LOCATIONS", app.ui.show_memory_locations, "window.memory_locations"),
-        ("UNDO HISTORY", app.ui.show_undo_history, "window.undo_history"),
-    ] {
-        let g = ui.painter().layout_no_wrap(label.to_string(), bold(10.5), if on { Color32::WHITE } else { t.text_dim });
-        let tr = Rect::from_min_size(pos2(x, r.min.y + 2.0), vec2(g.size().x + 16.0, r.height() - 4.0));
+    let tab = |app: &mut SoundApp, ui: &mut Ui, x: f32, label: &str, on: bool, id: &str, from_right: bool| -> f32 {
+        let col = if on { t.accent_text } else { t.text_dim };
+        let g = ui.painter().layout_no_wrap(label.to_string(), bold(10.5), col);
+        let w = g.size().x + 16.0;
+        let x0 = if from_right { x - w } else { x };
+        let tr = Rect::from_min_size(pos2(x0, r.min.y + 2.0), vec2(w, r.height() - 4.0));
         if on {
             ui.painter().rect_filled(tr, 3.0, t.accent_dark);
         }
-        ui.painter().galley(pos2(tr.min.x + 8.0, tr.center().y - g.size().y * 0.5), g, Color32::WHITE);
-        if ui.interact(tr, ui.id().with(("dock", label)), Sense::click()).clicked() {
+        ui.painter().galley(pos2(tr.min.x + 8.0, tr.center().y - g.size().y * 0.5), g, col);
+        let resp = ui.interact(tr, ui.id().with(("dock", label)), Sense::click());
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+        if resp.clicked() {
             let _ = app.run(id, json!({}));
         }
-        x = tr.max.x + 6.0;
+        if from_right { x0 - 6.0 } else { tr.max.x + 6.0 }
+    };
+    // Left strip: the Tracks pane and the MIDI editor, then the other lists.
+    let mut x = r.min.x + 10.0;
+    for (label, on, id) in [
+        ("TRACK", app.ui.show_tracks_list, "window.track_list"),
+        ("EDITOR", app.ui.show_midi_editor, "window.midi_editor"),
+        ("MEMORY LOCATIONS", app.ui.show_memory_locations, "window.memory_locations"),
+        ("UNDO HISTORY", app.ui.show_undo_history, "window.undo_history"),
+    ] {
+        x = tab(app, ui, x, label, on, id, false);
     }
+    // Right strip: the Master panel (a loudness tab joins it once a live loudness meter exists).
+    let master = app.ui.show_master_panel;
+    tab(app, ui, r.max.x - 10.0, "MASTER", master, "window.master_panel", true);
 }
 
 fn status_bar(app: &mut SoundApp, ui: &mut Ui) {
@@ -217,7 +228,8 @@ pub(crate) fn main_area(app: &mut SoundApp, ui: &mut Ui) {
     if session.edit.flag("view.ruler.tempo_editor") && session.edit.rulers.iter().any(|ruler| ruler == "tempo") {
         ruler_height_total += ruler_height("tempo_editor");
     }
-    let minimum = vec2(header_width(&edit_columns(session)) + 64.0, ruler_height_total + 100.0);
+    let base = crate::header_width::live(app, ui.max_rect().width());
+    let minimum = vec2(header_width(&edit_columns(session), base) + 64.0, ruler_height_total + 100.0);
     crate::docking::minimum_body(ui, minimum, |ui| main_area_content(app, ui));
 }
 
@@ -235,7 +247,9 @@ fn main_area_content(app: &mut SoundApp, ui: &mut Ui) {
     let titles_h = if cols.is_empty() { 0.0 } else { COLUMN_TITLES_H };
     let rulers_h = rulers.iter().map(|r| ruler_height(r)).sum::<f32>() + 6.0 + titles_h;
     let hscroll_h = 14.0;
-    let hw = header_width(&cols);
+    let base = crate::header_width::live(app, full.width());
+    app.edit_layout.header_base = base;
+    let hw = header_width(&cols, base);
     let header = Rect::from_min_max(full.min, pos2(full.min.x + hw, full.max.y - hscroll_h));
     let tl = Rect::from_min_max(pos2(full.min.x + hw, full.min.y + rulers_h), pos2(full.max.x - 12.0, full.max.y - hscroll_h));
     let rulers_rect = Rect::from_min_max(pos2(full.min.x, full.min.y), pos2(full.max.x, full.min.y + rulers_h));
@@ -245,7 +259,7 @@ fn main_area_content(app: &mut SoundApp, ui: &mut Ui) {
     scroll_and_zoom(app, ui, full, tl);
     draw_rulers(app, ui, rulers_rect, tl, &rulers);
     views_button(app, ui, rulers_rect);
-    column_titles(ui, rulers_rect, &cols);
+    column_titles(ui, rulers_rect, &cols, base);
     // Tracks.
     let mut y = tl.min.y - app.edit_layout.scroll_y;
     app.edit_layout.rows.clear();
@@ -279,6 +293,7 @@ fn main_area_content(app: &mut SoundApp, ui: &mut Ui) {
     }
     overlay(app, ui, tl, Rect::from_min_max(pos2(tl.min.x, rulers_rect.min.y), tl.max));
     let _ = header;
+    crate::header_width::handle(app, ui, tl.min.x - 0.5, full.min.y, full.max.y - hscroll_h, full.width(), base);
     // Horizontal scrollbar.
     let sb = Rect::from_min_max(pos2(tl.min.x, full.max.y - hscroll_h), pos2(tl.max.x, full.max.y));
     hscrollbar(app, ui, sb, tl);
@@ -508,7 +523,7 @@ fn draw_rulers(app: &mut SoundApp, ui: &mut Ui, area: Rect, tl: Rect, rulers: &[
     for (i, id) in rulers.iter().enumerate() {
         let h = ruler_height(id);
         let row = Rect::from_min_max(pos2(tl.min.x, y0), pos2(tl.max.x, y0 + h));
-        let lab = Rect::from_min_max(pos2(area.min.x, y0), pos2(area.min.x + HEADER_W, y0 + h));
+        let lab = Rect::from_min_max(pos2(area.min.x, y0), pos2(area.min.x + app.edit_layout.header_base.max(1.0), y0 + h));
         y0 += h;
         let painter = ui.painter().with_clip_rect(row);
         ui.painter().text(pos2(lab.max.x - 12.0, lab.center().y), Align2::RIGHT_CENTER, ruler_label(id), bold(11.0), t.ruler_text);
@@ -770,14 +785,14 @@ fn timebase_ruler(
 }
 
 /// Captions over the header columns, boxed in their own row under the rulers.
-fn column_titles(ui: &Ui, rulers: Rect, cols: &[Column]) {
+fn column_titles(ui: &Ui, rulers: Rect, cols: &[Column], base: f32) {
     if cols.is_empty() {
         return;
     }
     let t = Tokens::current();
     let line = Stroke::new(1.0, t.border);
-    let mut x = rulers.min.x + HEADER_W;
-    let end = rulers.min.x + header_width(cols);
+    let mut x = rulers.min.x + base;
+    let end = rulers.min.x + header_width(cols, base);
     let row = Rect::from_min_max(pos2(x, rulers.max.y - COLUMN_TITLES_H - 3.0), pos2(end, rulers.max.y));
     ui.painter().rect_filled(row, 0.0, t.panel_bg2);
     ui.painter().hline(rulers.min.x..=end, row.min.y + 0.5, line);
@@ -824,7 +839,7 @@ fn track_row(app: &mut SoundApp, ui: &mut Ui, id: TrackId, row: Rect, tl: Rect, 
     // The automation lanes sit under the track's own rows; everything below draws in the top part.
     let full_row = row;
     let row = Rect::from_min_max(row.min, pos2(row.max.x, row.max.y - crate::auto_lanes_ui::total_height(track)));
-    let head = Rect::from_min_max(row.min, pos2(row.min.x + HEADER_W, row.max.y));
+    let head = Rect::from_min_max(row.min, pos2(row.min.x + app.edit_layout.header_base.max(1.0), row.max.y));
     let (head_bg, lane_bg) = crate::theme::track_backgrounds(track.color, selected, app.ui.track_tint);
     let mut x = head.max.x;
     for &(col, _, _, w) in cols {
@@ -1044,7 +1059,7 @@ fn track_header(app: &mut SoundApp, ui: &mut Ui, track: &Track, head: Rect, sele
     }
     // Name, highlighted when the track is selected, and the playlist menu beside it.
     let indent = folder_depth(app.engine.session(), track) as f32 * 10.0;
-    let name_r = at(16.0 + indent, 1.5, 97.0 - indent, 15.0);
+    let name_r = at(16.0 + indent, 1.5, head.width() - 39.0 - indent, 15.0);
     if selected {
         ui.painter().rect_filled(name_r, 2.0, t.name_field_sel);
     }

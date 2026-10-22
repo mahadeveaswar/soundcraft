@@ -14,7 +14,9 @@ pub mod edit_window;
 pub mod extra_windows;
 pub mod folder_ui;
 pub mod fonts;
+mod header_width;
 pub mod icons;
+mod master_panel;
 pub mod menus;
 pub mod midi_audition;
 pub mod midi_editor;
@@ -44,6 +46,9 @@ pub mod toolbar;
 pub mod track_add_menu;
 pub mod track_header_compact;
 pub mod transport_bar;
+pub mod transport_layout;
+mod transport_left;
+mod transport_right;
 pub mod video_track;
 pub mod video_window;
 pub mod waveform;
@@ -90,6 +95,8 @@ pub struct UiState {
     pub show_audio_health: bool,
     pub show_about: bool,
     pub show_midi_editor: bool,
+    /// The Master dock panel (Edit window): master meter and fader.
+    pub show_master_panel: bool,
     pub show_universe: bool,
     pub narrow_mix: bool,
     /// Mix window sections: inserts_ae, inserts_fj, sends_ae, sends_fj, io, comments, eq_curve, color.
@@ -141,8 +148,24 @@ pub struct UiState {
     pub theme: theme::ThemeMode,
     /// Edit-window track header look (`ui.header_style`): compact by default, classic on request.
     pub header_style: track_header_compact::HeaderStyle,
+    /// Width of the Edit window's track header column in points (`ui.header_width`).
+    pub header_w: f32,
     /// Where the transport controls live (`ui.transport_position`): bottom bar by default.
     pub transport_position: transport_bar::TransportPosition,
+    /// Whether the bottom or floating transport bar is shown (`ui.transport_visible`).
+    pub transport_visible: bool,
+    /// The floating bar's x, y, width and height (`ui.transport_position` with `rect`).
+    pub transport_float_rect: [f32; 4],
+    /// Set by a command that moved or sized the floating bar: the window takes the rectangle once.
+    #[serde(skip)]
+    pub transport_float_apply: bool,
+    /// Changes whenever a command re-places the floating bar, so its window state starts fresh.
+    #[serde(skip)]
+    pub transport_float_gen: u32,
+    /// Bar items the user hid in the gear menu (ids from `transport_layout::Item::id`).
+    pub transport_hidden_items: Vec<String>,
+    /// Format of the bar's second position readout.
+    pub transport_secondary_format: soundcraft_time::TimeFormat,
     /// The main window's size (logical points) and maximized state, and the interface scale, as
     /// the desktop app last saw them; it restores them at launch.
     pub window_size: [f32; 2],
@@ -168,6 +191,7 @@ impl Default for UiState {
             show_audio_health: false,
             show_about: false,
             show_midi_editor: false,
+            show_master_panel: false,
             show_universe: false,
             narrow_mix: false,
             mix_views: vec!["inserts_ae".into(), "sends_ae".into(), "io".into(), "color".into()],
@@ -207,7 +231,14 @@ impl Default for UiState {
             configurations: Vec::new(),
             theme: theme::ThemeMode::Dark,
             header_style: track_header_compact::HeaderStyle::default(),
+            header_w: edit_window::HEADER_W,
             transport_position: transport_bar::TransportPosition::default(),
+            transport_visible: true,
+            transport_float_rect: transport_bar::DEFAULT_FLOAT_RECT,
+            transport_float_apply: false,
+            transport_float_gen: 0,
+            transport_hidden_items: Vec::new(),
+            transport_secondary_format: soundcraft_time::TimeFormat::Timecode,
             window_size: [1600.0, 1000.0],
             window_maximized: false,
             ui_scale: 1.0,

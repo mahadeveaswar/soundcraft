@@ -28,6 +28,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str, Option<&str>)] = &[
     ("window.close", "Close Window", "Window > Close Window", Some("Cmd+W")),
     ("window.hide_floating", "Hide All Floating Windows", "Window > Hide All Floating Windows", Some("Cmd+Ctrl+W")),
     ("window.midi_editor", "MIDI Editor", "Window > MIDI Editor", None),
+    ("window.master_panel", "Master", "", None),
     ("window.universe", "Universe", "View > Other Displays > Universe", Some("Alt+7")),
     ("window.video", "Video", "Window > Video", Some("Cmd+9")),
     ("window.video_universe", "Video Universe", "Window > Video Universe", None),
@@ -75,7 +76,10 @@ pub const UI_COMMANDS: &[(&str, &str, &str, Option<&str>)] = &[
     ("ui.set", "Set UI State", "", None),
     ("ui.theme", "Appearance", "", None),
     ("ui.header_style", "Track Header Style", "", None),
+    ("ui.header_width", "Track Header Width", "", None),
     ("ui.transport_position", "Transport Position", "", None),
+    ("ui.transport_visible", "Transport Bar Visible", "", None),
+    ("ui.transport_item", "Transport Bar Item", "", None),
     ("ui.midi_tool", "MIDI Editor Tool", "", None),
     ("ui.midi_snap", "MIDI Editor Snap", "", None),
     ("ui.midi_lane_add", "MIDI Editor Add Lane", "", None),
@@ -385,6 +389,7 @@ fn checked_state(app: &SoundApp, path: &str, id: Option<&str>) -> bool {
         Some("window.memory_locations") => app.ui.show_memory_locations,
         Some("window.undo_history") => app.ui.show_undo_history,
         Some("window.midi_editor") => app.ui.show_midi_editor,
+        Some("window.master_panel") => app.ui.show_master_panel,
         Some("window.narrow_mix") => app.ui.narrow_mix,
         Some("window.renderer") => app.extra.show_renderer,
         Some("window.ui_customization") => app.extra.show_ui_customization,
@@ -529,8 +534,17 @@ pub fn run_ui_command(app: &mut SoundApp, id: &str, p: &Value) -> Option<Result<
     if id == "ui.header_style" {
         return Some(crate::track_header_compact::command(app, p));
     }
+    if id == "ui.header_width" {
+        return Some(crate::header_width::command(app, p));
+    }
     if id == "ui.transport_position" {
         return Some(crate::transport_bar::command(app, p));
+    }
+    if id == "ui.transport_visible" {
+        return Some(crate::transport_bar::visible_command(app, p));
+    }
+    if id == "ui.transport_item" {
+        return Some(crate::transport_bar::item_command(app, p));
     }
     if let Some(r) = crate::midi_editor_state::run_ui_command(app, id, p) {
         return Some(r);
@@ -586,6 +600,7 @@ pub fn run_ui_command(app: &mut SoundApp, id: &str, p: &Value) -> Option<Result<
         }
         "window.about" => toggle(&mut app.ui.show_about),
         "window.midi_editor" => toggle(&mut app.ui.show_midi_editor),
+        "window.master_panel" => toggle(&mut app.ui.show_master_panel),
         "window.midi_front" => {
             app.ui.show_midi_editor = true;
             json!({"value": true})
