@@ -12,7 +12,7 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
-fn parse_hex(s: &str) -> Option<[u8; 3]> {
+pub(super) fn parse_hex(s: &str) -> Option<[u8; 3]> {
     let h = s.strip_prefix('#').unwrap_or(s);
     if h.len() != 6 || !h.is_ascii() {
         return None;
@@ -21,7 +21,7 @@ fn parse_hex(s: &str) -> Option<[u8; 3]> {
     Some([c(0)?, c(2)?, c(4)?])
 }
 
-fn parse_color(v: &Value) -> Option<[u8; 3]> {
+pub(super) fn parse_color(v: &Value) -> Option<[u8; 3]> {
     match v {
         Value::String(s) => parse_hex(s),
         Value::Array(a) if a.len() == 3 => {

@@ -172,6 +172,105 @@ pub const TRACK_COLORS: [[u8; 3]; 16] = [
     [190, 120, 150],
 ];
 
+/// The extended picker palette: 12 hue columns (red to magenta) by 6 tone rows (pale, light, base,
+/// rich, deep, dark), then a row of 12 neutrals from light to dark. Original values. Sessions store
+/// RGB, so nothing about this table is persisted.
+pub const TRACK_PALETTE_EXT: [[u8; 3]; 84] = [
+    [242, 156, 156],
+    [242, 196, 156],
+    [242, 216, 156],
+    [242, 239, 156],
+    [207, 242, 156],
+    [156, 242, 173],
+    [156, 242, 229],
+    [156, 224, 242],
+    [156, 199, 242],
+    [156, 165, 242],
+    [189, 156, 242],
+    [242, 156, 223],
+    [228, 129, 129],
+    [228, 175, 129],
+    [228, 198, 129],
+    [228, 225, 129],
+    [188, 228, 129],
+    [129, 228, 149],
+    [129, 228, 213],
+    [129, 208, 228],
+    [129, 178, 228],
+    [129, 139, 228],
+    [167, 129, 228],
+    [228, 129, 207],
+    [214, 81, 81],
+    [214, 143, 81],
+    [214, 174, 81],
+    [214, 210, 81],
+    [161, 214, 81],
+    [81, 214, 108],
+    [81, 214, 194],
+    [81, 188, 214],
+    [81, 148, 214],
+    [81, 95, 214],
+    [132, 81, 214],
+    [214, 81, 186],
+    [202, 43, 43],
+    [202, 117, 43],
+    [202, 154, 43],
+    [202, 197, 43],
+    [138, 202, 43],
+    [43, 202, 75],
+    [43, 202, 178],
+    [43, 170, 202],
+    [43, 122, 202],
+    [43, 59, 202],
+    [104, 43, 202],
+    [202, 43, 167],
+    [169, 30, 30],
+    [169, 95, 30],
+    [169, 127, 30],
+    [169, 164, 30],
+    [113, 169, 30],
+    [30, 169, 58],
+    [30, 169, 148],
+    [30, 141, 169],
+    [30, 99, 169],
+    [30, 44, 169],
+    [83, 30, 169],
+    [169, 30, 139],
+    [114, 29, 29],
+    [114, 69, 29],
+    [114, 89, 29],
+    [114, 111, 29],
+    [80, 114, 29],
+    [29, 114, 46],
+    [29, 114, 101],
+    [29, 97, 114],
+    [29, 71, 114],
+    [29, 37, 114],
+    [61, 29, 114],
+    [114, 29, 96],
+    [230, 230, 230],
+    [213, 213, 213],
+    [196, 196, 196],
+    [179, 179, 179],
+    [163, 163, 163],
+    [146, 146, 146],
+    [129, 129, 129],
+    [113, 113, 113],
+    [96, 96, 96],
+    [79, 79, 79],
+    [63, 63, 63],
+    [46, 46, 46],
+];
+
+/// Palette index to colour: 0..16 is the default set, 16..100 the extended grid; else `None`.
+pub fn track_color_by_index(n: u64) -> Option<[u8; 3]> {
+    let n = usize::try_from(n).ok()?;
+    match n {
+        0..=15 => TRACK_COLORS.get(n).copied(),
+        _ => TRACK_PALETTE_EXT.get(n - 16).copied(),
+    }
+}
+
 /// A playlist: an alternative take of a track's clips.
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct Playlist {
@@ -331,6 +430,63 @@ impl Track {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn oklab(c: [u8; 3]) -> [f32; 3] {
+        let lin = |v: u8| {
+            let x = f32::from(v) / 255.0;
+            if x <= 0.04045 { x / 12.92 } else { ((x + 0.055) / 1.055).powf(2.4) }
+        };
+        let (r, g, b) = (lin(c[0]), lin(c[1]), lin(c[2]));
+        let l = (0.412_221_47 * r + 0.536_332_55 * g + 0.051_445_995 * b).cbrt();
+        let m = (0.211_903_5 * r + 0.680_699_5 * g + 0.107_396_96 * b).cbrt();
+        let s = (0.088_302_46 * r + 0.281_718_85 * g + 0.629_978_7 * b).cbrt();
+        [
+            0.210_454_26 * l + 0.793_617_8 * m - 0.004_072_047 * s,
+            1.977_998_5 * l - 2.428_592_2 * m + 0.450_593_7 * s,
+            0.025_904_037 * l + 0.782_771_77 * m - 0.808_675_77 * s,
+        ]
+    }
+
+    fn hue(c: [u8; 3]) -> f32 {
+        let (r, g, b) = (f32::from(c[0]), f32::from(c[1]), f32::from(c[2]));
+        let (mx, mn) = (r.max(g).max(b), r.min(g).min(b));
+        let d = mx - mn;
+        if d == 0.0 {
+            return 0.0;
+        }
+        let h = if mx == r {
+            ((g - b) / d).rem_euclid(6.0)
+        } else if mx == g {
+            (b - r) / d + 2.0
+        } else {
+            (r - g) / d + 4.0
+        };
+        h * 60.0
+    }
+
+    #[test]
+    fn extended_palette_is_distinct_and_hue_ordered() {
+        let p = TRACK_PALETTE_EXT;
+        for (i, a) in p.iter().enumerate() {
+            for b in &p[i + 1..] {
+                assert_ne!(a, b);
+                let (x, y) = (oklab(*a), oklab(*b));
+                let d = ((x[0] - y[0]).powi(2) + (x[1] - y[1]).powi(2) + (x[2] - y[2]).powi(2)).sqrt();
+                assert!(d > 0.04, "{a:?} and {b:?} are too close ({d})");
+            }
+        }
+        for row in p[..72].chunks(12) {
+            assert!(row.windows(2).all(|w| hue(w[0]) <= hue(w[1])), "row not in hue order");
+        }
+    }
+
+    #[test]
+    fn palette_index_mapping() {
+        assert_eq!(track_color_by_index(3), Some(TRACK_COLORS[3]));
+        assert_eq!(track_color_by_index(20), Some(TRACK_PALETTE_EXT[4]));
+        assert_eq!(track_color_by_index(99), Some(TRACK_PALETTE_EXT[83]));
+        assert_eq!(track_color_by_index(100), None);
+    }
 
     #[test]
     fn new_track_defaults() {
