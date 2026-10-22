@@ -13,7 +13,9 @@ const AUTO_UPDATE_SECS: f64 = 2.0;
 #[derive(Debug, Clone)]
 pub struct ExtraState {
     pub show_renderer: bool,
-    pub show_ui_customization: bool,
+    pub show_settings: bool,
+    pub settings_tab: crate::settings_cmds::SettingsTab,
+    pub(crate) prefs_synced: bool,
     pub auto_update_config: bool,
     pub ui_scale: f32,
     pub reduce_motion: bool,
@@ -26,7 +28,9 @@ impl Default for ExtraState {
     fn default() -> Self {
         Self {
             show_renderer: false,
-            show_ui_customization: false,
+            show_settings: false,
+            settings_tab: crate::settings_cmds::SettingsTab::default(),
+            prefs_synced: false,
             auto_update_config: false,
             ui_scale: 1.0,
             reduce_motion: false,
@@ -37,7 +41,7 @@ impl Default for ExtraState {
     }
 }
 
-/// UI commands handled here (`window.renderer`, `window.ui_customization`, `window.config_auto_update`).
+/// UI commands handled here (`window.renderer`, `window.config_auto_update`).
 pub fn run(app: &mut SoundApp, id: &str, p: &Value) -> Option<Value> {
     let flag = |v: &mut bool| {
         *v = p.get("value").and_then(Value::as_bool).unwrap_or(!*v);
@@ -45,13 +49,13 @@ pub fn run(app: &mut SoundApp, id: &str, p: &Value) -> Option<Value> {
     };
     Some(match id {
         "window.renderer" => flag(&mut app.extra.show_renderer),
-        "window.ui_customization" => flag(&mut app.extra.show_ui_customization),
         "window.config_auto_update" => flag(&mut app.extra.auto_update_config),
         _ => return None,
     })
 }
 
 pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
+    crate::settings_cmds::sync_on_load(app);
     auto_update(app, ctx);
     renderer(app, ctx);
     ui_customization(app, ctx);
@@ -146,7 +150,7 @@ fn renderer(app: &mut SoundApp, ctx: &egui::Context) {
 }
 
 fn ui_customization(app: &mut SoundApp, ctx: &egui::Context) {
-    let mut open = app.extra.show_ui_customization;
+    let mut open = app.extra.show_settings;
     if !open {
         return;
     }
@@ -210,5 +214,5 @@ fn ui_customization(app: &mut SoundApp, ctx: &egui::Context) {
             }
         },
     );
-    app.extra.show_ui_customization = open;
+    app.extra.show_settings = open;
 }
