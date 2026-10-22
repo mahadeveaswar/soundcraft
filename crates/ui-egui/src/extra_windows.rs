@@ -173,6 +173,19 @@ fn ui_customization(app: &mut SoundApp, ctx: &egui::Context) {
                     let _ = app.run("ui.theme", json!({"mode": mode.id()}));
                 }
                 ui.end_row();
+                ui.label("Track header");
+                let mut style = None;
+                egui::ComboBox::from_id_salt("header_style").selected_text(app.ui.header_style.label()).show_ui(ui, |ui| {
+                    for s in crate::track_header_compact::HeaderStyle::ALL {
+                        if ui.selectable_label(app.ui.header_style == s, s.label()).clicked() {
+                            style = Some(s);
+                        }
+                    }
+                });
+                if let Some(s) = style {
+                    let _ = app.run("ui.header_style", json!({"style": s.id()}));
+                }
+                ui.end_row();
                 ui.label("Auto-update configuration");
                 crate::widgets::checkbox(ui, &mut app.extra.auto_update_config, "");
                 ui.end_row();

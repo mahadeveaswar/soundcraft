@@ -74,6 +74,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str, Option<&str>)] = &[
     ("ui.bounce_dialog", "Bounce Mix…", "", None),
     ("ui.set", "Set UI State", "", None),
     ("ui.theme", "Appearance", "", None),
+    ("ui.header_style", "Track Header Style", "", None),
     ("ui.midi_tool", "MIDI Editor Tool", "", None),
     ("ui.midi_snap", "MIDI Editor Snap", "", None),
     ("ui.midi_lane_add", "MIDI Editor Add Lane", "", None),
@@ -261,6 +262,10 @@ pub fn menu_bar(app: &mut SoundApp, ui: &mut egui::Ui) {
                             if c.path == "Track > New..." {
                                 instrument_menu(app, ui);
                             }
+                        }
+                        if root.label == "View" {
+                            ui.separator();
+                            crate::track_header_compact::view_menu(app, ui);
                         }
                         if root.label == "AudioSuite" {
                             ui.separator();
@@ -519,6 +524,9 @@ pub fn run_ui_command(app: &mut SoundApp, id: &str, p: &Value) -> Option<Result<
     if matches!(id, "ui.dock" | "ui.dock.reset") {
         return Some(crate::docking::command(app, id == "ui.dock.reset", p));
     }
+    if id == "ui.header_style" {
+        return Some(crate::track_header_compact::command(app, p));
+    }
     if let Some(r) = crate::midi_editor_state::run_ui_command(app, id, p) {
         return Some(r);
     }
@@ -678,7 +686,7 @@ pub fn run_ui_command(app: &mut SoundApp, id: &str, p: &Value) -> Option<Result<
                 return Some(Ok(json!({"mode": app.ui.theme.id()})));
             };
             let Some(mode) = crate::theme::ThemeMode::parse(mode) else {
-                return Some(Err(format!("unknown theme `{mode}` (system, light or dark)")));
+                return Some(Err(format!("unknown theme `{mode}` (system, light, dark or midnight)")));
             };
             app.ui.theme = mode;
             json!({"mode": mode.id()})

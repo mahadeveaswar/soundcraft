@@ -19,7 +19,8 @@ fn harness() -> Harness<'static, SoundApp> {
     engine.execute("track.new", &json!({"name": "Voice"})).unwrap();
     engine.execute("track.new", &json!({"name": "Bass"})).unwrap();
     engine.execute("track.move_to_new_folder", &json!({"tracks": ["Bass"], "name": "Low"})).unwrap();
-    let app = SoundApp::new(engine, None, Services::default());
+    let mut app = SoundApp::new(engine, None, Services::default());
+    app.run("ui.header_style", json!({"style": "classic"})).unwrap();
     let mut h = Harness::builder().with_size(vec2(1400.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
         |ui, app: &mut SoundApp| {
             app.logic(&ui.ctx().clone());

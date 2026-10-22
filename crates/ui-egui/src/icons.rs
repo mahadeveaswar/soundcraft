@@ -182,6 +182,31 @@ pub fn draw(painter: &Painter, r: Rect, name: &str, c: Color32) {
                 painter.line_segment([p(r, x, 0.5 - h), p(r, x, 0.5 + h)], s);
             }
         }
+        "track_record" => {
+            painter.circle_filled(r.center(), r.width() * 0.26, c);
+        }
+        "track_monitor" => {
+            // A speaker: box, cone and two sound arcs.
+            painter.add(Shape::convex_polygon(
+                vec![p(r, 0.12, 0.38), p(r, 0.3, 0.38), p(r, 0.5, 0.2), p(r, 0.5, 0.8), p(r, 0.3, 0.62), p(r, 0.12, 0.62)],
+                c,
+                Stroke::NONE,
+            ));
+            for rad in [0.16f32, 0.3] {
+                let arc: Vec<Pos2> = (0..=8)
+                    .map(|i| {
+                        let a = -0.9 + 1.8 * i as f32 / 8.0;
+                        p(r, 0.52 + rad * a.cos(), 0.5 + rad * 1.1 * a.sin())
+                    })
+                    .collect();
+                painter.add(Shape::line(arc, Stroke::new(s.width * 0.8, c)));
+            }
+        }
+        "track_edit" => {
+            // A pencil on a diagonal: body, tip and a base line.
+            painter.add(Shape::convex_polygon(vec![p(r, 0.66, 0.14), p(r, 0.86, 0.34), p(r, 0.4, 0.8), p(r, 0.2, 0.6)], c, Stroke::NONE));
+            painter.add(Shape::convex_polygon(vec![p(r, 0.18, 0.64), p(r, 0.36, 0.82), p(r, 0.1, 0.9)], c, Stroke::NONE));
+        }
         _ => {
             painter.rect_stroke(r.shrink(r.width() * 0.25), 1.0, s, egui::StrokeKind::Middle);
         }

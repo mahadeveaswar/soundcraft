@@ -290,7 +290,7 @@ fn main_area_content(app: &mut SoundApp, ui: &mut Ui) {
     }
 }
 
-fn in_edit_window(s: &Session, t: &Track) -> bool {
+pub(crate) fn in_edit_window(s: &Session, t: &Track) -> bool {
     ops::shown(s, t)
 }
 
@@ -301,7 +301,7 @@ pub(crate) fn height_targets(s: &Session, m: egui::Modifiers, own: &[TrackId]) -
 }
 
 /// How many folders this track sits in, for the name's indent (at most 6 shown).
-fn folder_depth(s: &Session, track: &Track) -> usize {
+pub(crate) fn folder_depth(s: &Session, track: &Track) -> usize {
     let mut current = track.folder;
     let mut depth = 0;
     while let Some(folder) = current.and_then(|folder| s.track(folder))
@@ -909,8 +909,43 @@ fn playlist_lanes(app: &mut SoundApp, ui: &mut Ui, track: &Track, row: Rect, mai
     }
 }
 
-fn track_header(app: &mut SoundApp, ui: &mut Ui, track: &Track, head: Rect, selected: bool, head_bg: Color32) {
-    let t = Tokens::current();
+/// Drag a track's name plate to reorder tracks: the drop line while dragging, `track.move` on release.
+pub(crate) fn name_drag_reorder(app: &mut SoundApp, ui: &mut Ui, head: Rect, id: TrackId, nresp: &egui::Response) {
+    // Drag the name plate to reorder tracks.
+    if nresp.dragged()
+        && let Some(p) = ui.ctx().pointer_latest_pos()
+    {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        let line_y = app
+            .edit_layout
+            .rows
+            .iter()
+            .map(|(_, r)| r[1])
+            .chain(app.edit_layout.rows.last().map(|(_, r)| r[3]))
+            .min_by_key(|y| ((y - p.y).abs() * 10.0) as i64)
+            .unwrap_or(p.y);
+        ui.ctx()
+            .layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("reorder")))
+            .line_segment([pos2(head.min.x, line_y), pos2(head.max.x + 600.0, line_y)], Stroke::new(3.0, Tokens::current().accent));
+    }
+    if nresp.drag_stopped()
+        && let Some(p) = ui.ctx().pointer_latest_pos()
+    {
+        let rows = app.edit_layout.rows.clone();
+        let target_row = rows.iter().position(|(_, r)| p.y < (r[1] + r[3]) * 0.5).unwrap_or(rows.len());
+        // Convert the visible-row index to a session index.
+        let s = app.engine.session();
+        let to = rows.get(target_row).and_then(|(tid, _)| s.track_index(TrackId(*tid))).unwrap_or(s.tracks.len());
+        let from = s.track_index(id).unwrap_or(0);
+        let to = if to > from { to - 1 } else { to };
+        if to != from {
+            let _ = app.run("track.move", json!({"track": id.0, "to": to}));
+        }
+    }
+}
+
+/// Drag the bottom edge of a track header to resize the track (snaps to the height presets).
+pub(crate) fn header_resize_edge(app: &mut SoundApp, ui: &mut Ui, track: &Track, head: Rect) {
     let id = track.id;
     // Drag the bottom edge to resize (snaps to the height presets).
     let edge = Rect::from_min_max(pos2(head.min.x, head.max.y - 4.0), pos2(head.max.x, head.max.y + 2.0));
@@ -940,6 +975,15 @@ fn track_header(app: &mut SoundApp, ui: &mut Ui, track: &Track, head: Rect, sele
             ui.ctx().request_repaint();
         }
     }
+}
+
+fn track_header(app: &mut SoundApp, ui: &mut Ui, track: &Track, head: Rect, selected: bool, head_bg: Color32) {
+    if app.ui.header_style == crate::track_header_compact::HeaderStyle::Compact {
+        return crate::track_header_compact::show(app, ui, track, head, selected, head_bg);
+    }
+    let t = Tokens::current();
+    let id = track.id;
+    header_resize_edge(app, ui, track, head);
     let h = head.height();
     // Click on header background selects the track.
     let bg = ui.interact(head, ui.id().with(("hdr", id.0)), Sense::click());
@@ -1008,37 +1052,7 @@ fn track_header(app: &mut SoundApp, ui: &mut Ui, track: &Track, head: Rect, sele
         click_track(app, id, ui.input(|i| i.modifiers), in_edit_window);
     }
     nresp.context_menu(|ui| track_context_menu(app, ui, id));
-    // Drag the name plate to reorder tracks.
-    if nresp.dragged()
-        && let Some(p) = ui.ctx().pointer_latest_pos()
-    {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-        let line_y = app
-            .edit_layout
-            .rows
-            .iter()
-            .map(|(_, r)| r[1])
-            .chain(app.edit_layout.rows.last().map(|(_, r)| r[3]))
-            .min_by_key(|y| ((y - p.y).abs() * 10.0) as i64)
-            .unwrap_or(p.y);
-        ui.ctx()
-            .layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("reorder")))
-            .line_segment([pos2(head.min.x, line_y), pos2(head.max.x + 600.0, line_y)], Stroke::new(3.0, Tokens::current().accent));
-    }
-    if nresp.drag_stopped()
-        && let Some(p) = ui.ctx().pointer_latest_pos()
-    {
-        let rows = app.edit_layout.rows.clone();
-        let target_row = rows.iter().position(|(_, r)| p.y < (r[1] + r[3]) * 0.5).unwrap_or(rows.len());
-        // Convert the visible-row index to a session index.
-        let s = app.engine.session();
-        let to = rows.get(target_row).and_then(|(tid, _)| s.track_index(TrackId(*tid))).unwrap_or(s.tracks.len());
-        let from = s.track_index(id).unwrap_or(0);
-        let to = if to > from { to - 1 } else { to };
-        if to != from {
-            let _ = app.run("track.move", json!({"track": id.0, "to": to}));
-        }
-    }
+    name_drag_reorder(app, ui, head, id, &nresp);
     let pl_r = at(114.0, 1.0, 11.0, 14.5);
     let presp = ui.interact(pl_r, ui.id().with(("pl", id.0)), Sense::click());
     ui.painter().rect_filled(pl_r, 1.5, shade(head_bg, if presp.hovered() { -0.2 } else { -0.35 }));
@@ -1221,7 +1235,7 @@ fn header_selector(ui: &Ui, r: Rect, id: egui::Id, text: &str, color: Color32, m
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum HeaderKey {
+pub(crate) enum HeaderKey {
     Rec,
     Input,
     Solo,
@@ -1230,7 +1244,7 @@ enum HeaderKey {
 
 /// Record, input, solo or mute: `lit` gives the key its colour, `implied` a dark shade of it (a
 /// mute that another track's solo implies). Record keys stay dark red when off, as in Pro Tools.
-fn header_toggle(ui: &Ui, r: Rect, track: TrackId, key: HeaderKey, lit: bool, implied: bool) -> egui::Response {
+pub(crate) fn header_toggle(ui: &Ui, r: Rect, track: TrackId, key: HeaderKey, lit: bool, implied: bool) -> egui::Response {
     let t = Tokens::current();
     let (label, color) = match key {
         HeaderKey::Rec => ("Record enable", t.rec),
@@ -1268,7 +1282,7 @@ fn header_toggle(ui: &Ui, r: Rect, track: TrackId, key: HeaderKey, lit: bool, im
 }
 
 /// The header's level meter: black-rimmed bars, dim where unlit, with a clip light on top.
-fn header_meter(ui: &Ui, r: Rect, md: &crate::MeterDisplay, stereo: bool) {
+pub(crate) fn header_meter(ui: &Ui, r: Rect, md: &crate::MeterDisplay, stereo: bool) {
     let t = Tokens::current();
     let p = ui.painter();
     p.rect_filled(r, 0.0, Color32::BLACK);
@@ -1508,17 +1522,18 @@ fn grid_lines(painter: &egui::Painter, s: &Session, tl: Rect, lane: Rect) {
     let bar = GridValue::Note { value: NoteValue::Bar, dotted: false, triplet: false };
     let bar_px = bar.step_samples(view.start, sr, &s.tempo, s.frame_rate) as f64 / s.edit.zoom.samples_per_px;
     if bar_px > 6.0 {
-        let col = grid_veil(t.bar_line, t.playlist_bg);
+        let col = grid_veil(t.grid_bar, t.playlist_bg);
         for at in bar.lines(view.start, view.end, sr, &s.tempo, s.frame_rate, 600) {
             let x = x_of(s, tl, at);
             painter.line_segment([pos2(x, lane.min.y), pos2(x, lane.max.y)], Stroke::new(1.0, col));
         }
     }
-    if s.edit.grid_lines {
-        let step_px = s.edit.grid.step_samples(view.start, sr, &s.tempo, s.frame_rate) as f64 / s.edit.zoom.samples_per_px;
+    if s.edit.grid_lines || t.grid_beat_always {
+        let grid = if s.edit.grid_lines { s.edit.grid } else { GridValue::Note { value: NoteValue::Quarter, dotted: false, triplet: false } };
+        let step_px = grid.step_samples(view.start, sr, &s.tempo, s.frame_rate) as f64 / s.edit.zoom.samples_per_px;
         if step_px > 7.0 {
-            let col = grid_veil(t.grid_line, t.playlist_bg);
-            for at in s.edit.grid.lines(view.start, view.end, sr, &s.tempo, s.frame_rate, 2000) {
+            let col = grid_veil(t.grid_beat, t.playlist_bg);
+            for at in grid.lines(view.start, view.end, sr, &s.tempo, s.frame_rate, 2000) {
                 let x = x_of(s, tl, at);
                 painter.line_segment([pos2(x, lane.min.y), pos2(x, lane.max.y)], Stroke::new(1.0, col));
             }
@@ -1596,6 +1611,13 @@ fn draw_live_take(app: &SoundApp, painter: &egui::Painter, s: &Session, track: &
 
 /// The translucent white or black that turns `bg` into `line`, so grid lines also show over clips.
 fn grid_veil(line: Color32, bg: Color32) -> Color32 {
+    // A tinted line (Midnight) keeps its hue: a 65 percent colour that turns `bg` into `line`.
+    let spread = |c: Color32| c.r().max(c.g()).max(c.b()) - c.r().min(c.g()).min(c.b());
+    if spread(line) > 16 {
+        let k = 0.65_f32;
+        let ch = |l: u8, b: u8| ((f32::from(l) - f32::from(b) * (1.0 - k)) / k).clamp(0.0, 255.0).round() as u8;
+        return Color32::from_rgba_unmultiplied(ch(line.r(), bg.r()), ch(line.g(), bg.g()), ch(line.b(), bg.b()), (k * 255.0).round() as u8);
+    }
     let level = |c: Color32| (f32::from(c.r()) + f32::from(c.g()) + f32::from(c.b())) / 3.0;
     let (l, b) = (level(line), level(bg));
     if l > b {
@@ -1621,7 +1643,7 @@ fn draw_clip(app: &SoundApp, painter: &egui::Painter, s: &Session, track: &Track
         wave = Color32::from_rgb(70, 70, 70);
     }
     let body = if s.edit.flag("view.clip.transparency") { body.gamma_multiply(0.55) } else { body };
-    painter.rect(r, CornerRadius::same(2), body, Stroke::new(1.0, Color32::from_rgb(10, 10, 10)), StrokeKind::Inside);
+    painter.rect(r, CornerRadius::same(2), body, Stroke::new(1.0, crate::theme::clip_outline(color)), StrokeKind::Inside);
     let name_h = clip_name_height(s, lane);
     if name_h > 0.0 {
         let nb = Rect::from_min_max(r.min, pos2(r.max.x, r.min.y + name_h));
@@ -1688,7 +1710,7 @@ fn draw_clip(app: &SoundApp, painter: &egui::Painter, s: &Session, track: &Track
                 p.rect_filled(
                     Rect::from_min_max(pos2(nx0, y - nh * 0.5), pos2(nx1, y + nh * 0.5)),
                     1.0,
-                    if selected { Color32::from_rgb(16, 16, 16) } else { vcol },
+                    if selected && Tokens::current().clip_fill_alpha == 255 { Color32::from_rgb(16, 16, 16) } else { vcol },
                 );
             }
         }
@@ -2850,7 +2872,9 @@ mod tests {
     }
 
     fn harness_with(engine: soundcraft_engine::Engine) -> Harness<'static, SoundApp> {
-        let app = SoundApp::new(engine, None, crate::Services::default());
+        let mut app = SoundApp::new(engine, None, crate::Services::default());
+        // These tests drive the classic header's controls by position.
+        app.ui.header_style = crate::track_header_compact::HeaderStyle::Classic;
         let builder = Harness::builder().with_size(vec2(1400.0, 900.0)).with_step_dt(1.0 / 60.0);
         let builder = if std::env::var_os("SOUNDCRAFT_FADE_SHOTS").is_some() { builder.wgpu() } else { builder };
         let mut h = builder.build_ui_state(

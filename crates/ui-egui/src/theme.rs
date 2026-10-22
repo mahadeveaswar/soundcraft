@@ -1,10 +1,15 @@
 //! Design tokens. Colours were chosen by eye to give a dark, studio-style look; they are ours.
 
 use egui::{Color32, FontFamily, FontId};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 
-/// Whether the Light palette is active. Dark is the default (the incumbent is dark-only).
-static LIGHT_THEME: AtomicBool = AtomicBool::new(false);
+/// Palette indexes: Dark is the default, Light and Midnight are opt-in.
+pub const PALETTE_DARK: u8 = 0;
+pub const PALETTE_LIGHT: u8 = 1;
+pub const PALETTE_MIDNIGHT: u8 = 2;
+
+/// The active palette index (`PALETTE_DARK`, `PALETTE_LIGHT` or `PALETTE_MIDNIGHT`).
+static PALETTE: AtomicU8 = AtomicU8::new(PALETTE_DARK);
 
 /// Unit tests that change or read the process-wide palette must own it until their assertions
 /// finish. The lock is re-entrant per thread, so a test may hold it and still build apps
@@ -74,16 +79,19 @@ pub enum ThemeMode {
     Light,
     #[default]
     Dark,
+    /// A second dark palette: near-black blue-grey, bright grid, translucent clips.
+    Midnight,
 }
 
 impl ThemeMode {
-    pub const ALL: [Self; 3] = [Self::Dark, Self::Light, Self::System];
+    pub const ALL: [Self; 4] = [Self::Dark, Self::Midnight, Self::Light, Self::System];
 
     pub const fn label(self) -> &'static str {
         match self {
             Self::System => "System",
             Self::Light => "Light",
             Self::Dark => "Dark",
+            Self::Midnight => "Midnight",
         }
     }
 
@@ -93,6 +101,7 @@ impl ThemeMode {
             Self::System => "system",
             Self::Light => "light",
             Self::Dark => "dark",
+            Self::Midnight => "midnight",
         }
     }
 
@@ -225,6 +234,15 @@ pub struct Tokens {
     pub midi_vel_lo: Color32,
     pub midi_vel_mid: Color32,
     pub midi_vel_hi: Color32,
+    /// Clip body fill opacity (0..=255), normal and selected. 255 is an opaque body (Dark, Light);
+    /// lower values give translucent clips with a solid outline and header strip.
+    pub clip_fill_alpha: u8,
+    pub clip_fill_alpha_selected: u8,
+    /// Timeline grid: bar lines and beat (grid step) lines.
+    pub grid_bar: Color32,
+    pub grid_beat: Color32,
+    /// Draw the beat lines even while View > Grid Lines is off.
+    pub grid_beat_always: bool,
 }
 
 impl Tokens {
@@ -322,6 +340,11 @@ impl Tokens {
         midi_vel_lo: Color32::from_rgb(70, 112, 228),
         midi_vel_mid: Color32::from_rgb(200, 84, 172),
         midi_vel_hi: Color32::from_rgb(238, 62, 62),
+        clip_fill_alpha: 255,
+        clip_fill_alpha_selected: 255,
+        grid_bar: Color32::from_rgb(66, 66, 70),
+        grid_beat: Color32::from_rgb(52, 52, 54),
+        grid_beat_always: false,
     };
 
     pub const LIGHT: Tokens = Tokens {
@@ -418,24 +441,143 @@ impl Tokens {
         midi_vel_lo: Color32::from_rgb(48, 88, 200),
         midi_vel_mid: Color32::from_rgb(176, 58, 148),
         midi_vel_hi: Color32::from_rgb(210, 40, 40),
+        clip_fill_alpha: 255,
+        clip_fill_alpha_selected: 255,
+        grid_bar: Color32::from_rgb(162, 166, 172),
+        grid_beat: Color32::from_rgb(188, 191, 196),
+        grid_beat_always: false,
+    };
+
+    /// Midnight: near-black blue-grey panels, bright bar and beat grid, translucent clips and a
+    /// cyan accent. Signals (record, mute, meters) keep the Dark values.
+    pub const MIDNIGHT: Tokens = Tokens {
+        window_bg: Color32::from_rgb(13, 15, 20),
+        panel_bg: Color32::from_rgb(18, 20, 27),
+        panel_bg2: Color32::from_rgb(24, 27, 36),
+        toolbar_bg: Color32::from_rgb(14, 16, 22),
+        toolbar_group: Color32::from_rgb(10, 12, 17),
+        border: Color32::from_rgb(4, 5, 8),
+        border_light: Color32::from_rgb(44, 50, 64),
+        edge_light: Color32::from_rgba_premultiplied(22, 24, 30, 22),
+        text: Color32::from_rgb(216, 222, 232),
+        text_dim: Color32::from_rgb(136, 146, 164),
+        text_dark: Color32::from_rgb(8, 10, 14),
+        header_text: Color32::from_rgb(196, 204, 216),
+        counter_bg: Color32::from_rgb(2, 3, 6),
+        counter_text: Color32::from_rgb(96, 226, 232),
+        counter_label: Color32::from_rgb(196, 204, 216),
+        accent: Color32::from_rgb(24, 148, 178),
+        accent_dark: Color32::from_rgb(16, 100, 124),
+        button: Color32::from_rgb(36, 41, 54),
+        button_hi: Color32::from_rgb(52, 59, 76),
+        button_border: Color32::from_rgb(8, 10, 14),
+        name_field: Color32::from_rgb(206, 212, 224),
+        name_field_sel: Color32::from_rgb(232, 236, 244),
+        ruler_bg: Color32::from_rgb(20, 23, 31),
+        ruler_label_bg: Color32::from_rgb(20, 23, 31),
+        ruler_text: Color32::from_rgb(170, 180, 198),
+        ruler_tick: Color32::from_rgb(84, 96, 120),
+        tempo_ruler: Color32::from_rgb(40, 120, 100),
+        meter_ruler: Color32::from_rgb(40, 100, 150),
+        marker_ruler: Color32::from_rgb(22, 25, 34),
+        playlist_bg: Color32::from_rgb(11, 13, 18),
+        playlist_alt: Color32::from_rgb(15, 18, 25),
+        grid_line: Color32::from_rgb(44, 52, 70),
+        bar_line: Color32::from_rgb(86, 100, 132),
+        selection: Color32::from_rgba_premultiplied(24, 64, 96, 110),
+        playhead: Color32::from_rgb(255, 92, 72),
+        fader_track: Color32::from_rgb(6, 7, 10),
+        strip_bg: Color32::from_rgb(22, 25, 33),
+        strip_section: Color32::from_rgb(16, 18, 25),
+        slot_bg: Color32::from_rgb(13, 15, 21),
+        lane_bg: Color32::from_rgb(12, 14, 19),
+        roll_row_black: Color32::from_rgb(10, 12, 17),
+        roll_row_white: Color32::from_rgb(17, 20, 28),
+        roll_grid: Color32::from_rgb(40, 48, 64),
+        roll_octave: Color32::from_rgb(62, 74, 98),
+        roll_bar: Color32::from_rgb(92, 108, 140),
+        lane_zero: Color32::from_rgb(56, 66, 88),
+        lane_label: Color32::from_rgb(140, 152, 174),
+        menu_bar: Color32::from_rgb(9, 10, 14),
+        group_border: Color32::from_rgb(4, 5, 8),
+        mode_off: Color32::from_rgb(14, 30, 30),
+        counter_off: Color32::from_rgb(22, 44, 44),
+        counter_border: Color32::from_rgb(40, 46, 60),
+        counter_rule: Color32::from_rgb(30, 35, 46),
+        tool_bracket_off: Color32::from_rgb(52, 58, 74),
+        row_selected: Color32::from_rgb(30, 62, 84),
+        visible_dot: Color32::from_rgb(190, 200, 214),
+        header_selected: Color32::from_rgb(26, 40, 56),
+        strip_selected: Color32::from_rgb(28, 42, 58),
+        marker_text: Color32::from_rgb(236, 240, 246),
+        playlist_lane: Color32::from_rgb(14, 16, 22),
+        universe_bg: Color32::from_rgb(8, 10, 14),
+        meter_bg: Color32::from_rgb(5, 6, 10),
+        meter_clip_off: Color32::from_rgb(58, 22, 26),
+        knob_bg: Color32::from_rgb(16, 18, 24),
+        knob_ring: Color32::from_rgb(130, 142, 164),
+        knob_pointer: Color32::from_rgb(230, 236, 244),
+        section_label: Color32::from_rgb(190, 200, 216),
+        slot_well: Color32::from_rgb(22, 25, 33),
+        slot_empty: Color32::from_rgb(19, 22, 29),
+        slot_face: [Color32::from_rgb(70, 80, 100), Color32::from_rgb(56, 64, 82)],
+        slot_bypassed: [Color32::from_rgb(30, 92, 128), Color32::from_rgb(22, 70, 100)],
+        slot_mark: Color32::from_rgb(150, 162, 184),
+        midi_vel_lo: Color32::from_rgb(40, 180, 220),
+        midi_vel_mid: Color32::from_rgb(170, 90, 230),
+        midi_vel_hi: Color32::from_rgb(255, 80, 110),
+        clip_fill_alpha: 112,
+        clip_fill_alpha_selected: 168,
+        grid_bar: Color32::from_rgb(86, 100, 132),
+        grid_beat: Color32::from_rgb(44, 52, 70),
+        grid_beat_always: true,
+        ..Tokens::DARK
     };
 
     pub fn current() -> Tokens {
-        if is_light() { Self::LIGHT } else { Self::DARK }
+        Self::for_palette(palette())
     }
+
+    /// The tokens of a palette index; unknown indexes use Dark.
+    pub const fn for_palette(index: u8) -> Tokens {
+        match index {
+            PALETTE_LIGHT => Self::LIGHT,
+            PALETTE_MIDNIGHT => Self::MIDNIGHT,
+            _ => Self::DARK,
+        }
+    }
+}
+
+/// The active palette index.
+pub fn palette() -> u8 {
+    PALETTE.load(Ordering::Relaxed)
 }
 
 /// Whether the Light palette is the active one.
 pub fn is_light() -> bool {
-    LIGHT_THEME.load(Ordering::Relaxed)
+    palette() == PALETTE_LIGHT
+}
+
+/// Whether the Midnight palette is the active one.
+pub fn is_midnight() -> bool {
+    palette() == PALETTE_MIDNIGHT
 }
 
 /// Resolve each frame from the integration's current OS appearance. Unknown uses Dark.
 pub fn wants_light(ctx: &egui::Context, mode: ThemeMode) -> bool {
     match mode {
         ThemeMode::Light => true,
-        ThemeMode::Dark => false,
+        ThemeMode::Dark | ThemeMode::Midnight => false,
         ThemeMode::System => ctx.system_theme() == Some(egui::Theme::Light),
+    }
+}
+
+/// The palette index a mode resolves to this frame (System follows the OS appearance).
+pub fn wants_palette(ctx: &egui::Context, mode: ThemeMode) -> u8 {
+    match mode {
+        ThemeMode::Midnight => PALETTE_MIDNIGHT,
+        other if wants_light(ctx, other) => PALETTE_LIGHT,
+        _ => PALETTE_DARK,
     }
 }
 
@@ -461,6 +603,14 @@ pub fn clip_colors(rgb: [u8; 3], selected: bool) -> (Color32, Color32, Color32) 
         let t = |c: u8| (f32::from(c) + (255.0 - f32::from(c)) * k) as u8;
         Color32::from_rgb(t(r), t(g), t(b))
     };
+    let tk = Tokens::current();
+    if tk.clip_fill_alpha < 255 {
+        // A translucent body in the clip colour (the grid shows through), a solid header strip and
+        // a bright waveform; `clip_outline` gives the solid outline.
+        let alpha = if selected { tk.clip_fill_alpha_selected } else { tk.clip_fill_alpha };
+        let body = Color32::from_rgba_unmultiplied(r, g, b, alpha);
+        return (body, Color32::from_rgb(r, g, b), if selected { tint(0.8) } else { tint(0.5) });
+    }
     let bar = shade(0.9);
     if is_light() {
         // A paler body and a waveform in a deep shade of the clip's own colour.
@@ -468,6 +618,11 @@ pub fn clip_colors(rgb: [u8; 3], selected: bool) -> (Color32, Color32, Color32) 
     }
     // A dark body and a light waveform in the clip's own colour; selection inverts them.
     if selected { (shade(0.7), bar, Color32::from_rgb(16, 16, 18)) } else { (shade(0.34), bar, tint(0.35)) }
+}
+
+/// The outline of a clip body: near-black for opaque palettes, the clip colour for translucent ones.
+pub fn clip_outline(color: [u8; 3]) -> Color32 {
+    if Tokens::current().clip_fill_alpha < 255 { rgb(color) } else { Color32::from_rgb(10, 10, 10) }
 }
 
 pub fn rgb(c: [u8; 3]) -> Color32 {
@@ -488,7 +643,13 @@ pub fn mono(size: f32) -> FontId {
 
 /// Make `light` (or dark) the active palette and apply its visuals. Call only when it changes.
 pub fn apply(ctx: &egui::Context, light: bool) {
-    LIGHT_THEME.store(light, Ordering::Relaxed);
+    apply_palette(ctx, if light { PALETTE_LIGHT } else { PALETTE_DARK });
+}
+
+/// Make the palette with this index the active one and apply its visuals.
+pub fn apply_palette(ctx: &egui::Context, index: u8) {
+    PALETTE.store(index, Ordering::Relaxed);
+    let light = index == PALETTE_LIGHT;
     let t = Tokens::current();
     let mut v = if light { egui::Visuals::light() } else { egui::Visuals::dark() };
     v.panel_fill = t.panel_bg;
@@ -568,6 +729,82 @@ mod tests {
         }
         assert_eq!(ThemeMode::parse(" Light "), Some(ThemeMode::Light));
         assert_eq!(ThemeMode::parse("sepia"), None);
+    }
+
+    #[test]
+    fn midnight_round_trips_and_selects_its_palette() {
+        let _palette = lock_test_palette();
+        assert_eq!(ThemeMode::parse("midnight"), Some(ThemeMode::Midnight));
+        assert_eq!(ThemeMode::Midnight.id(), "midnight");
+        let old: UiState = serde_json::from_value(json!({"theme": "midnight"})).unwrap();
+        assert_eq!(old.theme, ThemeMode::Midnight);
+        let ctx = egui::Context::default();
+        for (mode, index) in [(ThemeMode::Dark, PALETTE_DARK), (ThemeMode::Light, PALETTE_LIGHT), (ThemeMode::Midnight, PALETTE_MIDNIGHT)] {
+            assert_eq!(wants_palette(&ctx, mode), index);
+            apply_palette(&ctx, index);
+            assert_eq!(palette(), index);
+            assert_eq!(is_light(), index == PALETTE_LIGHT);
+            assert_eq!(is_midnight(), index == PALETTE_MIDNIGHT);
+        }
+        assert_eq!(Tokens::for_palette(200).panel_bg, Tokens::DARK.panel_bg);
+        apply(&ctx, false);
+        assert_eq!(palette(), PALETTE_DARK);
+        let mut app = SoundApp::new(soundcraft_engine::Engine::default(), None, Services::default());
+        assert_eq!(app.run("ui.theme", json!({"mode": "midnight"})), Ok(json!({"mode": "midnight"})));
+        assert_eq!(app.ui.theme, ThemeMode::Midnight);
+    }
+
+    #[test]
+    fn dark_and_light_keep_opaque_clips_and_todays_grid_colours() {
+        for t in [Tokens::DARK, Tokens::LIGHT] {
+            assert_eq!(t.clip_fill_alpha, 255);
+            assert_eq!(t.clip_fill_alpha_selected, 255);
+            assert_eq!(t.grid_bar, t.bar_line);
+            assert_eq!(t.grid_beat, t.grid_line);
+            assert!(!t.grid_beat_always);
+        }
+        assert_eq!(Tokens::DARK.grid_bar, Color32::from_rgb(66, 66, 70));
+        assert_eq!(Tokens::DARK.grid_beat, Color32::from_rgb(52, 52, 54));
+        assert_eq!(Tokens::LIGHT.grid_bar, Color32::from_rgb(162, 166, 172));
+        assert_eq!(Tokens::LIGHT.grid_beat, Color32::from_rgb(188, 191, 196));
+    }
+
+    #[test]
+    fn midnight_tokens_are_translucent_dark_with_a_bright_grid() {
+        let (m, d) = (Tokens::MIDNIGHT, Tokens::DARK);
+        assert!(m.clip_fill_alpha < 255 && m.clip_fill_alpha > 0);
+        assert!(m.clip_fill_alpha_selected > m.clip_fill_alpha);
+        assert!(m.grid_beat_always);
+        assert_ne!(m.accent, d.accent);
+        let level = |c: Color32| i32::from(c.r()) + i32::from(c.g()) + i32::from(c.b());
+        // The lane is darker than Dark's and the lines stand out of it more than Dark's do.
+        assert!(level(m.playlist_bg) < level(d.playlist_bg));
+        assert!(level(m.grid_bar) - level(m.playlist_bg) > level(d.grid_bar) - level(d.playlist_bg));
+        assert!(level(m.grid_beat) - level(m.playlist_bg) > level(d.grid_beat) - level(d.playlist_bg));
+        assert!(level(m.grid_bar) > level(m.grid_beat));
+        // The MIDI editor tokens have their own values.
+        assert_ne!(m.roll_row_white, d.roll_row_white);
+        assert_ne!(m.lane_bg, d.lane_bg);
+        assert_ne!(m.roll_bar, d.roll_bar);
+        assert_ne!(m.midi_vel_lo, d.midi_vel_lo);
+    }
+
+    #[test]
+    fn clip_colors_follow_the_alpha_token() {
+        let _palette = lock_test_palette();
+        let ctx = egui::Context::default();
+        apply_palette(&ctx, PALETTE_DARK);
+        let (body, _, _) = clip_colors([200, 80, 40], false);
+        assert_eq!(body.a(), 255);
+        assert_eq!(clip_outline([200, 80, 40]), Color32::from_rgb(10, 10, 10));
+        apply_palette(&ctx, PALETTE_MIDNIGHT);
+        let (body, bar, _) = clip_colors([200, 80, 40], false);
+        let (sel, _, _) = clip_colors([200, 80, 40], true);
+        assert_eq!(body.a(), Tokens::MIDNIGHT.clip_fill_alpha);
+        assert_eq!(sel.a(), Tokens::MIDNIGHT.clip_fill_alpha_selected);
+        assert_eq!(bar, Color32::from_rgb(200, 80, 40));
+        assert_eq!(clip_outline([200, 80, 40]), Color32::from_rgb(200, 80, 40));
+        apply_palette(&ctx, PALETTE_DARK);
     }
 
     #[test]

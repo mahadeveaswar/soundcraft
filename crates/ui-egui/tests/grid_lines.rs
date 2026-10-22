@@ -26,7 +26,7 @@ fn near(a: [i32; 3], b: Color32) -> bool {
 fn grid_lines_are_drawn_over_clips_while_shown() {
     let mut app = SoundApp::new(soundcraft_engine::demo::demo_engine(), None, Services::default());
     let ctx = egui::Context::default();
-    for theme in ["dark", "light"] {
+    for theme in ["dark", "light", "midnight"] {
         for shown in [true, false] {
             app.run("ui.theme", json!({"mode": theme})).unwrap();
             app.run("view.grid_lines", json!({"value": shown})).unwrap();
