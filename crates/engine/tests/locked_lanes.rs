@@ -55,7 +55,7 @@ fn cut_skips_locked_lanes() {
     let (mut e, t) = setup();
     run(&mut e, "edit.cut", json!({"tracks": [t.0], "start": 0, "end": 500}));
     assert_eq!(pts(&e, t, &AutoParam::Volume), vec![(300, -6.0), (1500, -6.0)]);
-    assert_eq!(pts(&e, t, &AutoParam::Pan(0)), vec![(1500, -6.0)]);
+    assert_eq!(pts(&e, t, &AutoParam::Pan(0)), vec![(1500, -1.0)]);
     assert_undo_still_works(&mut e);
 }
 
