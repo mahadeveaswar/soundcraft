@@ -2,7 +2,7 @@
 
 **Stage: pre-alpha** · next: alpha, ~5% and ~110–180 h away (the alpha gate's three failing workflows)
 
-> **Last reviewed:** 2026-10-18 · **Last updated:** 2026-10-22 · **Change:** trivial (Inspector, palette, glossy clips, Mixer pane) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-18 · **Last updated:** 2026-10-22 · **Change:** trivial (Inspector, palette, glossy clips, Mixer pane) · **Target:** the incumbent professional DAW's menu tree (2026.4.1)
 
 SoundCraft is a clean-room, pure-Rust digital audio workstation that aims at full parity with
 Avid Pro Tools, and then beyond it: faster, open, scriptable and agent-controllable. This page is

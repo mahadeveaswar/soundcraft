@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-22 · **Change:** minor (Inspector, palette, glossy clips, Mixer pane) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-22 · **Change:** minor (Inspector, palette, glossy clips, Mixer pane) · **Target:** the incumbent professional DAW's menu tree (2026.4.1)
 
 How SoundCraft feels in the hands of a Pro Tools user: tools, modes, modifiers, shortcuts,
 windows, meters. Measured from `crates/model/src/session.rs` (tools, modes), the command
