@@ -23,8 +23,8 @@ pub const UI_COMMANDS: &[(&str, &str, &str, Option<&str>)] = &[
     ("window.clip_list_view", "Clip List", "View > Other Displays > Clip List", None),
     ("window.narrow_mix", "Narrow Mix", "View > Narrow Mix", Some("Cmd+Alt+M")),
     ("window.session_info", "Session Info", "", None),
-    ("window.audio_health", "Session Audio Health", "", None),
-    ("window.about", "About SoundCraft", "", None),
+    ("window.audio_health", "Session Audio Health", "Help > Session Audio Health", None),
+    ("window.about", "About SoundCraft", "Help > About SoundCraft", None),
     ("window.close", "Close Window", "Window > Close Window", Some("Cmd+W")),
     ("window.hide_floating", "Hide All Floating Windows", "Window > Hide All Floating Windows", Some("Cmd+Ctrl+W")),
     ("window.midi_editor", "MIDI Editor", "Window > MIDI Editor", None),
@@ -69,12 +69,13 @@ pub const UI_COMMANDS: &[(&str, &str, &str, Option<&str>)] = &[
     ("window.playback_engine", "Playback Engine", "", None),
     ("ui.audio_device", "Audio Device", "", None),
     ("window.io_setup", "I/O Setup", "", None),
-    ("window.shortcuts", "Keyboard Shortcuts", "", None),
+    ("window.shortcuts", "Keyboard Shortcuts", "Help > Keyboard Shortcuts...", None),
     ("view.mix_section", "Mix Window View", "", None),
     ("ui.new_tracks_dialog", "New Tracks…", "", None),
     ("ui.bounce_dialog", "Bounce Mix…", "", None),
     ("ui.set", "Set UI State", "", None),
     ("ui.theme", "Appearance", "", None),
+    ("ui.menu_layout", "Menu Layout", "", None),
     ("ui.header_style", "Track Header Style", "", None),
     ("ui.header_width", "Track Header Width", "", None),
     ("ui.transport_position", "Transport Position", "", None),
@@ -186,6 +187,9 @@ const DIALOG_COMMANDS: &[&str] = &[
 pub struct MenuNode {
     pub label: String,
     pub path: String,
+    /// The catalog root this node came from ("" for roots the display layer invents). Hooks that
+    /// depend on where an item lives key off this, not off the displayed root label.
+    pub source_root: String,
     pub children: Vec<MenuNode>,
 }
 
@@ -201,7 +205,7 @@ fn insert_path(roots: &mut Vec<MenuNode>, line: &str) {
         let idx = match level.iter().position(|n| n.label == *p) {
             Some(i) => i,
             None => {
-                level.push(MenuNode { label: p.to_string(), path: path.clone(), children: Vec::new() });
+                level.push(MenuNode { label: p.to_string(), path: path.clone(), source_root: parts.first().map_or(String::new(), |r| r.to_string()), children: Vec::new() });
                 level.len() - 1
             }
         };
@@ -221,7 +225,7 @@ pub fn tree() -> Vec<MenuNode> {
     // Not in the observed catalog either; Pro Tools lists it right under Identify Sync Point.
     if let Some(clip) = roots.iter_mut().find(|n| n.label == "Clip") {
         let at = clip.children.iter().position(|n| n.label == "Identify Sync Point").map_or(clip.children.len(), |i| i + 1);
-        clip.children.insert(at, MenuNode { label: "Remove Sync Point".into(), path: "Clip > Remove Sync Point".into(), children: Vec::new() });
+        clip.children.insert(at, MenuNode { label: "Remove Sync Point".into(), path: "Clip > Remove Sync Point".into(), source_root: "Clip".into(), children: Vec::new() });
     }
     // Not in the incumbent catalog, but the only UI path to an empty MIDI clip (#282).
     // It creates a clip rather than acting on the selected ones, so it leads the Clip menu.
@@ -257,7 +261,7 @@ pub fn menu_bar(app: &mut SoundApp, ui: &mut egui::Ui) {
                     }
                 });
                 let extra = ui_aliases();
-                for root in tree() {
+                for root in crate::menu_layout::display_tree(app.ui.menu_layout) {
                     ui.menu_button(&root.label, |ui| {
                         for c in &root.children {
                             menu_node(app, ui, c, &extra);
@@ -272,8 +276,17 @@ pub fn menu_bar(app: &mut SoundApp, ui: &mut egui::Ui) {
                             ui.separator();
                             crate::track_header_compact::view_menu(app, ui);
                             crate::transport_bar::view_menu(app, ui);
+                            ui.menu_button("Menu Layout", |ui| {
+                                for m in crate::menu_layout::MenuLayout::ALL {
+                                    let label = if app.ui.menu_layout == m { format!("✔ {}", m.label()) } else { m.label().to_string() };
+                                    if ui.button(label).clicked() {
+                                        let _ = app.run("ui.menu_layout", json!({"layout": m.id()}));
+                                        ui.close();
+                                    }
+                                }
+                            });
                         }
-                        if root.label == "AudioSuite" {
+                        if root.children.iter().any(|c| c.source_root == "AudioSuite") {
                             ui.separator();
                             ui.label(egui::RichText::new("Processes selected clips offline").small().color(t.text_dim));
                         }
@@ -494,6 +507,11 @@ pub fn invoke_menu(app: &mut SoundApp, id: &str, path: &str) {
         let _ = app.run(w, json!({"value": true}));
         return;
     }
+    // Help entries open their window (never close it), like the application menu's.
+    if path.starts_with("Help > ") && id.starts_with("window.") {
+        let _ = app.run(id, json!({"value": true}));
+        return;
+    }
     if id == "audiosuite.process" {
         let p = params_for(path, id);
         app.ui.audiosuite = p.get("process").and_then(Value::as_str).map(str::to_string);
@@ -536,6 +554,9 @@ pub fn run_ui_command(app: &mut SoundApp, id: &str, p: &Value) -> Option<Result<
     }
     if id == "ui.header_width" {
         return Some(crate::header_width::command(app, p));
+    }
+    if id == "ui.menu_layout" {
+        return Some(crate::menu_layout::command(app, p));
     }
     if id == "ui.transport_position" {
         return Some(crate::transport_bar::command(app, p));

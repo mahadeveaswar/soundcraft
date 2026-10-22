@@ -2,6 +2,7 @@
 use muda::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
 use objc2::MainThreadMarker;
 use objc2_app_kit::NSApplication;
+use soundcraft_ui_egui::menu_layout::{self, MenuLayout};
 use soundcraft_ui_egui::{SoundApp, menus};
 use std::sync::mpsc::{Receiver, channel};
 
@@ -17,6 +18,10 @@ pub struct NativeMenu {
     menu: Menu,
     entries: Vec<Entry>,
     events: Receiver<MenuEvent>,
+    /// The menu layout the system menu was built for; `sync` rebuilds it when the setting changes.
+    layout: MenuLayout,
+    /// How many entries belong to the application menu (kept across a rebuild).
+    app_entries: usize,
     /// When `sync` last walked the entries; see `SYNC_EVERY`.
     last_sync: Option<std::time::Instant>,
 }
@@ -30,7 +35,7 @@ impl NativeMenu {
     pub fn new(app: &SoundApp, ctx: &egui::Context) -> muda::Result<Self> {
         let menu = Menu::new();
         let (tx, events) = channel();
-        let mut native = Self { menu, entries: Vec::new(), events, last_sync: None };
+        let mut native = Self { menu, entries: Vec::new(), events, layout: app.ui.menu_layout, app_entries: 0, last_sync: None };
         let app_menu = Submenu::new("SoundCraft", true);
         native.add_item(app, &app_menu, "About SoundCraft", "", Some("window.about".into()))?;
         native.add_item(app, &app_menu, "Session Info", "", Some("window.session_info".into()))?;
@@ -45,11 +50,8 @@ impl NativeMenu {
         app_menu.append(&PredefinedMenuItem::separator())?;
         native.add_item(app, &app_menu, "Quit SoundCraft", "", Some("app.quit".into()))?;
         native.menu.append(&app_menu)?;
-        let aliases = menus::ui_aliases();
-        for root in menus::tree() {
-            let submenu = native.add_branch(app, &root, &aliases)?;
-            native.menu.append(&submenu)?;
-        }
+        native.app_entries = native.entries.len();
+        native.append_roots(app)?;
         native.menu.init_for_nsapp();
         let ctx = ctx.clone();
         MenuEvent::set_event_handler(Some(move |event| {
@@ -58,6 +60,27 @@ impl NativeMenu {
             }
         }));
         Ok(native)
+    }
+
+    fn append_roots(&mut self, app: &SoundApp) -> muda::Result<()> {
+        let aliases = menus::ui_aliases();
+        self.layout = app.ui.menu_layout;
+        for root in menu_layout::display_tree(self.layout) {
+            let submenu = self.add_branch(app, &root, &aliases)?;
+            self.menu.append(&submenu)?;
+        }
+        Ok(())
+    }
+
+    /// Replace everything after the application menu with the roots of the current layout.
+    fn rebuild(&mut self, app: &SoundApp) -> muda::Result<()> {
+        for item in self.menu.items().into_iter().skip(1) {
+            if let Some(submenu) = item.as_submenu() {
+                self.menu.remove(submenu)?;
+            }
+        }
+        self.entries.truncate(self.app_entries);
+        self.append_roots(app)
     }
 
     fn add_branch(&mut self, app: &SoundApp, node: &menus::MenuNode, aliases: &[(&str, &str)]) -> muda::Result<Submenu> {
@@ -111,6 +134,12 @@ impl NativeMenu {
             return;
         }
         self.last_sync = Some(now);
+        if app.ui.menu_layout != self.layout
+            && let Err(e) = self.rebuild(app)
+        {
+            log::warn!("could not rebuild the system menu bar: {e}");
+            self.layout = app.ui.menu_layout;
+        }
         for entry in &mut self.entries {
             let (enabled, checked) = menus::item_state(app, &entry.path, entry.command.as_deref());
             if let Some(label) = menus::live_label(app, entry.command.as_deref())
