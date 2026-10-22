@@ -3191,6 +3191,18 @@ mod tests {
     }
 
     #[test]
+    fn selecting_a_clip_paints_no_loop_band() {
+        let mut h = harness(2);
+        h.step();
+        let clip = h.state().engine.session().tracks.iter().find_map(|t| t.clips().first().map(|c| c.id.0));
+        let Some(clip) = clip else { return };
+        h.state_mut().engine.execute("edit.select", &json!({"clips": [clip]})).unwrap();
+        h.step();
+        assert!(loop_band_rects(&h).is_empty(), "a clip selection must not draw the locator band");
+        assert!(h.state().engine.session().edit.selection.is_empty());
+    }
+
+    #[test]
     fn drag_selection_spans_the_rows_from_anchor_to_pointer() {
         let mut h = harness(4);
         let ids = row_ids(&h);

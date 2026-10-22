@@ -315,8 +315,36 @@ fn position_param_raw(e: &Engine, cmd: &str, p: &Value, key: &str) -> Result<Opt
     Err(bad(cmd, format!("`{key}` must be samples, {{seconds}}, or a time string")))
 }
 
-/// Range from `start`/`end` params, else the edit selection.
+/// The range range-based commands act on when no explicit range is given: the edit selection, or,
+/// when that is empty and clips are selected, the bounding range of the selected clips. Selecting a
+/// clip never moves the selection itself (the locators), so this is how clip-only selections still
+/// drive cut, copy, bounce and friends.
+pub fn effective_range(s: &soundcraft_model::Session) -> Range {
+    let sel = s.edit.selection;
+    if !sel.is_empty() {
+        return sel;
+    }
+    let mut out: Option<Range> = None;
+    for id in &s.edit.selected_clips {
+        if let Some((_, c)) = s.find_clip(*id) {
+            out = Some(out.map_or(c.range(), |r| Range::new(r.start.min(c.start), r.end.max(c.end()))));
+        }
+    }
+    out.unwrap_or(sel)
+}
+
+/// Range from `start`/`end` params, else the effective range (see [`effective_range`]).
 pub fn range_param(e: &Engine, cmd: &str, p: &Value) -> Result<Range> {
+    range_param_with(e, cmd, p, effective_range(e.session()))
+}
+
+/// Like [`range_param`] but falls back to the plain edit selection (a point means "at the cursor"),
+/// for commands where the clip extent would be the wrong default.
+pub fn range_param_exact(e: &Engine, cmd: &str, p: &Value) -> Result<Range> {
+    range_param_with(e, cmd, p, e.session().edit.selection)
+}
+
+fn range_param_with(e: &Engine, cmd: &str, p: &Value, fallback: Range) -> Result<Range> {
     let st = position_param(e, cmd, p, "start")?;
     let en = position_param(e, cmd, p, "end")?;
     let len = position_param(e, cmd, p, "length")?;
@@ -324,7 +352,7 @@ pub fn range_param(e: &Engine, cmd: &str, p: &Value) -> Result<Range> {
         (Some(a), Some(b), _) => Ok(Range::new(a, b)),
         (Some(a), None, Some(l)) => Ok(Range::new(a, a.saturating_add(l))),
         (Some(a), None, None) => Ok(Range::point(a)),
-        _ => Ok(e.session().edit.selection),
+        _ => Ok(fallback),
     }
 }
 

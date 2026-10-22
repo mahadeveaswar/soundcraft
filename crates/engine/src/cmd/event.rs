@@ -153,7 +153,7 @@ fn meter(e: &mut Engine, p: &Value) -> Result<Value> {
 }
 
 fn insert_time(e: &mut Engine, p: &Value) -> Result<Value> {
-    let r = range_param(e, "event.insert_time", p)?;
+    let r = range_param_exact(e, "event.insert_time", p)?;
     if r.is_empty() {
         return Err(bad("event.insert_time", "give `start` and `length` or `end`"));
     }
@@ -178,7 +178,7 @@ fn insert_time(e: &mut Engine, p: &Value) -> Result<Value> {
 }
 
 fn cut_time(e: &mut Engine, p: &Value) -> Result<Value> {
-    let r = range_param(e, "event.cut_time", p)?;
+    let r = range_param_exact(e, "event.cut_time", p)?;
     if r.is_empty() {
         return Err(bad("event.cut_time", "selection is empty"));
     }

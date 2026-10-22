@@ -484,7 +484,7 @@ fn select(e: &mut Engine, p: &Value) -> Result<Value> {
         _ => {}
     }
     if let Some(c) = clips {
-        // Selecting clips also selects their range and tracks (Grabber click).
+        // Selecting clips also selects their tracks (Grabber click), not their range.
         let mut range: Option<soundcraft_time::Range> = None;
         let mut trs = Vec::new();
         for id in &c {
@@ -495,8 +495,8 @@ fn select(e: &mut Engine, p: &Value) -> Result<Value> {
                 }
             }
         }
-        if let Some(r) = range {
-            ed.selection = r;
+        // The edit selection (locators) is left alone: it is set only by range edits, markers or explicit start/end.
+        if range.is_some() {
             ed.selected_tracks = trs;
         }
         ed.selected_clips = c;
@@ -614,7 +614,7 @@ fn shift(e: &mut Engine, p: &Value) -> Result<Value> {
 
 fn insert_silence(e: &mut Engine, p: &Value) -> Result<Value> {
     let tracks = tracks_required(e, "edit.insert_silence", p)?;
-    let range = range_param(e, "edit.insert_silence", p)?;
+    let range = range_param_exact(e, "edit.insert_silence", p)?;
     let sh = shuffle(e.session());
     let follow = e.session().edit.automation_follows_edit;
     let s = e.session_mut();
@@ -639,7 +639,7 @@ fn separate(e: &mut Engine, p: &Value) -> Result<Value> {
     let points: Vec<i64> = if let Some(at) = position_param(e, "edit.separate", p, "at")? {
         vec![at]
     } else {
-        let r = range_param(e, "edit.separate", p)?;
+        let r = range_param_exact(e, "edit.separate", p)?;
         if r.is_empty() { vec![r.start] } else { vec![r.start, r.end] }
     };
     let s = e.session_mut();
@@ -971,6 +971,34 @@ fn consolidate(e: &mut Engine, p: &Value) -> Result<Value> {
 mod tests {
     use super::*;
     use soundcraft_model::{ChannelFormat, Clip, ClipContent, TrackId, TrackKind};
+
+    #[test]
+    fn selecting_a_clip_leaves_the_edit_selection_alone_and_cut_copy_use_the_clip() {
+        let mut e = crate::demo::demo_engine();
+        assert!(e.session().edit.selection.is_empty());
+        assert_eq!(e.session().edit.selection.start, 0);
+        let clip = e.session().track_by_name("Kick").unwrap().clips()[0].clone();
+        let before = e.session().edit.selection;
+        e.execute("edit.select", &json!({"clips": [clip.id.0]})).unwrap();
+        assert_eq!(e.session().edit.selection, before, "clip select must not move the locators");
+        assert_eq!(e.session().edit.selected_clips, vec![clip.id]);
+        assert!(!e.session().edit.selected_tracks.is_empty());
+        assert_eq!(effective_range(e.session()), clip.range());
+        e.execute("edit.copy", &json!({})).unwrap();
+        assert_eq!(e.session().edit.selection, before);
+        e.execute("edit.cut", &json!({})).unwrap();
+        assert!(e.session().find_clip(clip.id).is_none(), "cut removed the selected clip");
+        assert!(e.session().edit.selection.is_empty(), "cut leaves a cursor, never a band");
+    }
+
+    #[test]
+    fn a_non_empty_selection_wins_over_selected_clips() {
+        let mut e = crate::demo::demo_engine();
+        let clip = e.session().track_by_name("Kick").unwrap().clips()[0].clone();
+        e.execute("edit.select", &json!({"clips": [clip.id.0]})).unwrap();
+        e.execute("edit.select", &json!({"start": 10, "end": 20, "clips": [clip.id.0]})).unwrap();
+        assert_eq!(effective_range(e.session()), soundcraft_time::Range::new(10, 20));
+    }
 
     #[test]
     fn targeted_fade_curvature_saves_reopens_and_undoes_without_changing_lengths() {

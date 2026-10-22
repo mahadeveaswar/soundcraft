@@ -51,7 +51,7 @@ fn new_clip(e: &mut Engine, p: &Value) -> Result<Value> {
     if !e.session().track(t).is_some_and(|x| x.kind.is_midi()) {
         return Err(bad("midi.new_clip", "not a MIDI or instrument track"));
     }
-    let mut r = range_param(e, "midi.new_clip", p)?;
+    let mut r = range_param_exact(e, "midi.new_clip", p)?;
     if r.is_empty() {
         let s = e.session();
         let bar = soundcraft_time::GridValue::Note { value: soundcraft_time::NoteValue::Bar, dotted: false, triplet: false };

@@ -30,7 +30,7 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         cmd!(view "view.zoom_to_selection", "Zoom to Selection", [], Some("Alt+F"), "{width_px?: 1200}", always, |e, p| {
             let w = f64_or(p, "width_px", 1200.0).max(100.0);
-            let r = e.session().edit.selection;
+            let r = super::effective_range(e.session());
             if !r.is_empty() {
                 let z = e.zoom_mut();
                 z.samples_per_px = (r.len() as f64 / w).clamp(MIN_SPP, MAX_SPP);
