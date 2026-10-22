@@ -1524,7 +1524,10 @@ fn schedule_notes(s: &Session, t: &Track, pos: Samples, frames: usize, inst: &mu
                 rtp("delay", 0.0).clamp(-1e7, 1e7) as i64,
             )
         };
-        for n0 in &sequence.notes {
+        for (ni, n0) in sequence.notes.iter().enumerate() {
+            if !sequence.muted.is_empty() && sequence.is_muted(ni) {
+                continue;
+            }
             let mut n = *n0;
             n.velocity = (i64::from(n.velocity) + dv).clamp(1, 127) as u8;
             n.pitch = (i64::from(n.pitch) + dp).clamp(0, 127) as u8;
@@ -2330,6 +2333,19 @@ mod tests {
         let (loud, quiet) = (rms(-6.0), rms(-12.0));
         assert!(loud > 0.0, "the synth should sound");
         assert!((quiet / loud - 0.5).abs() < 0.05, "-12 dB vs -6 dB should halve the level: {quiet} / {loud}");
+    }
+
+    #[test]
+    fn muted_notes_do_not_sound() {
+        let mut s = synth_session(-6.0);
+        let peak = |s: &Session| render_range(s, Range::new(0, 12_000), 512)[0].iter().fold(0.0f32, |m, x| m.max(x.abs()));
+        assert!(peak(&s) > 0.01, "the note sounds");
+        if let Some(c) = s.tracks[0].playlist_mut().and_then(|p| p.clips.first_mut())
+            && let ClipContent::Midi { sequence } = &mut c.content
+        {
+            sequence.set_muted(0, true);
+        }
+        assert_eq!(peak(&s), 0.0, "a muted note has no note-on");
     }
 
     #[test]

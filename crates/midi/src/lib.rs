@@ -9,14 +9,18 @@
 //! - [`note_name`], [`gm_drum_name`], [`gm_program_name`]: display names.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod chord;
 mod names;
 pub mod ops;
 mod rng;
+pub mod scale;
 mod sequence;
 mod smf;
 
+pub use chord::ChordKind;
 pub use names::{gm_drum_name, gm_program_name, note_name};
 pub use rng::XorShift;
+pub use scale::{Scale, ScaleKind};
 pub use sequence::{CtrlEvent, CtrlKind, Note, Sequence};
 pub use smf::{MAX_EVENTS, MAX_TRACKS, Smf, SmfTrack, read_smf, write_smf};
 

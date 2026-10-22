@@ -481,10 +481,15 @@ fn paste_merge_midi(e: &mut Engine, p: &Value) -> Result<Value> {
                     if let Some(h) = s.find_clip_mut(hid)
                         && let ClipContent::Midi { sequence: hs } = &mut h.content
                     {
-                        for n in &sequence.notes {
+                        let base = hs.notes.len();
+                        for (k, n) in sequence.notes.iter().enumerate() {
                             let mut n = *n;
                             n.start = n.start.saturating_add(diff);
                             hs.notes.push(n);
+                            // The mute flag travels with the note; `sort` below remaps it.
+                            if sequence.is_muted(k) {
+                                hs.set_muted(base + k, true);
+                            }
                         }
                         for cc in &sequence.ctrls {
                             let mut cc = *cc;
@@ -1138,6 +1143,37 @@ mod tests {
             _ => 0,
         };
         assert_eq!(after, before + copied);
+    }
+
+    #[test]
+    fn merge_midi_keeps_mute_flags_of_host_and_pasted_notes() {
+        let mut e = crate::demo::demo_engine();
+        let keys = e.session().track_by_name("Keys").unwrap().id;
+        let cid = e.session().track(keys).unwrap().clips()[0].id;
+        let clip = e.session().track(keys).unwrap().clips()[0].clone();
+        if let Some(c) = e.session_mut().find_clip_mut(cid)
+            && let ClipContent::Midi { sequence } = &mut c.content
+        {
+            for i in 0..sequence.notes.len() {
+                sequence.set_muted(i, i % 2 == 0);
+            }
+        }
+        let host_muted = |e: &Engine| match &e.session().find_clip(cid).unwrap().1.content {
+            ClipContent::Midi { sequence } => (sequence.notes.len(), sequence.muted.len()),
+            _ => (0, 0),
+        };
+        let (before, before_muted) = host_muted(&e);
+        e.execute("edit.select", &json!({"tracks": [keys.0], "start": clip.start, "end": clip.start + 48_000})).unwrap();
+        e.execute("edit.copy", &json!({})).unwrap();
+        let (copied, copied_muted) = match &e.clipboard.tracks[0][0].content {
+            ClipContent::Midi { sequence } => (sequence.notes.len(), sequence.muted.len()),
+            _ => (0, 0),
+        };
+        assert!(copied_muted > 0 && before_muted > 0, "the copy keeps its mute flags");
+        e.execute("edit.paste_merge_midi", &json!({"at": clip.start + 96_000})).unwrap();
+        let (after, after_muted) = host_muted(&e);
+        assert_eq!(after, before + copied);
+        assert_eq!(after_muted, before_muted + copied_muted);
     }
 
     #[test]

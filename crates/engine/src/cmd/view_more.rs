@@ -178,6 +178,7 @@ pub fn specs() -> Vec<CommandSpec> {
         flag!("view.expanded_send_j", "Send J", ["View", "Expanded Sends"], "expanded_send.j"),
         // Misc.
         flag!("view.track_number", "Track Number", ["View"], "edit_view.track_number"),
+        flag!("view.midi_single_colour", "Single Colour Notes", ["View"], "midi.single_colour"),
         flag!("view.track_transcription_lane", "Track Transcription Lane", ["View"], "view.track_transcription_lane"),
         flag!("view.dropped_video_frame_indicator", "Dropped Video Frame Indicator", ["View"], "view.dropped_video_frame_indicator"),
         // Transport window views.

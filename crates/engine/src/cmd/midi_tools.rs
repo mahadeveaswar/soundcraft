@@ -18,6 +18,15 @@ pub fn specs() -> Vec<CommandSpec> {
             always,
             notes_glue
         ),
+        cmd!(
+            "midi.notes_mute",
+            "Mute Notes",
+            [],
+            None,
+            "{clip, indices: [n], muted?: bool} (toggles when `muted` is absent: all muted -> unmute, else mute) -> {muted: [n]}",
+            always,
+            notes_mute
+        ),
     ]
 }
 
@@ -41,9 +50,28 @@ fn note_split(e: &mut Engine, p: &Value) -> Result<Value> {
     if let Some(first) = seq.notes.get_mut(idx) {
         first.length = tick - n.start;
     }
+    let was_muted = seq.is_muted(idx);
     seq.notes.push(Note { start: tick, length: n.end() - tick, ..n });
+    seq.set_muted(seq.notes.len().saturating_sub(1), was_muted);
     seq.sort();
     Ok(json!({"notes": seq.notes.len()}))
+}
+
+fn notes_mute(e: &mut Engine, p: &Value) -> Result<Value> {
+    let id = clip_id(p, "midi.notes_mute")?;
+    let idx: Vec<usize> = p
+        .get("indices")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_u64).filter_map(|x| usize::try_from(x).ok()).collect())
+        .unwrap_or_default();
+    let want = p.get("muted").and_then(Value::as_bool);
+    let seq = seq_mut(e, id, "midi.notes_mute")?;
+    let valid: Vec<usize> = idx.into_iter().filter(|&i| i < seq.notes.len()).collect();
+    let target = want.unwrap_or_else(|| !(!valid.is_empty() && valid.iter().all(|&i| seq.is_muted(i))));
+    for &i in &valid {
+        seq.set_muted(i, target);
+    }
+    Ok(json!({"muted": seq.muted}))
 }
 
 fn notes_glue(e: &mut Engine, p: &Value) -> Result<Value> {
@@ -86,7 +114,7 @@ fn notes_glue(e: &mut Engine, p: &Value) -> Result<Value> {
         }
     }
     let mut i = 0;
-    seq.notes.retain(|_| {
+    seq.retain_notes(|_| {
         let keep = !remove.contains(&i);
         i += 1;
         keep
@@ -158,5 +186,69 @@ mod tests {
         let r = e.execute("midi.notes_glue", &json!({"clip": c, "indices": [0, 7, 99]})).unwrap();
         assert_eq!(r["glued"], 0);
         assert_eq!(notes(&mut e, c), vec![(60, 0, 240)]);
+    }
+}
+
+#[cfg(test)]
+mod mute_tests {
+    use super::*;
+    use soundcraft_model::{ChannelFormat, TrackKind};
+
+    fn clip3(e: &mut Engine) -> u64 {
+        let t = e.session_mut().add_track(TrackKind::Instrument, ChannelFormat::Stereo, Some("Keys"));
+        let c = e.execute("midi.new_clip", &json!({"track": t.0})).unwrap()["clip"].as_u64().unwrap();
+        for (pitch, start) in [(60, 0), (64, 480), (67, 960)] {
+            e.execute("midi.note_add", &json!({"clip": c, "pitch": pitch, "start_ticks": start, "length_ticks": 240})).unwrap();
+        }
+        c
+    }
+
+    fn muted(e: &mut Engine, c: u64) -> Vec<u64> {
+        let r = e.execute("midi.notes", &json!({"clip": c})).unwrap();
+        r["muted"].as_array().unwrap().iter().filter_map(|v| v.as_u64()).collect()
+    }
+
+    #[test]
+    fn toggle_and_explicit_mute_with_undo() {
+        let mut e = Engine::default();
+        let c = clip3(&mut e);
+        assert!(muted(&mut e, c).is_empty());
+        e.execute("midi.notes_mute", &json!({"clip": c, "indices": [1]})).unwrap();
+        assert_eq!(muted(&mut e, c), vec![1]);
+        e.execute("midi.notes_mute", &json!({"clip": c, "indices": [1]})).unwrap();
+        assert!(muted(&mut e, c).is_empty(), "toggle back");
+        e.execute("midi.notes_mute", &json!({"clip": c, "indices": [0, 2], "muted": true})).unwrap();
+        assert_eq!(muted(&mut e, c), vec![0, 2]);
+        assert!(e.undo());
+        assert!(muted(&mut e, c).is_empty());
+    }
+
+    #[test]
+    fn deleting_a_lower_index_keeps_the_mute_on_its_note() {
+        let mut e = Engine::default();
+        let c = clip3(&mut e);
+        e.execute("midi.notes_mute", &json!({"clip": c, "indices": [2]})).unwrap();
+        e.execute("midi.note_delete", &json!({"clip": c, "indices": [0]})).unwrap();
+        assert_eq!(muted(&mut e, c), vec![1], "the muted note moved from index 2 to 1");
+        let r = e.execute("midi.notes", &json!({"clip": c})).unwrap();
+        assert_eq!(r["notes"][1]["pitch"], 67);
+    }
+
+    #[test]
+    fn mute_follows_note_through_moves_split_and_info_edits() {
+        let mut e = Engine::default();
+        let c = clip3(&mut e);
+        e.execute("midi.notes_mute", &json!({"clip": c, "indices": [0]})).unwrap();
+        // Move the muted note to the end of the clip: it is re-sorted to index 2.
+        e.execute("midi.notes_move", &json!({"clip": c, "indices": [0], "ticks": 2000})).unwrap();
+        assert_eq!(muted(&mut e, c), vec![2]);
+        e.execute("midi.notes_adjust", &json!({"clip": c, "indices": [1], "start_delta": 5000})).unwrap();
+        assert_eq!(muted(&mut e, c), vec![1], "unmuted note passed it");
+        // Splitting a muted note leaves both halves muted.
+        e.execute("midi.note_split", &json!({"clip": c, "index": 1, "tick": 2100})).unwrap();
+        assert_eq!(muted(&mut e, c), vec![1, 2]);
+        // Whole-clip operations that re-sort keep it too.
+        e.execute("event.transpose", &json!({"clip": c, "semitones": 1})).unwrap();
+        assert_eq!(muted(&mut e, c), vec![1, 2]);
     }
 }

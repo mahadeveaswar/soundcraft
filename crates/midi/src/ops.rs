@@ -250,9 +250,87 @@ pub fn change_duration(notes: &mut [Note], op: DurationOp) {
     }
 }
 
+/// Trims every note to the start of the next note with the same pitch and channel, in place.
+/// Returns the indices of notes that become zero-length (a later same-pitch note starts at the
+/// same tick); those are left untouched for the caller to drop. Touching notes (`end == next
+/// start`) and notes with no later same-pitch note are unchanged.
+pub fn trim_overlaps(notes: &mut [Note]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..notes.len()).collect();
+    order.sort_by_key(|&i| notes.get(i).map(|n| (n.channel, n.pitch, n.start)));
+    let mut shadowed = Vec::new();
+    for w in order.windows(2) {
+        let (Some(&a), Some(&b)) = (w.first(), w.get(1)) else { continue };
+        let Some(&nb) = notes.get(b) else { continue };
+        let Some(na) = notes.get_mut(a) else { continue };
+        if na.channel != nb.channel || na.pitch != nb.pitch {
+            continue;
+        }
+        if nb.start <= na.start {
+            shadowed.push(a);
+        } else if na.end() > nb.start {
+            na.length = nb.start.saturating_sub(na.start).max(1);
+        }
+    }
+    shadowed.sort_unstable();
+    shadowed
+}
+
+/// [`trim_overlaps`] that also removes the zero-length notes. Returns how many were removed.
+pub fn fix_overlaps(notes: &mut Vec<Note>) -> usize {
+    let drop = trim_overlaps(notes);
+    let mut i = 0usize;
+    notes.retain(|_| {
+        let keep = drop.binary_search(&i).is_err();
+        i += 1;
+        keep
+    });
+    drop.len()
+}
+
 /// Select/Split Notes by pitch: returns `(notes with pitch in pitch_from..=pitch_to, the rest)`,
 /// both in input order. The bounds are swapped if reversed.
 pub fn split_notes(notes: &[Note], pitch_from: u8, pitch_to: u8) -> (Vec<Note>, Vec<Note>) {
     let (lo, hi) = if pitch_from <= pitch_to { (pitch_from, pitch_to) } else { (pitch_to, pitch_from) };
     notes.iter().partition(|n| (lo..=hi).contains(&n.pitch))
+}
+
+#[cfg(test)]
+mod overlap_tests {
+    use super::*;
+
+    fn n(pitch: u8, start: i64, length: i64) -> Note {
+        Note { pitch, velocity: 100, release_velocity: 64, channel: 0, start, length }
+    }
+
+    #[test]
+    fn overlapping_notes_are_trimmed_to_the_next_start() {
+        let mut v = vec![n(60, 0, 1000), n(60, 480, 480), n(64, 100, 2000)];
+        assert_eq!(fix_overlaps(&mut v), 0);
+        assert_eq!(v[0].length, 480);
+        assert_eq!(v[1].length, 480);
+        assert_eq!(v[2].length, 2000, "other pitches are untouched");
+    }
+
+    #[test]
+    fn touching_notes_are_left_alone() {
+        let mut v = vec![n(60, 0, 480), n(60, 480, 480)];
+        assert_eq!(fix_overlaps(&mut v), 0);
+        assert_eq!((v[0].length, v[1].length), (480, 480));
+    }
+
+    #[test]
+    fn identical_notes_collapse_to_one() {
+        let mut v = vec![n(60, 0, 480), n(60, 0, 480), n(60, 0, 240)];
+        assert_eq!(fix_overlaps(&mut v), 2);
+        assert_eq!(v.len(), 1);
+    }
+
+    #[test]
+    fn different_channels_do_not_interact() {
+        let mut a = n(60, 0, 1000);
+        a.channel = 1;
+        let mut v = vec![a, n(60, 480, 480)];
+        assert_eq!(fix_overlaps(&mut v), 0);
+        assert_eq!(v[0].length, 1000);
+    }
 }

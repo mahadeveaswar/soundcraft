@@ -46,9 +46,9 @@ pub fn split_clip(clip: &Clip, at: Samples, new_id: ClipId, t: TimeCtx<'_>) -> O
     right.fade_in = Fade::default();
     if let (ClipContent::Midi { sequence: ls }, ClipContent::Midi { sequence: rs }) = (&mut left.content, &mut right.content) {
         let boundary = t.ticks(at) - t.ticks(clip.start);
-        ls.notes.retain(|n| n.start < boundary);
+        ls.retain_notes(|n| n.start < boundary);
         ls.ctrls.retain(|c| c.tick < boundary);
-        rs.notes.retain(|n| n.start >= boundary);
+        rs.retain_notes(|n| n.start >= boundary);
         rs.ctrls.retain(|c| c.tick >= boundary);
         for n in &mut rs.notes {
             n.start -= boundary;
@@ -67,7 +67,7 @@ fn rebase_midi_start(clip: &mut Clip, old_start: Samples, t: TimeCtx<'_>) {
         if delta == 0 {
             return;
         }
-        sequence.notes.retain(|n| n.start >= delta);
+        sequence.retain_notes(|n| n.start >= delta);
         sequence.ctrls.retain(|c| c.tick >= delta);
         for n in &mut sequence.notes {
             n.start -= delta;
@@ -171,7 +171,9 @@ pub fn consolidate_midi(s: &mut Session, track: TrackId, range: Range) -> bool {
             let at = t.ticks(range.start.saturating_add(part.start)).saturating_sub(base);
             let len = t.ticks(range.start.saturating_add(part.end())).saturating_sub(base).saturating_sub(at);
             let ClipContent::Midi { sequence } = part.content else { continue };
-            for mut n in sequence.notes.into_iter().filter(|n| (0..len).contains(&n.start)) {
+            let muted = sequence.muted.clone();
+            let notes = sequence.notes.into_iter().enumerate().filter(|(i, _)| u32::try_from(*i).is_ok_and(|i| !muted.contains(&i))).map(|(_, n)| n);
+            for mut n in notes.filter(|n| (0..len).contains(&n.start)) {
                 n.length = n.length.min(len - n.start);
                 n.start += at;
                 merged.notes.push(n);

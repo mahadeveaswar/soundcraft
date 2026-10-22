@@ -320,7 +320,17 @@ fn select_split(e: &mut Engine, p: &Value) -> Result<Value> {
     for (t, cid) in clips {
         let Some(c) = s.find_clip(cid).map(|(_, c)| c.clone()) else { continue };
         let ClipContent::Midi { sequence } = &c.content else { continue };
-        let (hit, rest) = soundcraft_midi::ops::split_notes(&sequence.notes, from, to);
+        let (lo, hi) = if from <= to { (from, to) } else { (to, from) };
+        let (hit, _) = soundcraft_midi::ops::split_notes(&sequence.notes, from, to);
+        let hit_muted: std::collections::BTreeSet<u32> = sequence
+            .notes
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| (lo..=hi).contains(&n.pitch))
+            .enumerate()
+            .filter(|(_, (i, _))| sequence.is_muted(*i))
+            .filter_map(|(k, _)| u32::try_from(k).ok())
+            .collect();
         matched += hit.len();
         if !split || hit.is_empty() {
             continue;
@@ -328,7 +338,7 @@ fn select_split(e: &mut Engine, p: &Value) -> Result<Value> {
         if let Some(cl) = s.find_clip_mut(cid)
             && let ClipContent::Midi { sequence } = &mut cl.content
         {
-            sequence.notes = rest;
+            sequence.retain_notes(|n| !(lo..=hi).contains(&n.pitch));
         }
         let nt = match new_tracks.get(&t.0) {
             Some(x) => *x,
@@ -341,7 +351,7 @@ fn select_split(e: &mut Engine, p: &Value) -> Result<Value> {
         };
         let mut nc = c.clone();
         nc.id = s.new_clip_id();
-        nc.content = ClipContent::Midi { sequence: soundcraft_midi::Sequence { notes: hit, ctrls: Vec::new() } };
+        nc.content = ClipContent::Midi { sequence: soundcraft_midi::Sequence { notes: hit, ctrls: Vec::new(), muted: hit_muted } };
         crate::edit::place_clip(s, nt, nc);
     }
     Ok(json!({"matched": matched, "split": split, "tracks": new_tracks.values().collect::<Vec<_>>()}))

@@ -191,6 +191,7 @@ fn sequence_helpers() {
             CtrlEvent { tick: 500, channel: 0, kind: CtrlKind::Cc(1), value: 3 },
             CtrlEvent { tick: 500, channel: 0, kind: CtrlKind::Cc(2), value: 4 },
         ],
+        ..Default::default()
     };
     assert_eq!(seq.end_tick(), 500);
     seq.sort();
@@ -211,7 +212,11 @@ fn sequence_helpers() {
 
 #[test]
 fn sequence_serde_round_trip() {
-    let seq = Sequence { notes: vec![n(60, 0, 1)], ctrls: vec![CtrlEvent { tick: 1, channel: 0, kind: CtrlKind::PolyPressure(60), value: 9 }] };
+    let seq = Sequence {
+        notes: vec![n(60, 0, 1)],
+        ctrls: vec![CtrlEvent { tick: 1, channel: 0, kind: CtrlKind::PolyPressure(60), value: 9 }],
+        ..Default::default()
+    };
     let json = serde_json::to_string(&seq).unwrap();
     assert_eq!(serde_json::from_str::<Sequence>(&json).unwrap(), seq);
 }

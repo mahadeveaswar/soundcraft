@@ -320,6 +320,8 @@ pub(crate) fn bound_sequence(s: &mut Sequence) {
         n.length = n.length.clamp(1, MAX_POSITION);
     }
     s.ctrls.iter_mut().for_each(|c| bound(&mut c.tick));
+    let len = s.notes.len();
+    s.muted.retain(|&i| (i as usize) < len);
 }
 
 fn env_value(env: &[(Samples, f32)], at: Samples) -> f32 {

@@ -30,20 +30,28 @@ pub fn specs() -> Vec<CommandSpec> {
             "Quantize...",
             ["Event", "MIDI Operations"],
             Some("Alt+0"),
-            "{grid?: 1/16 | ticks, strength?: 100, swing?: 0, clips?}",
+            "{grid?: 1/16 | ticks, strength?: 100, swing?: 0, clips?, indices?: [n]}",
             has_selection,
             quantize
         ),
-        cmd!("event.transpose", "Transpose...", ["Event", "MIDI Operations"], Some("Alt+T"), "{semitones, clips?}", has_selection, |e, p| {
-            let st = i64_or(p, "semitones", 0).clamp(-127, 127) as i32;
-            midi_op(e, p, move |n| soundcraft_midi::ops::transpose(n, st))
-        }),
+        cmd!(
+            "event.transpose",
+            "Transpose...",
+            ["Event", "MIDI Operations"],
+            Some("Alt+T"),
+            "{semitones, clips?, indices?: [n]}",
+            has_selection,
+            |e, p| {
+                let st = i64_or(p, "semitones", 0).clamp(-127, 127) as i32;
+                midi_op(e, p, move |n| soundcraft_midi::ops::transpose(n, st))
+            }
+        ),
         cmd!(
             "event.change_velocity",
             "Change Velocity...",
             ["Event", "MIDI Operations"],
             None,
-            "{set?|add?|scale?|min?,max?, clips?}",
+            "{set?|add?|scale?|min?,max?, clips?, indices?: [n]}",
             has_selection,
             velocity
         ),
@@ -52,7 +60,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Change Duration...",
             ["Event", "MIDI Operations"],
             Some("Alt+P"),
-            "{set?|add?|scale?|legato?: gap, clips?}",
+            "{set?|add?|scale?|legato?: gap, clips?, indices?: [n]}",
             has_selection,
             duration
         ),
@@ -196,19 +204,7 @@ fn cut_time(e: &mut Engine, p: &Value) -> Result<Value> {
 }
 
 fn midi_op(e: &mut Engine, p: &Value, f: impl Fn(&mut [soundcraft_midi::Note])) -> Result<Value> {
-    let ids = clip_ids_param(e, p);
-    let s = e.session_mut();
-    let mut n = 0;
-    for id in ids {
-        if let Some(c) = s.find_clip_mut(id)
-            && let ClipContent::Midi { sequence } = &mut c.content
-        {
-            f(&mut sequence.notes);
-            sequence.sort();
-            n += sequence.notes.len();
-        }
-    }
-    Ok(json!({"notes": n}))
+    super::midi_sel::run(e, p, f)
 }
 
 fn grid_ticks(p: &Value) -> i64 {

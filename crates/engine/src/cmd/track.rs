@@ -12,7 +12,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "New...",
             ["Track"],
             Some("Cmd+Shift+N"),
-            "{count?: 1, format?: mono|stereo|5.1…, kind?: audio|aux|master|midi|instrument|vca|folder, name?, timebase?: samples|ticks, instrument?: plugin id}",
+            "{count?: 1, format?: mono|stereo|5.1…, kind?: audio|aux|master|midi|instrument|vca|folder, name?, timebase?: samples|ticks, instrument?: plugin id, after?: track id (insert after that track and its folder contents)}",
             always,
             new_track
         ),
@@ -268,6 +268,26 @@ fn new_track(e: &mut Engine, p: &Value) -> Result<Value> {
             }
         }
         ids.push(id);
+    }
+    if let Some(anchor) = p.get("after").and_then(Value::as_u64).map(TrackId)
+        && let Some(anchor_index) = s.track_index(anchor)
+        && !ids.contains(&anchor)
+    {
+        let mut at = anchor_index + 1;
+        while s.tracks.get(at).is_some_and(|track| !ids.contains(&track.id) && in_folder(s, track.id, anchor)) {
+            at += 1;
+        }
+        let mut moved = Vec::new();
+        for id in &ids {
+            if let Some(i) = s.track_index(*id) {
+                moved.push(s.tracks.remove(i));
+            }
+        }
+        // New tracks always sit after the anchor (before the master), so `at` is unaffected by removal.
+        let at = at.min(s.tracks.len());
+        for (offset, track) in moved.into_iter().enumerate() {
+            s.tracks.insert((at + offset).min(s.tracks.len()), track);
+        }
     }
     s.edit.selected_tracks = ids.clone();
     Ok(json!({"tracks": ids}))
@@ -1004,6 +1024,18 @@ mod tests {
         assert_eq!(folder.mixer.input, snare.mixer.output);
         assert_eq!(s.track_index(folder.id).unwrap() + 1, s.track_index(kick.id).unwrap());
         assert_eq!(s.track_index(kick.id).unwrap() + 1, s.track_index(snare.id).unwrap());
+    }
+
+    #[test]
+    fn new_track_after_inserts_behind_the_anchor() {
+        let mut e = crate::demo::demo_engine();
+        let first = e.session().tracks.first().map(|t| t.id).unwrap();
+        let out = e.execute("track.new", &json!({"name": "Inserted", "after": first.0})).unwrap();
+        let id = TrackId(out["tracks"][0].as_u64().unwrap());
+        let s = e.session();
+        assert_eq!(s.track_index(first).unwrap() + 1, s.track_index(id).unwrap());
+        // A bad anchor falls back to the default position and does not fail.
+        assert!(e.execute("track.new", &json!({"after": 987654321u64})).is_ok());
     }
 
     #[test]

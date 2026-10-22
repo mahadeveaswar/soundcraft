@@ -37,7 +37,11 @@ fn seq_mut<'a>(e: &'a mut Engine, id: ClipId, cmd: &str) -> Result<&'a mut Seque
 fn notes(e: &mut Engine, p: &Value) -> Result<Value> {
     let id = clip_id(p, "midi.notes")?;
     match e.session().find_clip(id).map(|(_, c)| &c.content) {
-        Some(ClipContent::Midi { sequence }) => Ok(json!({"notes": sequence.notes})),
+        Some(ClipContent::Midi { sequence }) => {
+            let scale = soundcraft_midi::Scale::from_code(e.session().edit.value(&super::midi_theory::scale_key(id), 0.0))
+                .map(|s| json!({"root": s.root, "kind": s.kind.id()}));
+            Ok(json!({"notes": sequence.notes, "muted": sequence.muted, "scale": scale}))
+        }
         _ => Err(bad("midi.notes", "not a MIDI clip")),
     }
 }
@@ -110,7 +114,7 @@ fn note_delete(e: &mut Engine, p: &Value) -> Result<Value> {
     let seq = seq_mut(e, id, "midi.note_delete")?;
     let before = seq.notes.len();
     let mut i = 0;
-    seq.notes.retain(|_| {
+    seq.retain_notes(|_| {
         let keep = !idx.contains(&i);
         i += 1;
         keep
