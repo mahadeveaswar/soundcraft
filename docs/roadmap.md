@@ -82,10 +82,9 @@ Control surfaces (G-10), immersive delivery (G-12), the rest of the built-in plu
 speech-to-text (G-18), notation and instrument depth (G-20), compressed export (G-21), and the
 remaining languages.
 
-Later UI items from the Inspector, palette and Mixer work: an Inspector EQ curve view (the built-in
-EQ and the spectrum code exist), MIDI track transpose, velocity and channel controls (needs model
-fields and engine commands), the Mixer pane inside the Mix window workspace, and side-by-side
-Editor and Mixer docking (today they are exclusive lower-zone tabs).
+Mac queue: complete and promoted (tag `rel-2026-10-22`, branch `custom-release`).
+
+Later UI items (not in this release): an Inspector EQ curve view, MIDI track transpose, velocity and channel controls (needs model fields and engine commands), Mix-window versions of the Inspector, Visibility, Meters, Loudness and Mixer panels, side-by-side Editor and Mixer docking (today they are exclusive lower-zone tabs), converting a MIDI controller lane to clip data or exporting it to a MIDI file, a straight-line ramp stroke for freehand lane drawing, and the tooltips preference (saved, but not yet read by the UI). Minor review items (per-frame work in the Loudness and Mixer panes, an extra anchor point per stroke sample, a hand-copied Edit-only panel list, native menu rebuild retry) are listed in the notes.
 
 There is no `cargo xtask scorecard` in this repo; the measured number is `cargo xtask parity`
 ([`parity-checklist.md`](parity-checklist.md)).
@@ -94,6 +93,7 @@ There is no `cargo xtask scorecard` in this repo; the measured number is `cargo 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-22 | trivial | Mac queue complete and promoted (rel-2026-10-22); later UI items updated |
 | 2026-10-22 | trivial | Later UI items: Inspector EQ curve, MIDI track controls, Mixer in the Mix window, side-by-side Editor and Mixer |
 | 2026-10-14 | trivial | M8: reject oversized MCP batches before execution (#460) |
 | 2026-10-10 | minor | Added the alpha gate (3 of 6 core workflows fail → pre-alpha) |

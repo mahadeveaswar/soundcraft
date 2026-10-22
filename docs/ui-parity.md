@@ -46,10 +46,10 @@ Legend: ✅ matches · 🟡 partial · ❌ missing.
 | Mix window: strips, views (inserts, sends, I/O, comments, EQ curve, preamps, instruments, object) | ✅ | Narrow Mix ✅; Mix and Edit on screen at once (Window › Mix in Separate Window, its own native window) ✅; Delay Compensation view and HEAT missing |
 | Inspector (dock panel), Mixer pane (bottom dock), track colour palette, glossy clips | 🟡 | Per-track Inspector sections, an 84-colour palette popup, glossy rounded clips and headers (Settings switch) and a bottom Mixer pane sharing the lower zone with the MIDI editor as exclusive tabs are in; EQ curve view and MIDI track controls are later |
 | MIDI Editor, Score Editor, Event List | 🟡 | Dock height bug fixed (#113); notation editing shallow |
-| Transport, Big Counter, Memory Locations, Automation, Video, Universe, Renderer, UI Customization | ✅ present | |
+| Transport, Big Counter, Memory Locations, Automation, Video, Universe, Renderer, Settings window | ✅ present | Settings: Setup > Preferences..., Setup > Appearance, Window > Settings... (General, Appearance, Track colours) |
 | Workspace / sound browser with previews | ❌ | G-16 |
 | I/O Setup | 🟡 | Busses and paths; no hardware channel matrix (G-01) |
-| Preferences | 🟡 | Many settings stored, fewer honoured |
+| Preferences | 🟡 | Many settings stored, fewer honoured; the Settings window holds interface scale, reduce motion, tooltips (saved, not yet read by the UI), menu and toolbar style, themes and track colours |
 | Window configurations, Tile/Cascade | 🟡 | Configurations ✅; Tile/Cascade in PR #151 |
 | Plugin windows | 🟡 | Generic parameter sliders; Pro Tools plugins have bespoke GUIs (#138 asks for skeuomorphic design); multi-page plugin views (#6) |
 | A plugin opens when it's inserted | ✅ | #486; a hosted plugin's own editor, else its plugin window |
@@ -72,6 +72,7 @@ Legend: ✅ matches · 🟡 partial · ❌ missing.
 |---|---|---|
 | 2026-10-13 | minor | A plugin opens when it's inserted (#486) |
 | 2026-10-13 | minor | Drag across checkboxes (#399) |
+| 2026-10-22 | minor | Mac queue complete and promoted (tag rel-2026-10-22): Standard and Classic menus and toolbars, Settings window, themes, panels; later items: Inspector EQ curve, MIDI track controls, Mix-window panels, side-by-side docking. Readiness estimate unchanged |
 | 2026-10-22 | minor | Inspector sections, 84-colour palette, glossy rounded clips and headers, bottom Mixer pane (Editor / Mixer tabs). Readiness estimate unchanged |
 | 2026-10-13 | minor | Waveforms and fade curves share temporary envelopes during drag, without rebuilding media or editing the document before release. Readiness estimate unchanged |
 | 2026-10-13 | minor | Fade curves use bounded physical-pixel sampling; midpoint handles stay visible and inside the clip, with repeat-drag coverage after extreme bends. Readiness estimate unchanged |

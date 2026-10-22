@@ -114,12 +114,22 @@ where things are.
   follows your fingers and pinch-to-zoom around the pointer; undo for everything.
 - **Looks:** an 84-colour track palette (with recent colours and hex entry), glossy rounded clips and
   track headers with a Settings switch and corner radius, a per-track Inspector, and a bottom
-  Mixer pane that shares the lower zone with the MIDI editor as Editor / Mixer tabs.
+  Mixer pane that shares the lower zone with the MIDI editor as Editor / Mixer tabs. Two menu
+  arrangements (Standard, grouped by task, or Classic) and two toolbars (a one-row Standard bar
+  with M/S/R/W state keys, an info row and a selection strip, or Classic) are switchable, and the
+  macOS menu bar follows the choice. A Settings window (Setup > Preferences..., Window > Settings...)
+  holds interface scale, reduce motion, tooltips, the menu and toolbar style, themes (Dark, Light,
+  Midnight, a colour-safe theme and your own, with contrast warnings, import and export) and the
+  new-track colours. Dock panels for Inspector, Visibility, Meters and Loudness sit beside the
+  Mixer pane.
 - **Mixing:** fader and pan with automation, pre/post sends, busses, aux inputs, master faders,
   VCA masters, routing folders, solo modes, mute and solo groups, phase invert and trim, clip
   effects, and automatic plugin delay compensation.
 - **Automation:** volume, pan, mute, send and every plugin parameter; Write, Touch, Latch and
   Trim passes recorded live from the faders; thin, glide, coalesce and convert to clip gain.
+  Instrument and MIDI tracks also get MIDI controller lanes (modulation, expression, sustain, pitch
+  bend, pressure and any other controller), and every lane can be drawn freehand with the Pencil
+  tool, one undo step per stroke; an adaptive grid keeps snapping and drawing in step with the zoom.
 - **Plugins:** 7-band and 1-band EQ, compressor/limiter, expander/gate, de-esser, maximizer,
   channel strip, room and plate reverbs, mod delay, chorus, flanger, phaser, saturator, lo-fi,
   rectifier, pitch shifter, time shift, gain, trim, invert, DC removal, signal generator, dither,
@@ -138,7 +148,10 @@ where things are.
 - **Audio files:** WAV/BWF/RF64, AIFF/AIFC and FLAC in and out; MP3, Ogg Vorbis, AAC, ALAC, CAF
   and the audio of MP4/MOV movies in. Any sample rate and bit depth.
 - **Bounce:** mix or stems to WAV, AIFF or FLAC at 16/24/32-bit float with dither and
-  normalisation, reporting peak, true peak and integrated loudness (LUFS).
+  normalisation, reporting peak, true peak and integrated loudness (LUFS). A live master loudness
+  meter (momentary, short-term and integrated LUFS, true peak) has its own panel.
+- **Templates:** save the open session as a template, start a new session from one, or add a rack
+  of instrument tracks in one step.
 - **Fast:** a parallel mix engine, copy-on-write undo, and a UI that holds 120 frames per second
   with seventy-odd tracks playing.
 
