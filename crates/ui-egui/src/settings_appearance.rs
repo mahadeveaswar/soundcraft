@@ -228,32 +228,46 @@ fn colour_row(app: &mut SoundApp, ui: &mut Ui, t: &Tokens, st: &mut PageState, k
     });
 }
 
-/// The hex entry: it follows the theme until focused; Enter or leaving the field applies it, and
-/// anything that is not `#RRGGBB` / `#RRGGBBAA` is rejected with a message.
-fn hex_field(app: &mut SoundApp, ui: &mut Ui, st: &mut PageState, key: &str, current: Color32) {
-    let id = Id::new(("settings_hex", key));
+/// The hex entry: it follows `current` until focused; leaving the field (or Enter) applies it.
+/// Returns `Ok(Some(c))` when a new colour was entered, `Err(text)` when the text is not
+/// `#RRGGBB` / `#RRGGBBAA` (the field then goes back to `current`), `Ok(None)` otherwise.
+pub(crate) fn hex_edit(ui: &mut Ui, id: Id, current: Color32, width: f32) -> Result<Option<Color32>, String> {
     let shown = theme_doc::format_hex(current);
     let mut text = ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| shown.clone());
-    let valid = theme_doc::parse_hex(&text).is_some();
-    let color = if valid { Tokens::current().text } else { Tokens::current().rec };
-    let resp = ui.add(TextEdit::singleline(&mut text).id(id.with("edit")).desired_width(76.0).char_limit(9).font(regular(11.0)).text_color(color));
+    let t = Tokens::current();
+    let color = if theme_doc::parse_hex(&text).is_some() { t.text } else { t.rec };
+    let resp = ui.add(TextEdit::singleline(&mut text).id(id.with("edit")).desired_width(width).char_limit(9).font(regular(11.0)).text_color(color));
+    let mut out = Ok(None);
     if resp.lost_focus() {
-        match theme_doc::parse_hex(&text) {
-            Some(c) if c != current => {
-                exec(app, st, "ui.theme_set_color", json!({"key": key, "color": theme_doc::format_hex(c)}));
-            }
-            Some(_) => {}
-            None => {
-                st.message = format!("`{}` is not a colour (use #RRGGBB or #RRGGBBAA)", text.trim());
-                st.error = true;
-            }
-        }
+        out = match theme_doc::parse_hex(&text) {
+            Some(c) if c != current => Ok(Some(c)),
+            Some(_) => Ok(None),
+            None => Err(text.trim().to_string()),
+        };
         text = String::new();
     }
     if resp.has_focus() {
         ui.data_mut(|d| d.insert_temp(id, text));
     } else {
         ui.data_mut(|d| d.remove::<String>(id));
+    }
+    out
+}
+
+pub(crate) fn bad_colour_message(text: &str) -> String {
+    format!("`{text}` is not a colour (use #RRGGBB or #RRGGBBAA)")
+}
+
+fn hex_field(app: &mut SoundApp, ui: &mut Ui, st: &mut PageState, key: &str, current: Color32) {
+    match hex_edit(ui, Id::new(("settings_hex", key)), current, 76.0) {
+        Ok(Some(c)) => {
+            exec(app, st, "ui.theme_set_color", json!({"key": key, "color": theme_doc::format_hex(c)}));
+        }
+        Ok(None) => {}
+        Err(text) => {
+            st.message = bad_colour_message(&text);
+            st.error = true;
+        }
     }
 }
 
