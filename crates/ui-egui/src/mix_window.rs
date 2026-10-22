@@ -188,6 +188,9 @@ pub struct StripOpts {
     pub outline_selected: bool,
     /// Fill the name chip with the track's colour.
     pub color_chip: bool,
+    /// The bottom pane's layout: name chip, M/S/R, pan, fader and meter from the top, then
+    /// inserts, sends and routing folded to what the height allows.
+    pub stacked: bool,
 }
 
 /// The least height of a Mix window strip.
@@ -222,6 +225,11 @@ pub(crate) fn strip(app: &mut SoundApp, ui: &mut Ui, id: TrackId, snap: Option<&
     let bg = if selected { t.strip_selected } else { t.strip_bg };
     vgradient(ui.painter(), r, shade(bg, 0.06), bg);
     ui.painter().vline(r.min.x + 0.5, r.y_range(), Stroke::new(1.0, t.edge_light));
+    if opts.stacked {
+        stacked_body(app, ui, track, snap, r, opts, selected);
+        strip_edges(app, ui, r, track, opts, selected);
+        return;
+    }
     let mut y = r.min.y + 4.0;
     let inner_w = w - 8.0;
     let x0 = r.min.x + 4.0;
@@ -488,6 +496,33 @@ pub(crate) fn strip(app: &mut SoundApp, ui: &mut Ui, id: TrackId, snap: Option<&
     // Fader + meter.
     let bottom_h = 64.0;
     let fh = (r.max.y - bottom_h - y).max(120.0);
+    fader_meter(app, ui, track, snap, [x0, y, inner_w, fh], narrow);
+    // Volume readout and name.
+    let vr = Rect::from_min_size(pos2(x0 + 4.0, r.max.y - bottom_h + 4.0), vec2(inner_w - 8.0, 15.0));
+    volume_readout(app, ui, track, vr);
+    let nr = Rect::from_min_size(pos2(x0, r.max.y - 26.0), vec2(inner_w, 18.0));
+    name_chip(app, ui, track, nr, opts, selected);
+    strip_edges(app, ui, r, track, opts, selected);
+}
+
+/// The colour bar, the divider and the selection outline.
+fn strip_edges(app: &SoundApp, ui: &Ui, r: Rect, track: &Track, opts: &StripOpts, selected: bool) {
+    let t = Tokens::current();
+    let w = r.width();
+    if app.ui.mix_views.iter().any(|v| v == "color") {
+        ui.painter().rect_filled(Rect::from_min_size(pos2(r.min.x, r.max.y - 5.0), vec2(w, 5.0)), 0.0, rgb(track.color));
+    }
+    ui.painter().line_segment([pos2(r.max.x, r.min.y), pos2(r.max.x, r.max.y)], Stroke::new(1.0, t.border));
+    if opts.outline_selected && selected {
+        ui.painter().rect_stroke(r.shrink(1.0), 0.0, Stroke::new(2.0, t.accent), StrokeKind::Inside);
+    }
+}
+
+/// The fader with its meter beside it; `area` is `[x0, y, width, fader height]`.
+fn fader_meter(app: &mut SoundApp, ui: &mut Ui, track: &Track, snap: Option<&MeterSnapshot>, area: [f32; 4], narrow: bool) {
+    let t = Tokens::current();
+    let id = track.id;
+    let [x0, y, inner_w, fh] = area;
     let wide_meter = (if track.kind == TrackKind::Master { app.engine.session().main_format() } else { track.format }).channels() > 2;
     let fr = Rect::from_min_size(pos2(x0, y), vec2(inner_w * if wide_meter { 0.45 } else { 0.6 }, fh));
     strip_fader(app, ui, fr, id, track.mixer.volume_db);
@@ -514,8 +549,12 @@ pub(crate) fn strip(app: &mut SoundApp, ui: &mut Ui, id: TrackId, snap: Option<&
     if md.gr > 0.1 {
         ui.painter().text(pos2(mr.center().x, mr.min.y - 3.0), Align2::CENTER_BOTTOM, format!("-{:.0}", md.gr), regular(8.0), t.meter_yellow);
     }
-    // Volume readout and name.
-    let vr = Rect::from_min_size(pos2(x0 + 4.0, r.max.y - bottom_h + 4.0), vec2(inner_w - 8.0, 15.0));
+}
+
+/// The editable dB readout in `vr`, with the track kind caption under it.
+fn volume_readout(app: &mut SoundApp, ui: &mut Ui, track: &Track, vr: Rect) {
+    let t = Tokens::current();
+    let id = track.id;
     inset(ui.painter(), vr, t.counter_bg);
     let (_, entered) = editable_readout(
         ui,
@@ -540,7 +579,12 @@ pub(crate) fn strip(app: &mut SoundApp, ui: &mut Ui, id: TrackId, snap: Option<&
         TrackKind::Video => "video",
     };
     ui.painter().text(pos2(vr.center().x, vr.max.y + 9.0), Align2::CENTER_CENTER, kind, regular(9.5), t.text_dim);
-    let nr = Rect::from_min_size(pos2(x0, r.max.y - 26.0), vec2(inner_w, 18.0));
+}
+
+/// The name bar in `nr`: select on click, rename on double-click, track menu on right-click.
+fn name_chip(app: &mut SoundApp, ui: &mut Ui, track: &Track, nr: Rect, opts: &StripOpts, selected: bool) {
+    let t = Tokens::current();
+    let id = track.id;
     let chip = if opts.color_chip {
         rgb(track.color)
     } else if selected {
@@ -565,12 +609,170 @@ pub(crate) fn strip(app: &mut SoundApp, ui: &mut Ui, id: TrackId, snap: Option<&
         app.dialogs.open_rename_track(id, &track.name);
     }
     nresp.context_menu(|ui| crate::edit_window::track_context_menu(app, ui, id));
-    if app.ui.mix_views.iter().any(|v| v == "color") {
-        ui.painter().rect_filled(Rect::from_min_size(pos2(r.min.x, r.max.y - 5.0), vec2(w, 5.0)), 0.0, rgb(track.color));
+}
+
+/// Height of the name chip, button row and readout in the stacked layout.
+const STACK_CHIP_H: f32 = 20.0;
+const STACK_FADER_MIN: f32 = 96.0;
+/// Heights of the stacked layout's folded sections: a badge row, a full 5-slot list, the output
+/// row alone and the full I/O block.
+const BADGE_H: f32 = 22.0;
+const LIST_H: f32 = 16.0 + 5.0 * 17.0;
+const OUT_ROW_H: f32 = 22.0;
+const IO_FULL_H: f32 = 16.0 + 2.0 * 18.0 + 30.0;
+
+/// How much of the lower sections a stacked strip of `extra` spare points shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StackFold {
+    /// Count badges for inserts and sends, no routing.
+    Badges,
+    /// Count badges and the output selector.
+    BadgesOut,
+    /// Both 5-slot lists and the full I/O block.
+    Full,
+}
+
+/// Picks the fold for `extra` points left after the fixed rows and the least fader.
+pub(crate) fn stack_fold(extra: f32) -> StackFold {
+    if extra >= 2.0 * (LIST_H + 4.0) + IO_FULL_H + 4.0 {
+        StackFold::Full
+    } else if extra >= 2.0 * (BADGE_H + 4.0) + OUT_ROW_H {
+        StackFold::BadgesOut
+    } else {
+        StackFold::Badges
     }
-    ui.painter().line_segment([pos2(r.max.x, r.min.y), pos2(r.max.x, r.max.y)], Stroke::new(1.0, t.border));
-    if opts.outline_selected && selected {
-        ui.painter().rect_stroke(r.shrink(1.0), 0.0, Stroke::new(2.0, t.accent), StrokeKind::Inside);
+}
+
+/// The bottom pane's strip body: everything that matters sits at the top, so a short pane shows
+/// the name, M/S/R, pan, fader, meter and dB readout and folds the rest away.
+fn stacked_body(app: &mut SoundApp, ui: &mut Ui, track: &Track, snap: Option<&MeterSnapshot>, r: Rect, opts: &StripOpts, selected: bool) {
+    let t = Tokens::current();
+    let id = track.id;
+    let narrow = opts.compact || app.ui.narrow_mix;
+    let inner_w = r.width() - 8.0;
+    let x0 = r.min.x + 4.0;
+    let mut y = r.min.y + 4.0;
+    name_chip(app, ui, track, Rect::from_min_size(pos2(x0, y), vec2(inner_w, STACK_CHIP_H)), opts, selected);
+    y += STACK_CHIP_H + 4.0;
+    // Rec, input, solo and mute share one row.
+    let playlist = track.kind.has_playlist();
+    let master = track.kind == TrackKind::Master;
+    let n = usize::from(playlist) * 2 + usize::from(!master) * 2;
+    if n > 0 {
+        let bw = ((inner_w - 3.0 * (n as f32 - 1.0)) / n as f32).max(10.0);
+        let mut row = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(Rect::from_min_size(pos2(x0, y), vec2(inner_w, 18.0)))
+                .layout(egui::Layout::left_to_right(egui::Align::Min)),
+        );
+        row.spacing_mut().item_spacing.x = 3.0;
+        let sz = vec2(bw, 18.0);
+        if playlist && !narrow && text_toggle(&mut row, sz, "I", track.mixer.input_monitor, t.input, "Input monitoring").clicked() {
+            let _ = app.run("mix.input_monitor", json!({"track": id.0}));
+        }
+        if playlist && rec_toggle(&mut row, sz, track.mixer.record_arm, "Record enable").clicked() {
+            let _ = app.run("mix.record_arm", json!({"track": id.0}));
+        }
+        if !master {
+            if text_toggle(&mut row, sz, "S", track.mixer.solo, t.solo, "Solo").clicked() {
+                let _ = app.run("mix.solo", json!({"track": id.0}));
+            }
+            if text_toggle(&mut row, sz, "M", track.mixer.mute, t.mute, "Mute").clicked() {
+                let _ = app.run("mix.mute", json!({"track": id.0}));
+            }
+        }
+    }
+    y += 22.0;
+    // Pan knobs (the surround panner is the Mix window's).
+    if !track.mixer.pan.is_empty() && track.kind != TrackKind::Vca {
+        let n = track.mixer.pan.len().min(2);
+        let ks = if n == 2 { (inner_w / 2.0 - 6.0).min(30.0) } else { 32.0 };
+        for i in 0..n {
+            let cx = if n == 2 { x0 + inner_w * (0.25 + 0.5 * i as f32) } else { x0 + inner_w * 0.5 };
+            let kr = Rect::from_center_size(pos2(cx, y + ks * 0.5), vec2(ks, ks));
+            let mut c = ui.new_child(egui::UiBuilder::new().max_rect(kr));
+            let mut v = track.mixer.pan.get(i).copied().unwrap_or(0.0);
+            let before = v;
+            let _ = pan_knob(&mut c, ks, &mut v, "Pan (drag; double-click centres)");
+            if (v - before).abs() > f32::EPSILON {
+                let _ = app.engine.execute_merged("mix.pan", &json!({"track": id.0, "pan": v, "index": i}), &format!("pan:{}:{i}", id.0));
+            }
+            let pr = Rect::from_center_size(pos2(cx, y + ks + 8.0), vec2(ks + 8.0, 13.0));
+            inset(ui.painter(), pr, t.counter_bg);
+            let (_, entered) =
+                editable_readout(ui, pr, ui.id().with(("pan-value", id.0, i)), &pan_text(v), &format!("{:.0}", v * 100.0), parse_pan, 0.0);
+            if let Some(v) = entered {
+                let _ = app.engine.execute_merged("mix.pan", &json!({"track": id.0, "pan": v, "index": i}), &format!("pan:{}:{i}", id.0));
+            }
+        }
+        y += ks + 20.0;
+    }
+    // What is left after the readout row and the folded sections goes to the fader.
+    let readout_h = 30.0;
+    let left = r.max.y - 4.0 - y - readout_h;
+    let fold = stack_fold(left - STACK_FADER_MIN);
+    let lower = match fold {
+        StackFold::Badges => 2.0 * (BADGE_H + 4.0),
+        StackFold::BadgesOut => 2.0 * (BADGE_H + 4.0) + OUT_ROW_H + 4.0,
+        StackFold::Full => 2.0 * (LIST_H + 4.0) + IO_FULL_H + 4.0,
+    };
+    let fh = (left - lower).max(STACK_FADER_MIN);
+    fader_meter(app, ui, track, snap, [x0, y, inner_w, fh], narrow);
+    y += fh + 2.0;
+    volume_readout(app, ui, track, Rect::from_min_size(pos2(x0 + 4.0, y), vec2(inner_w - 8.0, 15.0)));
+    y += readout_h;
+    for (title, is_send) in [("INSERTS", false), ("SENDS", true)] {
+        let used = if is_send { track.mixer.sends.iter().take(5).flatten().count() } else { track.mixer.inserts.iter().take(5).flatten().count() };
+        if fold == StackFold::Full {
+            let sec = Rect::from_min_size(pos2(x0, y), vec2(inner_w, LIST_H));
+            inset(ui.painter(), sec, t.strip_section);
+            section_label(ui, sec, title, narrow);
+            for k in 0..5 {
+                let sr = Rect::from_min_size(pos2(x0 + 2.0, sec.min.y + 15.0 + k as f32 * 17.0), vec2(inner_w - 4.0, 15.0));
+                if is_send {
+                    send_slot(app, ui, track, k, sr);
+                } else {
+                    insert_slot(app, ui, track, k, sr);
+                }
+            }
+            y += LIST_H + 4.0;
+        } else {
+            let sec = Rect::from_min_size(pos2(x0, y), vec2(inner_w, BADGE_H));
+            inset(ui.painter(), sec, t.strip_section);
+            let label = if narrow { short_label(title) } else { title };
+            ui.painter().text(pos2(sec.min.x + 5.0, sec.center().y), Align2::LEFT_CENTER, label, bold(9.0), t.section_label);
+            let badge = Rect::from_center_size(pos2(sec.max.x - 16.0, sec.center().y), vec2(24.0, 13.0));
+            inset(ui.painter(), badge, t.counter_bg);
+            let color = if used > 0 { t.counter_text } else { t.text_dim };
+            ui.painter().text(badge.center(), Align2::CENTER_CENTER, used.to_string(), bold(10.0), color);
+            ui.interact(sec, ui.id().with(("stack-count", id.0, is_send)), Sense::hover()).on_hover_text(format!("{title}: {used} of 5 in use"));
+            y += BADGE_H + 4.0;
+        }
+    }
+    match fold {
+        StackFold::Badges => {}
+        StackFold::BadgesOut => {
+            let or = Rect::from_min_size(pos2(x0 + 2.0, y), vec2(inner_w - 4.0, 16.0));
+            let mut c = ui.new_child(egui::UiBuilder::new().id_salt(("mix-output", id.0)).max_rect(or));
+            let resp = selector_box(&mut c, or.width(), or.height(), &route_name(app, &track.mixer.output), t.text);
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, "Output"));
+            route_popup(app, &resp, id, false);
+        }
+        StackFold::Full => {
+            let sec = Rect::from_min_size(pos2(x0, y), vec2(inner_w, IO_FULL_H));
+            inset(ui.painter(), sec, t.strip_section);
+            section_label(ui, sec, "I / O", narrow);
+            let in_r = Rect::from_min_size(pos2(x0 + 2.0, sec.min.y + 15.0), vec2(inner_w - 4.0, 16.0));
+            let out_r = Rect::from_min_size(pos2(x0 + 2.0, sec.min.y + 33.0), vec2(inner_w - 4.0, 16.0));
+            let mut c = ui.new_child(egui::UiBuilder::new().id_salt(("mix-input", id.0)).max_rect(in_r));
+            let resp = selector_box(&mut c, in_r.width(), in_r.height(), &input_name(app, track), t.text);
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, "Input"));
+            route_popup(app, &resp, id, true);
+            let mut c = ui.new_child(egui::UiBuilder::new().id_salt(("mix-output", id.0)).max_rect(out_r));
+            let resp = selector_box(&mut c, out_r.width(), out_r.height(), &route_name(app, &track.mixer.output), t.text);
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, "Output"));
+            route_popup(app, &resp, id, false);
+        }
     }
 }
 

@@ -12,8 +12,8 @@ use soundcraft_model::{TrackId, TrackKind};
 /// Sections a pane strip shows: inserts, sends, routing summary and the track colour.
 const ROWS: [&str; 4] = ["inserts_ae", "sends_ae", "io", "color"];
 /// The least strip heights; a shorter pane scrolls vertically instead of squeezing the fader.
-const FULL_HEIGHT: f32 = 620.0;
-const COMPACT_HEIGHT: f32 = 480.0;
+const FULL_HEIGHT: f32 = 250.0;
+const COMPACT_HEIGHT: f32 = 250.0;
 /// Height of the bar above the strips.
 const BAR_HEIGHT: f32 = 22.0;
 /// Space between strips.
@@ -27,6 +27,7 @@ fn opts(compact: bool) -> StripOpts {
         select_on_click: true,
         outline_selected: true,
         color_chip: true,
+        stacked: true,
     }
 }
 
@@ -68,7 +69,8 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
     let master_w = step;
     let master_rect = Rect::from_min_max(pos2((body.max.x - master_w).max(body.min.x), body.min.y), body.max);
     let scroll_rect = Rect::from_min_max(body.min, pos2(master_rect.min.x, body.max.y));
-    let snap = app.player.as_ref().filter(|_| app.meters_live()).map(|p| p.meters());
+    // The polled snapshot is taken out for the frame (strips borrow the app) and put back after.
+    let snap = app.meters_live().then(|| std::mem::take(&mut app.meter_snapshot));
     let tracks = visible_tracks(app);
     let height = body.height().max(if compact { COMPACT_HEIGHT } else { FULL_HEIGHT });
     let mut scroll_ui = ui.new_child(UiBuilder::new().max_rect(scroll_rect));
@@ -85,6 +87,9 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
     if let Some(id) = master {
         let mut master_ui = ui.new_child(UiBuilder::new().max_rect(Rect::from_min_size(master_rect.min, vec2(master_rect.width(), height))));
         mix_window::strip(app, &mut master_ui, id, snap.as_ref(), &o);
+    }
+    if let Some(s) = snap {
+        app.meter_snapshot = s;
     }
 }
 

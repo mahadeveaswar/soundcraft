@@ -1963,6 +1963,9 @@ fn draw_clip(
     if clip.edit_locked || clip.time_locked {
         painter.text(pos2(r.max.x - 10.0, r.min.y + 7.0), Align2::CENTER_CENTER, "🔒", regular(9.0), ck.clip_sync_mark);
     }
+    if selected {
+        clip_paint::selection_outline(painter, r.intersect(lane), ck.clip_corner);
+    }
     let _ = app;
 }
 
