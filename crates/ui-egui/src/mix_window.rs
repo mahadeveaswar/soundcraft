@@ -1318,7 +1318,7 @@ fn send_level_scale(ui: &mut Ui, db: f32) {
     ui.painter().line_segment([pos2(x, r.min.y), pos2(x, line_y + 3.0)], Stroke::new(2.0, t.counter_text));
 }
 
-fn send_route_menu(app: &mut SoundApp, ui: &mut Ui, id: TrackId, slot: usize, current: Option<&Route>) {
+pub(crate) fn send_route_menu(app: &mut SoundApp, ui: &mut Ui, id: TrackId, slot: usize, current: Option<&Route>) {
     let busses = app.engine.session().busses.clone();
     let search = MenuSearch::show(ui, egui::Id::new(("send-bus-search", id.0, slot)), "Search buses…");
     let visible: Vec<_> = busses.iter().filter(|bus| search.matches(&bus.name)).collect();
