@@ -51,6 +51,14 @@ pub fn tracks_and_groups(app: &mut SoundApp, ui: &mut Ui) {
     let total = ui.available_height();
     let header = Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), 22.0));
     panel_header(ui, "TRACKS");
+    {
+        // Header row: selected / total tracks.
+        let s = app.engine.session();
+        let text = format!("{} / {}", s.edit.selected_tracks.len(), s.tracks.len());
+        let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 16.0), Sense::hover());
+        ui.painter().text(pos2(r.min.x + 30.0, r.center().y), Align2::LEFT_CENTER, "Name", regular(10.0), t.text_dim);
+        ui.painter().text(pos2(r.max.x - 6.0, r.center().y), Align2::RIGHT_CENTER, text, regular(10.0), t.counter_text);
+    }
     let plus = Rect::from_center_size(pos2(header.max.x - 13.0, header.center().y), vec2(18.0, 18.0));
     let tip = format!("New Tracks… ({})", crate::shortcuts::shortcut_label("Cmd+Shift+N", ui.ctx().os().is_mac()));
     if crate::widgets::icon_button(&mut ui.new_child(egui::UiBuilder::new().max_rect(plus)), plus.size(), "plus", false, &tip).clicked() {

@@ -17,9 +17,11 @@ pub mod fonts;
 mod header_width;
 pub mod icons;
 pub mod info_row;
+mod loudness_pane;
 mod master_panel;
 pub mod menu_layout;
 pub mod menus;
+mod meter_pane;
 pub mod midi_audition;
 pub mod midi_editor;
 pub mod midi_editor_inspector;
@@ -59,6 +61,7 @@ mod transport_left;
 mod transport_right;
 pub mod video_track;
 pub mod video_window;
+mod visibility_pane;
 pub mod waveform;
 pub mod widgets;
 pub mod windows;
@@ -105,6 +108,10 @@ pub struct UiState {
     pub show_midi_editor: bool,
     /// The Master dock panel (Edit window): master meter and fader.
     pub show_master_panel: bool,
+    /// The Visibility, Meters and Loudness dock panels (Edit window).
+    pub show_visibility_pane: bool,
+    pub show_meter_panel: bool,
+    pub show_loudness_panel: bool,
     pub show_universe: bool,
     pub narrow_mix: bool,
     /// Mix window sections: inserts_ae, inserts_fj, sends_ae, sends_fj, io, comments, eq_curve, color.
@@ -208,6 +215,9 @@ impl Default for UiState {
             show_about: false,
             show_midi_editor: false,
             show_master_panel: false,
+            show_visibility_pane: false,
+            show_meter_panel: false,
+            show_loudness_panel: false,
             show_universe: false,
             narrow_mix: false,
             mix_views: vec!["inserts_ae".into(), "sends_ae".into(), "io".into(), "color".into()],
@@ -1191,7 +1201,11 @@ impl SoundApp {
             let meter_interval = if self.ui.window == MainWindow::Mix { 1.0 / 60.0 } else { 1.0 / 20.0 };
             if now - self.last_meter_poll >= meter_interval {
                 p.copy_meters(&mut self.meter_snapshot);
+                self.engine.set_live_loudness(self.meter_snapshot.loudness);
                 self.last_meter_poll = now;
+            }
+            if self.engine.take_loudness_reset() {
+                p.reset_loudness();
             }
             let snap = &self.meter_snapshot;
             for (id, m) in &snap.tracks {

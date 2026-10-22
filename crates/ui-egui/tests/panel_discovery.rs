@@ -92,6 +92,9 @@ fn menu_check_marks_match_the_panel_state() {
         (Panel::Memory, "window.memory_locations"),
         (Panel::History, "window.undo_history"),
         (Panel::Master, "window.master_panel"),
+        (Panel::Visibility, "window.visibility_pane"),
+        (Panel::Meter, "window.meter_panel"),
+        (Panel::Loudness, "window.loudness_panel"),
     ];
     for open in [true, false, true] {
         for (panel, _) in ids {
@@ -105,7 +108,10 @@ fn menu_check_marks_match_the_panel_state() {
         }
     }
     let labels: Vec<_> = panel_menu::entries(&app).into_iter().map(|e| e.1).collect();
-    assert_eq!(labels, ["Tracks and Groups", "Clips", "MIDI Editor", "Memory Locations", "Undo History", "Master"]);
+    assert_eq!(
+        labels,
+        ["Tracks and Groups", "Clips", "MIDI Editor", "Memory Locations", "Undo History", "Master", "Visibility", "Meters", "Loudness"]
+    );
     // The Window menu lists the new entries.
     let tree = menus::tree();
     let window = tree.iter().find(|n| n.label == "Window").unwrap();
@@ -140,4 +146,40 @@ fn old_saved_preferences_still_load() {
     assert!(loaded.audition, "a missing audition flag defaults to on");
     let bare: UiState = serde_json::from_str("{}").unwrap();
     assert!(bare.show_tracks_list && bare.audition);
+}
+
+#[test]
+fn visibility_pane_hides_tracks_and_counts_shown_over_total() {
+    let (ctx, mut app) = new_app();
+    app.run("ui.dock", json!({"operation": "open", "panel": "visibility"})).unwrap();
+    settle(&ctx, &mut app);
+    assert!(app.ui.docking.layout.contains(&Panel::Visibility));
+    let total = app.engine.session().tracks.len();
+    let shown = |app: &SoundApp| app.engine.session().tracks.iter().filter(|t| !t.hidden).count();
+    assert_eq!(shown(&app), total);
+    let id = app.engine.session().tracks[0].id.0;
+    app.run("track.hide", json!({"tracks": [id], "hidden": true})).unwrap();
+    settle(&ctx, &mut app);
+    assert_eq!(shown(&app), total - 1);
+}
+
+#[test]
+fn loudness_panel_reads_and_resets_the_live_meter() {
+    let (ctx, mut app) = new_app();
+    app.run("ui.dock", json!({"operation": "open", "panel": "loudness"})).unwrap();
+    app.run("ui.dock", json!({"operation": "open", "panel": "meter"})).unwrap();
+    settle(&ctx, &mut app);
+    app.engine.set_live_loudness(soundcraft_dsp::meter::LoudnessReading {
+        momentary: -20.0,
+        short_term: -21.0,
+        integrated: -22.0,
+        max_momentary: -18.0,
+        true_peak_db: -1.5,
+    });
+    let r = app.engine.execute("mix.loudness", &json!({})).unwrap();
+    assert_eq!(r["integrated"].as_f64(), Some(-22.0));
+    app.run("mix.loudness_reset", json!({})).unwrap();
+    assert!(app.engine.take_loudness_reset());
+    assert_eq!(app.engine.execute("mix.loudness", &json!({})).unwrap()["integrated"], -144.0);
+    settle(&ctx, &mut app);
 }
