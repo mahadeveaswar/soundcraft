@@ -60,7 +60,15 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("track.delete", "Delete", ["Track"], None, "{tracks?}", has_selection, delete),
         cmd!("track.rename", "Rename Track", [], None, "{track, name}", has_tracks, rename),
         cmd!("track.comments", "Track Comments", [], None, "{track, comments}", has_tracks, comments),
-        cmd!("track.color", "Track Color", [], None, "{tracks?, color: [r,g,b] | palette index}", has_selection, color),
+        cmd!(
+            "track.color",
+            "Track Color",
+            [],
+            None,
+            "{tracks?, color: [r,g,b] | \"#RRGGBB\" | palette index 0-15 (default set) or 16-99 (extended grid), apply_to_clips?: bool — also clears clips' own colours so they follow the track, one undo step}",
+            has_selection,
+            color
+        ),
         cmd!(
             "track.height",
             "Track Height",
@@ -759,13 +767,22 @@ fn color(e: &mut Engine, p: &Value) -> Result<Value> {
             let v: Vec<u8> = a.iter().map(|x| x.as_u64().unwrap_or(0).min(255) as u8).collect();
             [v.first().copied().unwrap_or(0), v.get(1).copied().unwrap_or(0), v.get(2).copied().unwrap_or(0)]
         }
-        Some(v) if v.is_u64() => soundcraft_model::TRACK_COLORS.get(v.as_u64().unwrap_or(0) as usize % 16).copied().unwrap_or([128, 128, 128]),
-        _ => return Err(bad("track.color", "`color` must be [r,g,b] or a palette index")),
+        Some(Value::String(s)) => super::track_palette::parse_hex(s).ok_or_else(|| bad("track.color", "a colour string must be \"#RRGGBB\""))?,
+        Some(v) if v.is_u64() => {
+            soundcraft_model::track_color_by_index(v.as_u64().unwrap_or(0)).ok_or_else(|| bad("track.color", "palette index must be 0-99"))?
+        }
+        _ => return Err(bad("track.color", "`color` must be [r,g,b], \"#RRGGBB\" or a palette index (0-15 default set, 16-99 extended grid)")),
     };
+    let with_clips = p.get("apply_to_clips").and_then(Value::as_bool).unwrap_or(false);
     let s = e.session_mut();
     for t in &tracks {
         if let Some(tr) = s.track_mut(*t) {
             tr.color = c;
+            if with_clips {
+                for clip in tr.playlists.iter_mut().flat_map(|pl| pl.clips.iter_mut()) {
+                    clip.color = None;
+                }
+            }
         }
     }
     Ok(json!({"color": c}))
@@ -964,6 +981,43 @@ fn route(e: &mut Engine, p: &Value, input: bool) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn kick_color(e: &Engine) -> [u8; 3] {
+        e.session().track_by_name("Kick").map(|t| t.color).unwrap()
+    }
+
+    #[test]
+    fn color_accepts_indices_hex_and_rejects_out_of_range() {
+        let mut e = crate::demo::demo_engine();
+        let run = |e: &mut Engine, c: Value| e.execute("track.color", &json!({"tracks": ["Kick"], "color": c}));
+        run(&mut e, json!(3)).unwrap();
+        assert_eq!(kick_color(&e), soundcraft_model::TRACK_COLORS[3]);
+        run(&mut e, json!(20)).unwrap();
+        assert_eq!(kick_color(&e), soundcraft_model::TRACK_PALETTE_EXT[4]);
+        run(&mut e, json!("#0A0B0C")).unwrap();
+        assert_eq!(kick_color(&e), [0x0A, 0x0B, 0x0C]);
+        assert!(run(&mut e, json!(100)).is_err());
+        assert!(run(&mut e, json!("#12")).is_err());
+        assert_eq!(kick_color(&e), [0x0A, 0x0B, 0x0C]);
+    }
+
+    #[test]
+    fn color_apply_to_clips_is_one_undo_step() {
+        let mut e = crate::demo::demo_engine();
+        let own = |e: &Engine| {
+            e.session().track_by_name("Kick").map(|t| t.playlists.iter().flat_map(|p| p.clips.iter()).filter(|c| c.color.is_some()).count()).unwrap()
+        };
+        let id = e.session().track_by_name("Kick").and_then(|t| t.playlist()).and_then(|p| p.clips.first()).map(|c| c.id.0).unwrap();
+        e.execute("clip.color", &json!({"clips": [id], "color": [1, 2, 3]})).unwrap();
+        assert_eq!(own(&e), 1);
+        e.execute("track.color", &json!({"tracks": ["Kick"], "color": 5})).unwrap();
+        assert_eq!(own(&e), 1, "plain colour change leaves own colours");
+        e.execute("track.color", &json!({"tracks": ["Kick"], "color": 6, "apply_to_clips": true})).unwrap();
+        assert_eq!(own(&e), 0);
+        e.undo();
+        assert_eq!(own(&e), 1);
+        assert_eq!(kick_color(&e), soundcraft_model::TRACK_COLORS[5]);
+    }
 
     #[test]
     fn comp_from_alternate_playlist() {

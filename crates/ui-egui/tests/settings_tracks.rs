@@ -93,3 +93,40 @@ fn junk_is_rejected_and_reset_palette_restores_the_built_in_set() {
     assert_eq!(h.state_mut().run("ui.theme_get", json!({})).unwrap()["track_palette"], json!([]));
     assert!(h.state().engine.track_palette().is_none());
 }
+
+#[test]
+fn a_swatch_opens_the_grid_popup_and_a_pick_sets_that_slot() {
+    let _g = own_palette();
+    let mut h = harness();
+    h.state_mut().run("ui.theme_reset", json!({"key": "track_palette"})).unwrap();
+    h.run_steps(2);
+    assert_eq!(h.query_all_by_label_contains("Colour #").count(), 0, "closed by default");
+    h.get_all_by_label("Track colour").nth(2).expect("third slot swatch").click();
+    h.run_steps(3);
+    // 84 extended swatches plus the 16 default ones.
+    assert_eq!(h.query_all_by_label_contains("Colour #").count(), 100);
+    let [r, g, b] = soundcraft_model::TRACK_PALETTE_EXT[30];
+    h.get_by_label(&format!("Colour #{r:02X}{g:02X}{b:02X}")).click();
+    h.run_steps(3);
+    let got = h.state_mut().run("ui.theme_get", json!({})).unwrap();
+    assert_eq!(got["track_palette"][2], format!("#{r:02X}{g:02X}{b:02X}"));
+    assert_eq!(h.state().ui.recent_track_colors.first().copied(), Some([r, g, b]));
+}
+
+#[test]
+fn an_invalid_hex_in_the_popup_shows_a_message() {
+    let _g = own_palette();
+    let mut h = harness();
+    h.get_all_by_label("Track colour").next().expect("first swatch").click();
+    h.run_steps(3);
+    assert_eq!(h.get_all_by_role(Role::TextInput).count(), 18, "one hex field more than the page");
+    h.get_all_by_role(Role::TextInput).last().expect("popup hex").click();
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, egui::Key::A);
+    h.run_steps(1);
+    h.event(Event::Text("zz".into()));
+    h.run_steps(1);
+    h.get_all_by_role(Role::TextInput).nth(1).expect("page hex").click();
+    h.run_steps(3);
+    assert!(h.query_all_by_label_contains("is not a colour").count() >= 1);
+}

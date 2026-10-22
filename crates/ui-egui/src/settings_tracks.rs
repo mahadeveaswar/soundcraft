@@ -6,6 +6,7 @@ use crate::SoundApp;
 use crate::settings_appearance::{bad_colour_message, hex_edit};
 use crate::theme::{Tokens, bold, regular};
 use crate::theme_doc::{self, TRACK_COLOR_COUNT};
+use crate::track_palette_ui;
 use egui::{Color32, Id, RichText, Ui, vec2};
 use serde_json::json;
 
@@ -27,17 +28,19 @@ pub fn page(app: &mut SoundApp, ui: &mut Ui) {
     let msg_id = Id::new("settings_tracks_message");
     let mut message = ui.data_mut(|d| d.get_temp::<String>(msg_id)).unwrap_or_default();
     ui.label(RichText::new("Track colours").font(bold(12.0)).color(t.text));
-    ui.label(RichText::new("The colours new tracks start with. Tracks that already exist keep theirs.").font(regular(11.0)).color(t.text_dim));
+    ui.label(
+        RichText::new("New tracks cycle through these 16 colours. Pick any colour from the full palette. Tracks that already exist keep theirs.")
+            .font(regular(11.0))
+            .color(t.text_dim),
+    );
     ui.add_space(6.0);
     let colors = palette(app);
     egui::Grid::new("settings_track_palette").num_columns(COLUMNS).spacing(vec2(14.0, 10.0)).show(ui, |ui| {
         for (i, [r, g, b]) in colors.iter().copied().enumerate() {
             let current = Color32::from_rgb(r, g, b);
             ui.vertical(|ui| {
-                let mut rgb = [r, g, b];
-                if ui.color_edit_button_srgb(&mut rgb).changed() && rgb != [r, g, b] {
-                    message = set(app, i, Color32::from_rgb(rgb[0], rgb[1], rgb[2]));
-                }
+                let target = track_palette_ui::Target::NewTrackSlot(i);
+                track_palette_ui::swatch_button(app, ui, Id::new(("settings_track_swatch", i)), [r, g, b], &target, vec2(64.0, 20.0));
                 match hex_edit(ui, Id::new(("settings_track_hex", i)), current, 64.0) {
                     Ok(Some(c)) => message = set(app, i, c),
                     Ok(None) => {}
