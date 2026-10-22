@@ -16,10 +16,11 @@ pub enum Panel {
     Memory,
     History,
     Master,
+    Inspector,
 }
 
 impl Panel {
-    pub const ALL: &[Self] = &[Self::Canvas, Self::Tracks, Self::Clips, Self::Midi, Self::Memory, Self::History, Self::Master];
+    pub const ALL: &[Self] = &[Self::Canvas, Self::Tracks, Self::Clips, Self::Midi, Self::Memory, Self::History, Self::Master, Self::Inspector];
     pub fn id(self) -> &'static str {
         match self {
             Self::Canvas => "canvas",
@@ -29,6 +30,7 @@ impl Panel {
             Self::Memory => "memory",
             Self::History => "history",
             Self::Master => "master",
+            Self::Inspector => "inspector",
         }
     }
     pub fn label(self) -> &'static str {
@@ -40,6 +42,7 @@ impl Panel {
             Self::Memory => "Memory Locations",
             Self::History => "Undo History",
             Self::Master => "Master",
+            Self::Inspector => "Inspector",
         }
     }
     /// The `zone` name of `ui.dock` `move` that puts the panel back on its default side.
@@ -61,6 +64,7 @@ impl Panel {
             Self::Memory => Zone::Bottom,
             Self::History => Zone::Right,
             Self::Master => Zone::Right,
+            Self::Inspector => Zone::Left,
         }
     }
     fn parse(id: &str) -> Result<Self, String> {
@@ -161,7 +165,11 @@ impl Workspace {
 
     pub fn validate_mix(&self) -> Result<(), String> {
         self.validate()?;
-        if self.layout.contains(&Panel::Clips) || self.layout.contains(&Panel::Midi) || self.layout.contains(&Panel::Master) {
+        if self.layout.contains(&Panel::Clips)
+            || self.layout.contains(&Panel::Midi)
+            || self.layout.contains(&Panel::Master)
+            || self.layout.contains(&Panel::Inspector)
+        {
             return Err("Clips, MIDI and Master panels belong to the Edit window".into());
         }
         Ok(())
@@ -310,6 +318,7 @@ fn sync(workspace: &mut Workspace, app: &crate::SoundApp, edit: bool) -> Result<
         workspace.set_visible(Panel::Clips, app.ui.show_clip_list)?;
         workspace.set_visible(Panel::Midi, app.ui.show_midi_editor)?;
         workspace.set_visible(Panel::Master, app.ui.show_master_panel)?;
+        workspace.set_visible(Panel::Inspector, app.ui.show_inspector)?;
     }
     Ok(())
 }
@@ -322,6 +331,7 @@ fn publish_visibility(app: &mut crate::SoundApp, workspace: &Workspace, edit: bo
         app.ui.show_clip_list = workspace.layout.contains(&Panel::Clips);
         app.ui.show_midi_editor = workspace.layout.contains(&Panel::Midi);
         app.ui.show_master_panel = workspace.layout.contains(&Panel::Master);
+        app.ui.show_inspector = workspace.layout.contains(&Panel::Inspector);
     }
 }
 
@@ -357,7 +367,11 @@ pub(crate) fn cancel_replaced_state(app: &crate::SoundApp, next: &crate::UiState
 }
 
 fn command_for(app: &mut crate::SoundApp, reset: bool, params: &Value, edit: bool) -> Result<Value, String> {
-    if !edit && ["panel", "target"].iter().any(|field| matches!(params.get(*field).and_then(Value::as_str), Some("clips" | "midi" | "master"))) {
+    if !edit
+        && ["panel", "target"]
+            .iter()
+            .any(|field| matches!(params.get(*field).and_then(Value::as_str), Some("clips" | "midi" | "master" | "inspector")))
+    {
         return Err("Clips, MIDI and Master panels belong to the Edit window".into());
     }
     let mut workspace = if edit { app.ui.docking.clone() } else { app.ui.mix_docking.clone() };
@@ -371,6 +385,7 @@ fn command_for(app: &mut crate::SoundApp, reset: bool, params: &Value, edit: boo
         app.ui.show_tracks_list = defaults.show_tracks_list;
         if edit {
             app.ui.show_clip_list = defaults.show_clip_list;
+            app.ui.show_inspector = defaults.show_inspector;
         }
         workspace = if edit { Workspace::default() } else { mix_default() };
         sync(&mut workspace, app, edit)?;
@@ -501,6 +516,7 @@ impl craft_ui::docking::DockContent<Panel> for Content<'_> {
             Panel::Memory => crate::panels::memory_locations(app, ui),
             Panel::History => crate::panels::undo_history(app, ui),
             Panel::Master => crate::master_panel::show(app, ui),
+            Panel::Inspector => crate::inspector::show(app, ui),
         }
     }
 
@@ -543,6 +559,7 @@ fn panel_limits(panel: &Panel) -> PanelLimits {
         Panel::Memory => (egui::vec2(260.0, 160.0), 1_000_000.0),
         Panel::History => (egui::vec2(200.0, 160.0), 720.0),
         Panel::Master => (egui::vec2(120.0, 160.0), 420.0),
+        Panel::Inspector => (egui::vec2(170.0, 160.0), 420.0),
     };
     PanelLimits { min, max: egui::vec2(max_width, 1_000_000.0) }
 }

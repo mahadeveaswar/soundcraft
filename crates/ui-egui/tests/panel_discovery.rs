@@ -92,6 +92,7 @@ fn menu_check_marks_match_the_panel_state() {
         (Panel::Memory, "window.memory_locations"),
         (Panel::History, "window.undo_history"),
         (Panel::Master, "window.master_panel"),
+        (Panel::Inspector, "window.inspector"),
     ];
     for open in [true, false, true] {
         for (panel, _) in ids {
@@ -105,7 +106,7 @@ fn menu_check_marks_match_the_panel_state() {
         }
     }
     let labels: Vec<_> = panel_menu::entries(&app).into_iter().map(|e| e.1).collect();
-    assert_eq!(labels, ["Tracks and Groups", "Clips", "MIDI Editor", "Memory Locations", "Undo History", "Master"]);
+    assert_eq!(labels, ["Tracks and Groups", "Inspector", "Clips", "MIDI Editor", "Memory Locations", "Undo History", "Master"]);
     // The Window menu lists the new entries.
     let tree = menus::tree();
     let window = tree.iter().find(|n| n.label == "Window").unwrap();

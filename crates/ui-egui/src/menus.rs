@@ -29,6 +29,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str, Option<&str>)] = &[
     ("window.hide_floating", "Hide All Floating Windows", "Window > Hide All Floating Windows", Some("Cmd+Ctrl+W")),
     ("window.midi_editor", "MIDI Editor", "Window > MIDI Editor", None),
     ("window.master_panel", "Master", "", None),
+    ("window.inspector", "Inspector", "Window > Inspector", None),
     ("window.universe", "Universe", "View > Other Displays > Universe", Some("Alt+7")),
     ("window.video", "Video", "Window > Video", Some("Cmd+9")),
     ("window.video_universe", "Video Universe", "Window > Video Universe", None),
@@ -445,6 +446,7 @@ fn checked_state(app: &SoundApp, path: &str, id: Option<&str>) -> bool {
         Some("window.undo_history") => app.ui.show_undo_history,
         Some("window.midi_editor") => app.ui.show_midi_editor,
         Some("window.master_panel") => app.ui.show_master_panel,
+        Some("window.inspector") => app.ui.show_inspector,
         Some("window.narrow_mix") => app.ui.narrow_mix,
         Some("window.renderer") => app.extra.show_renderer,
         Some("window.ui_customization") => app.extra.show_ui_customization,
@@ -674,6 +676,7 @@ pub fn run_ui_command(app: &mut SoundApp, id: &str, p: &Value) -> Option<Result<
         "window.about" => toggle(&mut app.ui.show_about),
         "window.midi_editor" => toggle(&mut app.ui.show_midi_editor),
         "window.master_panel" => toggle(&mut app.ui.show_master_panel),
+        "window.inspector" => toggle(&mut app.ui.show_inspector),
         "window.midi_front" => {
             app.ui.show_midi_editor = true;
             json!({"value": true})
