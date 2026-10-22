@@ -9,7 +9,7 @@ use egui::{Align2, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use serde_json::{Value, json};
 
 /// The panels a user can hide and show, in menu order.
-pub const LIST: [Panel; 10] = [
+pub const LIST: [Panel; 11] = [
     Panel::Tracks,
     Panel::Inspector,
     Panel::Clips,
@@ -20,6 +20,7 @@ pub const LIST: [Panel; 10] = [
     Panel::Visibility,
     Panel::Meter,
     Panel::Loudness,
+    Panel::Mixer,
 ];
 
 const HINT_THICKNESS: f32 = 20.0;
@@ -38,6 +39,7 @@ pub fn is_visible(app: &SoundApp, panel: Panel) -> bool {
         Panel::Meter => app.ui.show_meter_panel,
         Panel::Loudness => app.ui.show_loudness_panel,
         Panel::Inspector => app.ui.show_inspector,
+        Panel::Mixer => app.ui.show_mixer_panel,
         Panel::Canvas => true,
     }
 }
@@ -47,7 +49,10 @@ pub fn panels_for(edit: bool) -> Vec<Panel> {
     LIST.iter()
         .copied()
         .filter(|p| {
-            edit || !matches!(p, Panel::Clips | Panel::Midi | Panel::Master | Panel::Visibility | Panel::Meter | Panel::Loudness | Panel::Inspector)
+            edit || !matches!(
+                p,
+                Panel::Clips | Panel::Midi | Panel::Master | Panel::Visibility | Panel::Meter | Panel::Loudness | Panel::Inspector | Panel::Mixer
+            )
         })
         .collect()
 }
@@ -230,8 +235,8 @@ mod tests {
     fn mix_has_no_clips_or_midi_entries() {
         let mix = panels_for(false);
         assert!(!mix.contains(&Panel::Clips) && !mix.contains(&Panel::Midi));
-        assert_eq!(panels_for(true).len(), 10);
-        assert!(!mix.contains(&Panel::Master) && !mix.contains(&Panel::Inspector));
+        assert_eq!(panels_for(true).len(), 11);
+        assert!(!mix.contains(&Panel::Master) && !mix.contains(&Panel::Inspector) && !mix.contains(&Panel::Mixer));
     }
 
     #[test]

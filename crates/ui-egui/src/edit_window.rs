@@ -1,5 +1,6 @@
 //! The Edit window: toolbar, rulers, track headers and playlists.
 
+use crate::clip_paint::{self, ClipPaint, ClipState};
 use crate::dialogs::Dialog;
 use crate::spot::Spot;
 use crate::theme::{Tokens, bold, clip_colors, regular, rgb};
@@ -187,16 +188,19 @@ fn dock_tabs(app: &mut SoundApp, ui: &mut Ui) {
         ui.painter().galley(pos2(tr.min.x + 8.0, tr.center().y - g.size().y * 0.5), g, col);
         let resp = ui.interact(tr, ui.id().with(("dock", label)), Sense::click());
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
-        if resp.clicked() {
+        if resp.clicked() && !crate::docking::switch_lower_tab(app, id) {
             let _ = app.run(id, json!({}));
         }
         if from_right { x0 - 6.0 } else { tr.max.x + 6.0 }
     };
     // Left strip: the Tracks pane and the MIDI editor, then the other lists.
     let mut x = r.min.x + 10.0;
+    // The Editor and the Mixer are exclusive tabs: only the one showing in the shared group is lit.
+    let lower = crate::docking::lower_tab_active(&app.ui.docking);
+    let lit = |panel: crate::docking::Panel, shown: bool| shown && lower.is_none_or(|active| active == panel);
     for (label, on, id) in [
         ("TRACK", app.ui.show_tracks_list, "window.track_list"),
-        ("EDITOR", app.ui.show_midi_editor, "window.midi_editor"),
+        ("EDITOR", lit(crate::docking::Panel::Midi, app.ui.show_midi_editor), "window.midi_editor"),
         ("MEMORY LOCATIONS", app.ui.show_memory_locations, "window.memory_locations"),
         ("UNDO HISTORY", app.ui.show_undo_history, "window.undo_history"),
     ] {
@@ -210,6 +214,7 @@ fn dock_tabs(app: &mut SoundApp, ui: &mut Ui) {
         ("MASTER", app.ui.show_master_panel, "window.master_panel"),
         ("METERS", app.ui.show_meter_panel, "window.meter_panel"),
         ("LOUDNESS", app.ui.show_loudness_panel, "window.loudness_panel"),
+        ("MIXER", lit(crate::docking::Panel::Mixer, app.ui.show_mixer_panel), "window.mixer_panel"),
     ] {
         rx = tab(app, ui, rx, label, on, id, true);
     }
@@ -903,8 +908,8 @@ fn track_row(app: &mut SoundApp, ui: &mut Ui, id: TrackId, row: Rect, tl: Rect, 
     }
     let main_h = track.height.points();
     let lane = lane_rect(track, row, tl);
-    ui.painter().rect_filled(head, 0.0, head_bg);
-    ui.painter().rect_filled(Rect::from_min_size(head.min, vec2(STRIP_W, head.height())), 0.0, rgb(track.color));
+    header_background(ui.painter(), head, head_bg);
+    header_strip(ui.painter(), Rect::from_min_size(head.min, vec2(STRIP_W, head.height())), track.color);
     ui.painter().line_segment([pos2(head.min.x, row.max.y + 0.5), pos2(tl.max.x, row.max.y + 0.5)], Stroke::new(1.0, t.border));
     ui.painter().hline(head.min.x + STRIP_W..=head.max.x, head.min.y + 0.5, Stroke::new(1.0, t.edge_light));
     track_header(app, ui, track, head, selected, head_bg);
@@ -919,11 +924,12 @@ fn track_row(app: &mut SoundApp, ui: &mut Ui, id: TrackId, row: Rect, tl: Rect, 
     }
     let view = Range::new(sample_at(&s, tl, tl.min.x), sample_at(&s, tl, tl.max.x));
     let auto_view = AutoParam::parse(&track.view);
+    let lane_clips = track.clips().iter().filter(|c| c.range().overlaps(&view)).count();
     for clip in track.clips() {
         if !clip.range().overlaps(&view) {
             continue;
         }
-        draw_clip(app, &painter, &s, track, clip, tl, lane, auto_view.is_some());
+        draw_clip(app, &painter, &s, track, clip, tl, lane, (auto_view.is_some(), lane_clips));
     }
     draw_live_take(app, &painter, &s, track, tl, lane);
     crate::video_track::draw_lane(app, &painter, &s, track, tl, lane);
@@ -968,7 +974,7 @@ fn playlist_lanes(app: &mut SoundApp, ui: &mut Ui, track: &Track, row: Rect, mai
         ui.painter().text(pos2(head.min.x + 4.0, head.center().y), Align2::LEFT_CENTER, &pl.name, regular(10.5), t.text_dim);
         let painter = ui.painter().with_clip_rect(lane.intersect(ui.clip_rect()));
         for c in &pl.clips {
-            draw_clip(app, &painter, &s, track, c, tl, lane, false);
+            draw_clip(app, &painter, &s, track, c, tl, lane, (false, pl.clips.len()));
         }
         let resp = ui.interact(lane, ui.id().with(("pl_lane", track.id.0, i)), Sense::click());
         if resp.clicked()
@@ -1026,6 +1032,18 @@ pub(crate) fn name_drag_reorder(app: &mut SoundApp, ui: &mut Ui, head: Rect, id:
 }
 
 /// Drag the bottom edge of a track header to resize the track (snaps to the height presets).
+/// The header block: left corners rounded by the `header_corner` token, 1 pt gap above and below.
+pub(crate) fn header_background(painter: &egui::Painter, head: Rect, bg: Color32) {
+    let radius = Tokens::current().header_corner;
+    painter.rect_filled(head.shrink2(vec2(0.0, 0.5)), CornerRadius { nw: radius, sw: radius, ne: 0, se: 0 }, bg);
+}
+
+/// The header colour strip, glossy and rounded like the clips.
+pub(crate) fn header_strip(painter: &egui::Painter, strip: Rect, color: [u8; 3]) {
+    let t = Tokens::current();
+    clip_paint::strip(painter, strip.shrink2(vec2(0.0, 0.5)), &ClipPaint::strip_from_tokens(&t, rgb(color), ClipState::Normal, 1));
+}
+
 pub(crate) fn header_resize_edge(app: &mut SoundApp, ui: &mut Ui, track: &Track, head: Rect) {
     let id = track.id;
     // Drag the bottom edge to resize (snaps to the height presets).
@@ -1549,6 +1567,7 @@ pub(crate) fn track_context_menu(app: &mut SoundApp, ui: &mut Ui, id: TrackId) {
         }
         ui.close();
     }
+    ui.menu_button("Colour...", |ui| crate::track_palette_ui::popup(app, ui, &selection));
     ui.separator();
     for (label, cmd) in items {
         if ui.button(label).clicked() {
@@ -1718,7 +1737,27 @@ fn grid_veil(line: Color32, bg: Color32) -> Color32 {
     }
 }
 
-fn draw_clip(app: &SoundApp, painter: &egui::Painter, s: &Session, track: &Track, clip: &Clip, tl: Rect, lane: Rect, dim: bool) {
+/// How a clip is shown to the painter: muted or dimmed wins over selected.
+fn clip_state(selected: bool, muted: bool) -> ClipState {
+    if muted {
+        ClipState::Muted
+    } else if selected {
+        ClipState::Selected
+    } else {
+        ClipState::Normal
+    }
+}
+
+fn draw_clip(
+    app: &SoundApp,
+    painter: &egui::Painter,
+    s: &Session,
+    track: &Track,
+    clip: &Clip,
+    tl: Rect,
+    lane: Rect,
+    (dim, lane_clips): (bool, usize),
+) {
     let ck = Tokens::current();
     let x0 = x_of(s, tl, clip.start);
     let x1 = x_of(s, tl, clip.end()).max(x0 + 1.0);
@@ -1729,17 +1768,24 @@ fn draw_clip(app: &SoundApp, painter: &egui::Painter, s: &Session, track: &Track
             && s.edit.selection.start <= clip.start
             && s.edit.selection.end >= clip.end());
     let color = clip.color.unwrap_or(track.color);
-    let (mut body, bar, mut wave) = clip_colors(color, selected);
+    let (body, bar, mut wave) = clip_colors(color, selected);
     if clip.muted || dim {
-        body = body.gamma_multiply(0.45);
         wave = ck.clip_muted;
     }
     let body = if s.edit.flag("view.clip.transparency") { body.gamma_multiply(0.55) } else { body };
-    painter.rect(r, CornerRadius::same(2), body, Stroke::new(1.0, crate::theme::clip_outline(color)), StrokeKind::Inside);
+    let state = clip_state(selected, clip.muted || dim);
+    let outline = crate::theme::clip_outline(color);
+    clip_paint::body(painter, r, &ClipPaint::from_tokens(&ck, body, outline, state, lane_clips));
     let name_h = clip_name_height(s, lane);
     if name_h > 0.0 {
         let nb = Rect::from_min_max(r.min, pos2(r.max.x, r.min.y + name_h));
-        painter.rect_filled(nb, CornerRadius { nw: 2, ne: 2, sw: 0, se: 0 }, if clip.muted { ck.clip_muted } else { bar });
+        // A muted clip keeps its flat muted bar; otherwise the bar shares the body's gloss.
+        let bar_paint = if clip.muted {
+            ClipPaint { gloss: 0.0, ..ClipPaint::from_tokens(&ck, ck.clip_muted, outline, ClipState::Normal, lane_clips) }
+        } else {
+            ClipPaint::from_tokens(&ck, bar, outline, ClipState::Normal, lane_clips)
+        };
+        clip_paint::name_bar(painter, nb, &bar_paint);
         let name_clip = nb.intersect(lane);
         painter.with_clip_rect(name_clip).text(
             pos2(nb.min.x.max(lane.min.x) + 4.0, nb.center().y),
@@ -3347,7 +3393,11 @@ mod tests {
             .iter()
             .filter_map(|shape| match &shape.shape {
                 // The waveform's columns snap to physical pixels and fade out over half of one.
-                Shape::Mesh(mesh) if !mesh.vertices.is_empty() && mesh.vertices.iter().all(|vertex| clip_rect.expand(1.0).contains(vertex.pos)) => {
+                Shape::Mesh(mesh)
+                    if !mesh.vertices.is_empty()
+                        && !clip_paint::is_gloss_mesh(mesh)
+                        && mesh.vertices.iter().all(|vertex| clip_rect.expand(1.0).contains(vertex.pos)) =>
+                {
                     Some(mesh.vertices.iter().map(|vertex| vertex.pos).collect())
                 }
                 _ => None,
@@ -4270,5 +4320,42 @@ mod ruler_label_tests {
             assert_eq!(txt, ruler_label(id));
             assert_eq!(right, HEADER_W - 12.0);
         }
+    }
+    /// Tiny clips take the flat, square path; gloss 0 draws the old flat look (one rounded rect,
+    /// no gradient mesh); a glossy clip adds exactly one mesh.
+    #[test]
+    fn clip_painting_takes_the_flat_path_at_tiny_sizes_and_when_gloss_is_off() {
+        use crate::clip_paint::{CROWDED_LANE, corner, is_flat};
+        assert!(is_flat(vec2(2.0, 40.0), 1.0, ClipState::Normal, 1));
+        assert!(is_flat(vec2(100.0, 5.0), 1.0, ClipState::Normal, 1));
+        assert_eq!((corner(vec2(2.0, 40.0), 4), corner(vec2(100.0, 5.0), 4)), (0, 0));
+        assert!(!is_flat(vec2(100.0, 40.0), 1.0, ClipState::Selected, 1));
+        assert!(is_flat(vec2(100.0, 40.0), 1.0, ClipState::Normal, CROWDED_LANE + 1));
+        assert_eq!(clip_state(true, true), ClipState::Muted);
+        assert_eq!(clip_state(true, false), ClipState::Selected);
+        assert_eq!(clip_state(false, false), ClipState::Normal);
+        let ctx = egui::Context::default();
+        let mut shapes = Vec::new();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let ctx = ui.ctx();
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            let t = Tokens::DARK;
+            let r = Rect::from_min_size(pos2(0.0, 0.0), vec2(120.0, 40.0));
+            let count = |ctx: &egui::Context| {
+                ctx.graphics_mut(|g| {
+                    let all: Vec<_> = g.entry(egui::LayerId::background()).all_entries().map(|s| matches!(s.shape, egui::Shape::Mesh(_))).collect();
+                    (all.len(), all.iter().filter(|m| **m).count())
+                })
+            };
+            let base = Color32::from_rgb(40, 90, 60);
+            let flat = ClipPaint { gloss: 0.0, ..ClipPaint::from_tokens(&t, base, t.clip_outline_dark, ClipState::Normal, 1) };
+            clip_paint::body(&painter, r, &flat);
+            shapes.push(count(ctx));
+            clip_paint::body(&painter, r, &ClipPaint::from_tokens(&t, base, t.clip_outline_dark, ClipState::Normal, 1));
+            shapes.push(count(ctx));
+        });
+        out.textures_delta.clear();
+        assert_eq!(shapes[0], (1, 0), "gloss off: one rounded rect, no mesh");
+        assert_eq!(shapes[1].1, 1, "gloss on: one gradient mesh");
     }
 }

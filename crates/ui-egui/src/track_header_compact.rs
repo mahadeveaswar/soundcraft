@@ -297,9 +297,9 @@ pub(crate) fn show(app: &mut SoundApp, ui: &mut Ui, track: &Track, head: Rect, s
     let abs = |r: Rect| r.translate(head.min.to_vec2());
     let p = ui.painter().clone();
     // Cover the classic strip, then draw ours.
-    p.rect_filled(head, 0.0, head_bg);
+    crate::edit_window::header_background(&p, head, head_bg);
     p.hline(head.x_range(), head.min.y + 0.5, Stroke::new(1.0, t.edge_light));
-    p.rect_filled(abs(lay.strip), 0.0, rgb(track.color));
+    crate::edit_window::header_strip(&p, abs(lay.strip), track.color);
     crate::folder_ui::draw_child_guides(&p, head, app.engine.session(), track);
 
     let strip_col = rgb(track.color);

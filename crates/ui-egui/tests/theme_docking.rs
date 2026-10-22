@@ -19,6 +19,7 @@ fn shared_panels_and_controls_follow_manual_and_live_system_appearance() {
             "window.meter_panel",
             "window.loudness_panel",
             "window.inspector",
+            "window.mixer_panel",
         ] {
             app.run(id, json!({})).unwrap();
         }

@@ -47,6 +47,15 @@ pub(crate) fn swatch_button(app: &mut SoundApp, ui: &mut Ui, id: Id, current: [u
     resp
 }
 
+/// The colour popup body for the tracks with these ids (a context menu entry shows it): the grid,
+/// recent picks, hex field and "Apply to this track's clips", all acting on every listed track.
+pub(crate) fn popup(app: &mut SoundApp, ui: &mut Ui, tracks: &[u64]) {
+    let ids: Vec<TrackId> = tracks.iter().map(|t| TrackId(*t)).collect();
+    let current = ids.first().and_then(|id| app.engine.session().track(*id)).map_or([128, 128, 128], |t| t.color);
+    let id = Id::new(("track-colour-popup", tracks.first().copied().unwrap_or(0)));
+    contents(app, ui, id, current, &Target::Tracks(ids));
+}
+
 /// One clickable swatch cell; returns whether it was clicked.
 fn cell(ui: &mut Ui, c: [u8; 3], current: [u8; 3], size: f32) -> bool {
     let t = Tokens::current();
