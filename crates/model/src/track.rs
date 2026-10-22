@@ -244,6 +244,9 @@ pub struct Track {
     /// Pinned to top in the Edit window.
     #[serde(default)]
     pub pinned: bool,
+    /// Automation lanes shown under the track (`automation.lane_show`).
+    #[serde(default)]
+    pub shown_lanes: Vec<crate::ShownLane>,
 }
 
 fn yes() -> bool {
@@ -283,6 +286,7 @@ impl Track {
             ticks_timebase: kind.is_midi(),
             elastic: None,
             pinned: false,
+            shown_lanes: Vec::new(),
         }
     }
 

@@ -15,7 +15,9 @@ mod session;
 mod source;
 mod track;
 
-pub use automation::{AutoParam, AutomationLane, AutomationMode, AutomationPoint};
+pub use automation::{
+    AutoParam, AutomationLane, AutomationMode, AutomationPoint, LANE_HEIGHT_DEFAULT, LANE_HEIGHT_MAX, LANE_HEIGHT_MIN, ShownLane, slot_letter,
+};
 pub use clip::{Clip, ClipContent, Fade, FadeShape};
 pub use ids::{BusId, ClipId, GroupId, MarkerId, SourceId, TrackId};
 pub use markers::{Group, MarkerKind, MemoryLocation};

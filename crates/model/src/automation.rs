@@ -130,6 +130,62 @@ pub struct AutomationPoint {
     pub value: f32,
 }
 
+impl AutoParam {
+    /// The id `parse` accepts, so `parse(&p.id()) == Some(p)`.
+    pub fn id(&self) -> String {
+        let letter = |i: u8| char::from(b'a'.saturating_add(i.min(25)));
+        match self {
+            AutoParam::Volume => "volume".into(),
+            AutoParam::Pan(0) => "pan".into(),
+            AutoParam::Pan(_) => "pan2".into(),
+            AutoParam::Mute => "mute".into(),
+            AutoParam::SendLevel(i) => format!("send_{}_level", letter(*i)),
+            AutoParam::SendPan(i) => format!("send_{}_pan", letter(*i)),
+            AutoParam::SendMute(i) => format!("send_{}_mute", letter(*i)),
+            AutoParam::Plugin { slot, param } => format!("plugin:{}:{param}", letter(*slot)),
+        }
+    }
+
+    /// An on/off parameter: shown as a toggle instead of a value field.
+    pub fn is_toggle(&self) -> bool {
+        matches!(self, AutoParam::Mute | AutoParam::SendMute(_))
+    }
+}
+
+/// Default, smallest and largest height (points) of a shown automation lane.
+pub const LANE_HEIGHT_DEFAULT: f32 = 72.0;
+pub const LANE_HEIGHT_MIN: f32 = 36.0;
+pub const LANE_HEIGHT_MAX: f32 = 320.0;
+
+fn default_lane_height() -> f32 {
+    LANE_HEIGHT_DEFAULT
+}
+
+/// An automation lane shown under its track in the Edit window (view state saved with the session).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ShownLane {
+    pub param: AutoParam,
+    #[serde(default = "default_lane_height")]
+    pub height: f32,
+    /// Locked lanes refuse breakpoint edits made with the mouse.
+    #[serde(default)]
+    pub locked: bool,
+    /// The lane switches to the parameter the user is moving.
+    #[serde(default)]
+    pub follow: bool,
+}
+
+impl ShownLane {
+    pub fn new(param: AutoParam) -> Self {
+        ShownLane { param, height: LANE_HEIGHT_DEFAULT, locked: false, follow: false }
+    }
+
+    /// `h` limited to the allowed range (NaN gives the default).
+    pub fn clamp_height(h: f32) -> f32 {
+        if h.is_nan() { LANE_HEIGHT_DEFAULT } else { h.clamp(LANE_HEIGHT_MIN, LANE_HEIGHT_MAX) }
+    }
+}
+
 /// A breakpoint automation lane. Points are kept sorted by time.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AutomationLane {
