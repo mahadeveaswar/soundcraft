@@ -1102,6 +1102,38 @@ pub fn session_file(path: &str) -> PathBuf {
     if p.extension().is_none() && !is_file { p.with_extension(soundcraft_model::SESSION_EXTENSION) } else { p }
 }
 
+/// The files in `dir` with extension `ext`, as (stem, path) sorted by stem. A folder the read root
+/// refuses or that is missing lists nothing.
+pub(crate) fn files_with_extension(dir: &Path, ext: &str) -> Vec<(String, PathBuf)> {
+    if crate::file_access::check_read(dir).is_err() {
+        return Vec::new();
+    }
+    let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut found: Vec<(String, PathBuf)> = rd
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == ext) && p.is_file())
+        .filter_map(|p| p.file_stem().and_then(|s| s.to_str()).map(|s| (s.to_string(), p.clone())))
+        .collect();
+    found.sort();
+    found
+}
+
+/// Is `dir` an existing folder (no read-root check: used for the app's own folders)?
+pub(crate) fn dir_exists(dir: &Path) -> bool {
+    dir.is_dir()
+}
+
+/// Does the path exist, as far as the write root lets us see?
+pub(crate) fn path_exists(path: &Path) -> bool {
+    crate::file_access::check_write(path).is_ok() && path.exists()
+}
+
+/// Creates `dir` and its parents, if the write root allows it.
+pub(crate) fn ensure_dir(dir: &Path) -> Result<()> {
+    crate::file_access::check_write(dir).map_err(EngineError::Io)?;
+    std::fs::create_dir_all(dir).map_err(|err| EngineError::Io(format!("{}: {err}", dir.display())))
+}
+
 /// True when `command` would write a session over the existing `file`. Save, Save As and Save
 /// Copy In may write the open session's own file; other commands never ask.
 pub fn replaces(e: &Engine, command: &str, file: &Path) -> bool {

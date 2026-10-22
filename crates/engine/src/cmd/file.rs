@@ -37,16 +37,7 @@ pub fn specs() -> Vec<CommandSpec> {
             let path = str_param(p, "path").ok_or_else(|| bad("session.save_template", "`path` required"))?.to_string();
             let file = crate::io::session_file(&path);
             refuse_replacing(e, "session.save_template", &file, p)?;
-            let mut s = e.session().clone();
-            for t in &mut s.tracks { for pl in &mut t.playlists { pl.clips.clear() } }
-            s.sources.clear();
-            s.videos.clear();
-            let text = s.to_json().map_err(|err| EngineError::Io(err.to_string()))?;
-            if cfg!(target_arch = "wasm32") {
-                crate::io::write_file(&file.to_string_lossy(), text.as_bytes())?;
-            } else {
-                crate::io::replace_file(&file.with_extension("scraft.tmp"), &file, text.as_bytes())?;
-            }
+            write_template(e, &file)?;
             Ok(json!({"path": file}))
         }),
         cmd!(noundo "session.revert", "Revert Session to Saved...", ["File"], None, "{}", |e| if e.path.is_some() { Ok(()) } else { Err("the session has not been saved".into()) }, |e, _| {
@@ -194,6 +185,24 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(query "file.get_info", "Get Info...", ["File"], None, "{}", always, |e, _| Ok(crate::inspect::session(e, false))),
         cmd!(noundo "app.quit", "Quit", [], Some("Cmd+Q"), "{}", always, |_, _| Ok(json!({"quit": true}))),
     ]
+}
+
+/// Writes the open session as a template: tracks, mixer and plugin state kept, clips and media dropped.
+pub(crate) fn write_template(e: &Engine, file: &std::path::Path) -> Result<()> {
+    let mut s = e.session().clone();
+    for t in &mut s.tracks {
+        for pl in &mut t.playlists {
+            pl.clips.clear()
+        }
+    }
+    s.sources.clear();
+    s.videos.clear();
+    let text = s.to_json().map_err(|err| EngineError::Io(err.to_string()))?;
+    if cfg!(target_arch = "wasm32") {
+        crate::io::write_file(&file.to_string_lossy(), text.as_bytes())
+    } else {
+        crate::io::replace_file(&file.with_extension("scraft.tmp"), file, text.as_bytes())
+    }
 }
 
 /// Writing a session over an existing file needs `replace: true` (see `io::replaces`).
