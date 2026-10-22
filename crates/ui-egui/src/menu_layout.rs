@@ -325,6 +325,20 @@ mod tests {
     }
 
     #[test]
+    fn template_items_follow_save_as_template_in_both_layouts() {
+        let extra = menus::ui_aliases();
+        for layout in [MenuLayout::Standard, MenuLayout::Classic] {
+            let roots = display_tree(layout);
+            let file = roots.iter().find(|n| n.label == "File").unwrap();
+            let labels: Vec<&str> = file.children.iter().map(|n| n.label.as_str()).collect();
+            let at = labels.iter().position(|l| *l == "Save As Template...").unwrap();
+            assert_eq!(&labels[at + 1..at + 3], ["New from Template...", "Instrument Rack..."], "{layout:?}");
+        }
+        assert_eq!(menus::command_for_path("File > New from Template...", &extra).as_deref(), Some("template.new_session"));
+        assert_eq!(menus::command_for_path("File > Instrument Rack...", &extra).as_deref(), Some("template.instrument_rack"));
+    }
+
+    #[test]
     fn help_commands_open_their_window_and_the_layout_command_round_trips() {
         let mut app = SoundApp::new(soundcraft_engine::Engine::default(), None, crate::Services::default());
         assert_eq!(app.ui.menu_layout, MenuLayout::Standard);
