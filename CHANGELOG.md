@@ -4,6 +4,13 @@ Dated entries, newest first. Each entry groups changes as Added, Changed, Fixed 
 
 ## 2026-10-22
 
+### Track Inspector, palette, glossy clips and Mixer pane (mac)
+- Inspector: the dock panel now has collapsible sections (header with inline rename, colour swatch and mute/solo/record/monitor buttons; Routing; Instrument; Inserts with an "Add EQ" button; Sends; Channel with fader, pan, trim and meter; Notes) for the selected track, shown by track kind. Collapse state is saved in the UI preferences. The EQ curve view and MIDI transpose, velocity and channel controls are not part of this release.
+- Track colours: an 84-colour palette picker (12 hues by 6 tones plus a neutral row) with the default 16 colours, the last 8 picks, a hex field and "Apply to this track's clips". It opens from the Inspector swatch, the Settings > Track colours slots and a new "Colour..." item in the track header context menu (acts on every selected track).
+- `track.color` takes a palette index 0-15 (the default set) or 16-99 (the extended grid), a `"#RRGGBB"` string or `[r,g,b]`, plus `apply_to_clips` (clips that carry their own colour follow the track again, one undo step). Clips without their own colour already follow the track. New tracks still cycle through the 16-colour set (and any palette override).
+- Glossy rounded clips and track headers: clip bodies, clip name bars, header colour strips and the Mix strip name chip get a soft vertical gradient, a top highlight and rounded corners. New theme tokens `clip_gloss` (0 flat, 1 full; Dark 1.0, Light 0.8, Midnight 0.6), `clip_corner` and `header_corner`, with a "Glossy clips" switch and a "Corner radius" slider in Settings > Appearance. Tiny, muted and very crowded clips fall back to the flat look; gloss is on by default.
+- Mixer pane: a bottom dock panel (`window.mixer_panel`, `ui.dock` panel `mixer`, Window menu, toolbar and a MIXER dock tab) with the Mix strips for the visible tracks and a pinned Master, a Compact switch and selection that follows the track list. Edit window only. It shares the lower zone with the MIDI editor as exclusive Editor / Mixer tabs. The Mix window strip is now reusable with options (`StripOpts`) and looks the same by default.
+
 ### Added
 - Keyboard icon (drawn in code) and, on instrument track headers, a key button that opens the loaded instrument's plugin window.
 - Controller commands for the MIDI editor: `midi.ctrl_list`, `midi.ctrl_set`, `midi.ctrl_clear` (continuous controllers, pitch bend, pressure), with tests.

@@ -123,11 +123,17 @@ The other General controls use `ui.theme`, `ui.menu_layout`, `ui.toolbar_style`,
 `ui.header_style`, `ui.transport_position` and `window.config_auto_update` (not saved). The
 Appearance and Track colours pages use the `ui.theme_*` commands described under Themes.
 
+## Track colour, gloss and the Mixer pane
+
+- `track.color {tracks?, color, apply_to_clips?}`: `color` is `[r,g,b]`, a `"#RRGGBB"` string, or a palette index. Indices 0-15 are the default set (`TRACK_COLORS`); 16-99 are the extended 84-colour grid (index minus 16); anything else is an error (an index no longer wraps). Tracks store plain RGB, so saved sessions are unchanged. `apply_to_clips: true` also clears the colour of clips that carry their own, so they follow the track; it is one undo step. Clips without their own colour follow the track colour either way.
+- Theme keys: `ui.theme_set_param {key, value}` and `ui.theme_reset {key}` accept `clip_gloss` (0 to 1; 0 is flat, default 1.0 Dark, 0.8 Light, 0.6 Midnight), `clip_corner` and `header_corner` (points, 0 to 8; defaults 4 and 3). `ui.theme_get` reports them. They are saved in themes; older themes load with the palette defaults. Settings > Appearance has the "Glossy clips" switch and "Corner radius" slider.
+- `window.mixer_panel {value?}` shows, hides or toggles the Mixer pane; `ui.dock {operation: "open", panel: "mixer"}` does the same. Panel id `mixer`, Edit window only (the Mix window refuses it like the Inspector and Master panels). The Editor (`midi`) and the Mixer share the lower zone as exclusive tabs: opening one shows it in place of the other, and `ui.dock {operation: "activate", panel}` switches between them. The pane's Compact switch and the Inspector collapse state are saved with the UI preferences.
+
 ## Panel docking
 
 Tracks and Groups, Clips, MIDI Editor, Memory Locations, and Undo History use movable panels. Commands target the active Edit or Mix view; floating panels stay inside the current viewport. Edit and Mix retain separate arrangements; Clips and MIDI Editor belong to Edit. Transport, plug-in, and specialist utility windows retain their existing hosts. The document/session view is protected. Layouts, active tabs, panel visibility, and floating rectangles are saved with the app's existing UI preferences. These operations do not edit document contents.
 
-Panel IDs: `tracks`, `clips`, `midi`, `memory`, `history`. The protected center is `canvas`.
+Panel IDs: `tracks`, `clips`, `midi`, `memory`, `history`, `master`, `visibility`, `meter`, `loudness`, `inspector`, `mixer`. The protected center is `canvas`.
 
 `ui.dock` accepts `operation` and `panel`. Operations are `open`, `close`, `activate`, `float` (with finite positive `rect: [x, y, width, height]`), or `move` (with `target` and `zone: center|left|right|top|bottom`). Center groups with the target; side zones split beside it. `ui.dock.reset` restores the default arrangement. Invalid moves return an error without changing the layout.
 
