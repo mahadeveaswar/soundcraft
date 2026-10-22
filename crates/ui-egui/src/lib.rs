@@ -252,6 +252,8 @@ pub struct Services {
     pub pick_open: Option<Box<dyn Fn(&str, &[&str]) -> Option<String>>>,
     pub pick_save: Option<Box<dyn Fn(&str, &str) -> Option<String>>>,
     pub pick_folder: Option<Box<dyn Fn(&str) -> Option<String>>>,
+    /// Free space in bytes on the volume holding a path (set by the desktop app; absent in tests and on the web).
+    pub free_space: Option<Box<dyn Fn(&std::path::Path) -> Option<u64>>>,
 }
 
 /// File-system-safe folder name for a plugin id (`clap:com.x.y` → `clap_com.x.y`).

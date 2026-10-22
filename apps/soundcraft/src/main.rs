@@ -193,6 +193,7 @@ fn services() -> Services {
         pick_folder: Some(Box::new(|start: &str| {
             rfd::FileDialog::new().set_directory(start).pick_folder().map(|p| p.to_string_lossy().into_owned())
         })),
+        free_space: Some(Box::new(|path: &std::path::Path| fs4::available_space(path).ok())),
     }
 }
 
@@ -314,7 +315,7 @@ fn sane_window_size([w, h]: [f32; 2]) -> [f32; 2] {
 
 #[cfg(test)]
 mod tests {
-    use super::set_title;
+    use super::{services, set_title};
 
     #[test]
     fn the_title_is_sent_only_when_it_changes() {
@@ -327,5 +328,13 @@ mod tests {
         assert_eq!(titles("Song — SoundCraft"), 1);
         assert_eq!(titles("Song — SoundCraft"), 0);
         assert_eq!(titles("Song * — SoundCraft"), 1);
+    }
+
+    #[test]
+    fn the_free_space_service_reports_the_volume_of_a_folder() {
+        let free = services().free_space.expect("the desktop app provides it");
+        let bytes = free(&std::env::temp_dir()).expect("the temp folder has a volume");
+        assert!(bytes > 0, "a volume with zero free bytes would not be usable for this test");
+        assert_eq!(free(std::path::Path::new("")), None, "an empty path has no volume");
     }
 }
