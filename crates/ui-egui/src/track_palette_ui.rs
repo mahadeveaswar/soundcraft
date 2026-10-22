@@ -20,7 +20,6 @@ pub(crate) const RECENT_MAX: usize = 8;
 #[derive(Clone)]
 pub(crate) enum Target {
     /// These tracks (the popup then also offers "Apply to this track's clips").
-    #[allow(dead_code)] // built by the Inspector
     Tracks(Vec<TrackId>),
     /// Slot `n` of the palette new tracks cycle through.
     NewTrackSlot(usize),

@@ -17,8 +17,6 @@ const KNOWN_UNREACHED: &[&str] = &[
     "file.bounce_stems",
     "markers.next",
     "markers.previous",
-    "mix.insert_move",
-    "mix.phase_invert",
     "mix.send_surround_pan",
     "mix.solo_safe",
     "setup.hardware",        // menu opens the Playback Engine window, which doesn't run it

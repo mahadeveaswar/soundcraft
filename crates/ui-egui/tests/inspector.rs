@@ -87,14 +87,197 @@ fn it_shows_the_selected_tracks_inserts_and_sends() {
     h.state_mut().run("edit.select", json!({"tracks": ["Keys"]})).unwrap();
     h.run_steps(3);
     let (inserts, sends) = (count(&h, "Insert A"), count(&h, "Send A"));
+    let all_before = count(&h, "Insert J");
     h.state_mut().run("ui.dock", json!({"operation": "open", "panel": "inspector"})).unwrap();
     h.run_steps(4);
     assert_eq!(count(&h, "Insert A"), inserts + 1, "the Inspector adds one Insert A slot");
     assert_eq!(count(&h, "Send A"), sends + 1, "the Inspector adds one Send A slot");
-    let all_slots = count(&h, "Insert J");
+    // Filled slots plus one empty by default; "All" shows every slot.
+    assert_eq!(count(&h, "Insert J"), all_before, "only filled slots and one empty show");
+    h.get_by_label("Inspector: Show all insert slots").click();
+    h.run_steps(3);
+    assert_eq!(count(&h, "Insert J"), all_before + 1);
     // With nothing selected it shows no slots.
     h.state_mut().run("edit.select", json!({"tracks": []})).unwrap();
     h.run_steps(4);
     assert_eq!(count(&h, "Insert A"), inserts);
-    assert_eq!(count(&h, "Insert J"), all_slots - 1, "all ten insert slots are gone with the selection");
+    assert_eq!(count(&h, "Insert J"), all_before);
+}
+
+fn open_inspector(track: &str) -> Harness<'static, SoundApp> {
+    let mut h = harness();
+    h.state_mut().run("edit.select", json!({"tracks": [track]})).unwrap();
+    h.state_mut().run("ui.dock", json!({"operation": "open", "panel": "inspector"})).unwrap();
+    h.run_steps(5);
+    h
+}
+
+fn track<'a>(h: &'a Harness<'_, SoundApp>, name: &str) -> &'a soundcraft_model::Track {
+    h.state().engine.session().tracks.iter().find(|t| t.name == name).expect("track")
+}
+
+#[test]
+fn rename_commits_on_enter_and_cancels_on_escape() {
+    let mut h = open_inspector("Keys");
+    h.get_by_label("Inspector: Track name").click();
+    h.run_steps(3);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run_steps(1);
+    h.event(egui::Event::Text("Piano".into()));
+    h.run_steps(1);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(3);
+    assert!(h.state().engine.session().tracks.iter().any(|t| t.name == "Piano"));
+    assert!(!h.state().engine.session().tracks.iter().any(|t| t.name == "Keys"));
+    // Escape leaves the name alone.
+    h.get_by_label("Inspector: Track name").click();
+    h.run_steps(3);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run_steps(1);
+    h.event(egui::Event::Text("Nope".into()));
+    h.run_steps(1);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+    assert!(h.state().engine.session().tracks.iter().any(|t| t.name == "Piano"));
+    assert!(!h.state().engine.session().tracks.iter().any(|t| t.name == "Nope"));
+    assert!(h.query_by_label("Inspector: Track name").is_some(), "back to the plain name");
+}
+
+#[test]
+fn a_taken_name_shows_the_engines_error() {
+    let mut h = open_inspector("Keys");
+    h.get_by_label("Inspector: Track name").click();
+    h.run_steps(3);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.event(egui::Event::Text("Kick".into()));
+    h.run_steps(1);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(3);
+    assert!(h.query_by_label_contains("already exists").is_some());
+    assert_eq!(track(&h, "Keys").name, "Keys");
+}
+
+#[test]
+fn collapse_toggles_and_persists_through_ui_json() {
+    let mut h = open_inspector("Keys");
+    assert!(h.state().ui.inspector_collapsed.contains("notes"), "notes start collapsed");
+    assert!(!h.state().ui.inspector_collapsed.contains("inserts"));
+    h.get_by_label("Inspector section Inserts").click();
+    h.run_steps(3);
+    assert!(h.state().ui.inspector_collapsed.contains("inserts"));
+    assert!(h.query_by_label("Inspector: Add EQ").is_none(), "the body is hidden");
+    let text = serde_json::to_string(&h.state().ui).unwrap();
+    let back: UiState = serde_json::from_str(&text).unwrap();
+    assert!(back.inspector_collapsed.contains("inserts"));
+    h.get_by_label("Inspector section Inserts").click();
+    h.run_steps(3);
+    assert!(!h.state().ui.inspector_collapsed.contains("inserts"));
+    assert!(h.query_by_label("Inspector: Add EQ").is_some());
+}
+
+#[test]
+fn an_old_ui_json_without_the_new_fields_loads() {
+    let mut value = serde_json::to_value(UiState::default()).unwrap();
+    let object = value.as_object_mut().unwrap();
+    assert!(object.remove("inspector_collapsed").is_some());
+    assert!(object.remove("recent_track_colors").is_some());
+    let old: UiState = serde_json::from_value(value).unwrap();
+    assert!(old.recent_track_colors.is_empty());
+    assert!(old.inspector_collapsed.contains("notes"));
+}
+
+#[test]
+fn add_eq_runs_mix_insert_and_remove_clears_the_slot() {
+    let mut h = open_inspector("Keys");
+    let before = track(&h, "Keys").mixer.inserts.iter().flatten().count();
+    h.get_by_label("Inspector: Add EQ").click();
+    h.run_steps(3);
+    let t = track(&h, "Keys");
+    assert_eq!(t.mixer.inserts.iter().flatten().count(), before + 1);
+    let slot = t.mixer.inserts.iter().position(|i| i.as_ref().is_some_and(|i| i.plugin == "eq_7band")).expect("EQ slot");
+    let letter = (b'A' + slot as u8) as char;
+    h.get_by_label(&format!("Inspector: Insert {letter} bypass")).click();
+    h.run_steps(3);
+    assert!(track(&h, "Keys").mixer.inserts[slot].as_ref().unwrap().bypass);
+    h.get_by_label(&format!("Inspector: Insert {letter} remove")).click();
+    h.run_steps(3);
+    assert!(track(&h, "Keys").mixer.inserts[slot].is_none());
+}
+
+#[test]
+fn choosing_an_effect_from_the_empty_slot_menu_runs_mix_insert() {
+    let mut h = open_inspector("Keys");
+    let before = track(&h, "Keys").mixer.inserts.iter().flatten().count();
+    let slot = h.query_all_by_label("Insert A").chain(h.query_all_by_label("Insert B")).find(|n| n.rect().min.x < 330.0).expect("inspector slot");
+    slot.click();
+    h.run_steps(3);
+    h.event(egui::Event::Text("reverb".into()));
+    h.run_steps(2);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(3);
+    assert_eq!(track(&h, "Keys").mixer.inserts.iter().flatten().count(), before + 1);
+}
+
+#[test]
+fn mute_solo_and_the_colour_popup_run_commands() {
+    let mut h = open_inspector("Keys");
+    h.get_by_label("Inspector: Mute").click();
+    h.run_steps(3);
+    assert!(track(&h, "Keys").mixer.mute);
+    h.get_by_label("Inspector: Solo").click();
+    h.run_steps(3);
+    assert!(track(&h, "Keys").mixer.solo);
+    // The swatch opens the popup; a pick recolours the track.
+    let swatch = h.query_all_by_label("Track colour").find(|n| n.rect().min.x < 330.0).expect("inspector swatch");
+    swatch.click();
+    h.run_steps(3);
+    let [r, g, b] = soundcraft_model::TRACK_PALETTE_EXT[40];
+    h.get_by_label(&format!("Colour #{r:02X}{g:02X}{b:02X}")).click();
+    h.run_steps(3);
+    assert_eq!(track(&h, "Keys").color, [r, g, b]);
+    assert_eq!(h.state().ui.recent_track_colors.first().copied(), Some([r, g, b]));
+}
+
+#[test]
+fn apply_to_clips_clears_own_colours_in_one_undo_step() {
+    let mut h = open_inspector("Keys");
+    let clip = h
+        .state()
+        .engine
+        .session()
+        .tracks
+        .iter()
+        .find(|t| t.name == "Kick")
+        .and_then(|t| t.playlist())
+        .and_then(|p| p.clips.first())
+        .map(|c| c.id.0)
+        .expect("clip");
+    h.state_mut().run("edit.select", json!({"tracks": ["Kick"]})).unwrap();
+    h.state_mut().run("clip.color", json!({"clips": [clip], "color": [1, 2, 3]})).unwrap();
+    h.run_steps(4);
+    let own = |h: &Harness<'_, SoundApp>| track(h, "Kick").playlists.iter().flat_map(|p| p.clips.iter()).filter(|c| c.color.is_some()).count();
+    assert_eq!(own(&h), 1);
+    let swatch = h.query_all_by_label("Track colour").find(|n| n.rect().min.x < 330.0).expect("inspector swatch");
+    swatch.click();
+    h.run_steps(3);
+    h.get_by_label("Apply to this track's clips").click();
+    h.run_steps(3);
+    assert_eq!(own(&h), 0);
+    h.state_mut().run("edit.undo", json!({})).unwrap();
+    assert_eq!(own(&h), 1, "one undo step restores the clip colour");
+}
+
+#[test]
+fn master_has_no_input_row_and_an_instrument_has_its_row() {
+    let mut h = harness();
+    let master = h.state().engine.session().tracks.iter().find(|t| t.kind == soundcraft_model::TrackKind::Master).map(|t| t.id.0).expect("master");
+    h.state_mut().run("edit.select", json!({"tracks": [master]})).unwrap();
+    h.state_mut().run("ui.dock", json!({"operation": "open", "panel": "inspector"})).unwrap();
+    h.run_steps(5);
+    assert!(h.query_by_label("Inspector: Input").is_none());
+    assert!(h.query_by_label("Inspector: Output").is_some());
+    assert!(h.query_by_label("Inspector: Solo").is_none());
+    let h = open_inspector("Keys");
+    assert!(h.query_by_label("Inspector: Input").is_some());
+    assert!(h.query_by_label("Inspector: Open instrument editor").is_some(), "instrument tracks get the Instrument row");
 }

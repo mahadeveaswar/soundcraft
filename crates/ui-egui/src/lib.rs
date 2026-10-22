@@ -18,6 +18,8 @@ mod header_width;
 pub mod icons;
 pub mod info_row;
 mod inspector;
+mod inspector_header;
+mod inspector_sections;
 mod loudness_pane;
 mod master_panel;
 pub mod menu_layout;
@@ -122,6 +124,8 @@ pub struct UiState {
     pub show_inspector: bool,
     /// The last colours picked in the track colour popup, newest first (at most 8).
     pub recent_track_colors: Vec<[u8; 3]>,
+    /// Inspector sections the user collapsed (ids from `inspector_sections::Section::id`).
+    pub inspector_collapsed: std::collections::BTreeSet<String>,
     pub show_universe: bool,
     pub narrow_mix: bool,
     /// Mix window sections: inserts_ae, inserts_fj, sends_ae, sends_fj, io, comments, eq_curve, color.
@@ -234,6 +238,7 @@ impl Default for UiState {
             show_loudness_panel: false,
             show_inspector: false,
             recent_track_colors: Vec::new(),
+            inspector_collapsed: std::iter::once("notes".to_string()).collect(),
             show_universe: false,
             narrow_mix: false,
             mix_views: vec!["inserts_ae".into(), "sends_ae".into(), "io".into(), "color".into()],
