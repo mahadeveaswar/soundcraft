@@ -34,8 +34,8 @@ open questions for the user: <list>
 Current entry:
 ```
 last put-down: 2026-10-22, on windows
-branches pushed: custom-windows and custom-release at ba54326 (the code commit; a later docs commit may sit on top)
-tests run on that machine: ui-egui 404 passed, engine 344 passed (the test process then exits with an access violation: known Windows flake), model 38 passed, mix and playback passed earlier in the day, cargo xtask layers ok, fmt and clippy -D warnings clean, name check clean. Known timing flakes: engine autosave test and ui recovery test (pass when re-run alone).
+branches pushed: custom-windows and custom-release at 054045f (the last commit before this state block; a docs commit may sit on top)
+tests run on that machine: ui-egui 407 passed, engine 344 passed (the test process then exits with an access violation: known Windows flake), model 38 passed, mix and playback passed earlier in the day, cargo xtask layers ok, fmt and clippy -D warnings clean, name check clean. Known timing flakes: engine autosave test and ui recovery test (pass when re-run alone).
 not verified on macOS: everything at runtime. First compile on macOS, Retina rendering, CoreAudio, note audition and sound, the native menu bar, Audio Unit and VST3 hosting, Cmd and Option labels, trackpad gestures, file dialogs, autosave folder.
 not independently reviewed yet: batches 4 to 7 (Midnight theme, compact header, bottom transport bar, automation lanes, centred transport layout, master panel, resizable header). An Opus review and 37 documentation fixes are the first tasks on the Mac (see ROADMAP.md and DOC-AUDIT.md in the notes repository).
 in progress / next tasks: nothing in progress. Next: top bar and menus (TB-1..9, native menu layer best done on the Mac), the User Interface colour window (U1..U6), then templates and the main-window Track Inspector. Details: ORCHESTRATION.md and ROADMAP.md in the notes repository.
