@@ -4,6 +4,15 @@ Dated entries, newest first. Each entry groups changes as Added, Changed, Fixed 
 
 ## 2026-10-23 (win)
 
+### Edit tools (TL1)
+- Added: four arrange tools, Split, Glue, Erase and Mute (`Tool::Split|Glue|Erase|Mute`, ids `split`, `glue`, `erase`, `mute`, aliases `cut` and `eraser`; `Tool::ALL` is 11). Click a clip: Split cuts it at the pointer, Glue joins it to the clip that starts where it ends (1 sample tolerance, otherwise the status line says there is nothing to glue), Erase deletes it, Mute toggles its mute. Erase and Mute also work by dragging across clips (the swept clips get a pending tint and one command runs on release; Mute applies the first clip's new state to all). Each is one undo step, locked clips are refused with a status message, and none changes the selection. In an automation lane view they only grab breakpoints, like the Grabber.
+- Added: engine command `clip.split {clip | clips, at}` (undoable; splits only the named clips, not every clip on their tracks; refuses locked clips and a position outside every named clip) on a new `separate_clips_at` helper. `edit.tool` lists the new ids.
+- Added: right-click menus of clips and empty lanes start with a Tools submenu (Object Select, Range Select, Split, Glue, Erase, Zoom, Mute, Draw, Scrub, Trim, Smart) with an icon, a check mark on the active tool and the key of the active key set (F-key when the set has none); the Edit menu has the same submenu. Ctrl (Cmd on macOS) with right-click on a lane opens a compact tool palette (4 by 3 icon grid, tooltips with keys, Escape or a click outside closes it) instead of the menu, without changing the selection.
+- Added: toolbar buttons for the four tools after Draw in both toolbar styles (the Standard tools group is 11 keys wide); tooltips show the key of the active key set. Icons `mute` and `erase` drawn in code (`split` and `glue` already existed).
+- Added: Alternative key set 3 split, 4 glue, 5 erase, 7 mute (labels "Edit Tool: Split" and so on); the Default set is unchanged and has no key for them.
+- Added: cursors for the new tools (crosshair with a guide line at the cut point, alias, not-allowed, pointing hand) and a small glyph of the tool next to the pointer.
+- Decisions: Ctrl/Cmd swaps the Split snap (the existing drag convention) and Shift makes Split also cut the selected clips under that time, instead of Shift bypassing the snap. Glue restores the previous clip selection afterwards, so the tools never select. Documented the Smart tool definition and the key table in `docs/ui-parity.md`.
+
 ### Clipboard keys on a real keyboard (KF1)
 - Fixed: Cmd/Ctrl+X, C and V did nothing on a real keyboard, because the platform sends Cut, Copy and Paste events instead of key events. They are now turned into the same chords (unless the key event also arrived), so the roll, the arrange window, user key overrides and both key sets work as before; text fields keep the native events.
 - Fixed: Paste events only arrive when the system clipboard holds text, so an internal copy or cut now leaves a short marker text there. The internal clipboard stays the source of truth; foreign clipboard text is ignored.

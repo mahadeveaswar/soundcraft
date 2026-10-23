@@ -171,8 +171,12 @@ fn tools(app: &mut SoundApp, ui: &mut Ui) {
         (Tool::Pencil, "pencil"),
         (Tool::Scrubber, "scrubber"),
         (Tool::Zoom, "zoom"),
+        (Tool::Split, "split"),
+        (Tool::Glue, "glue"),
+        (Tool::Erase, "erase"),
+        (Tool::Mute, "mute"),
     ] {
-        let tip = format!("{}{}", tool.label(), tool.fkey().map(|f| format!(" ({f})")).unwrap_or_default());
+        let tip = crate::edit_tools::tool_tip(app, tool, ui.ctx().os().is_mac());
         let smart_member = cur == Tool::Smart && matches!(tool, Tool::Trim | Tool::Selector | Tool::Grabber);
         if icon_button(ui, k(), icon, cur == tool || smart_member, &tip).clicked() {
             let _ = app.run("edit.tool", json!({"tool": tool.id()}));

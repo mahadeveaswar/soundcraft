@@ -80,10 +80,30 @@ pub enum Tool {
     Scrubber,
     Pencil,
     Smart,
+    /// Click a clip to split it at the pointer.
+    Split,
+    /// Click a clip to glue it to the next clip on the lane.
+    Glue,
+    /// Click or sweep clips to delete them.
+    Erase,
+    /// Click or sweep clips to toggle their mute.
+    Mute,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 7] = [Tool::Zoom, Tool::Trim, Tool::Selector, Tool::Grabber, Tool::Scrubber, Tool::Pencil, Tool::Smart];
+    pub const ALL: [Tool; 11] = [
+        Tool::Zoom,
+        Tool::Trim,
+        Tool::Selector,
+        Tool::Grabber,
+        Tool::Scrubber,
+        Tool::Pencil,
+        Tool::Smart,
+        Tool::Split,
+        Tool::Glue,
+        Tool::Erase,
+        Tool::Mute,
+    ];
     pub fn id(self) -> &'static str {
         match self {
             Tool::Zoom => "zoom",
@@ -93,6 +113,10 @@ impl Tool {
             Tool::Scrubber => "scrubber",
             Tool::Pencil => "pencil",
             Tool::Smart => "smart",
+            Tool::Split => "split",
+            Tool::Glue => "glue",
+            Tool::Erase => "erase",
+            Tool::Mute => "mute",
         }
     }
     pub fn label(self) -> &'static str {
@@ -104,10 +128,20 @@ impl Tool {
             Tool::Scrubber => "Scrubber",
             Tool::Pencil => "Pencil",
             Tool::Smart => "Smart Tool",
+            Tool::Split => "Split",
+            Tool::Glue => "Glue",
+            Tool::Erase => "Erase",
+            Tool::Mute => "Mute",
         }
     }
     pub fn from_id(s: &str) -> Option<Tool> {
-        Tool::ALL.into_iter().find(|t| t.id() == s.to_ascii_lowercase())
+        let s = s.to_ascii_lowercase();
+        let s = match s.as_str() {
+            "cut" => "split",
+            "eraser" => "erase",
+            other => other,
+        };
+        Tool::ALL.into_iter().find(|t| t.id() == s)
     }
     /// F-key shortcut (F5..F10) like the incumbent.
     pub fn fkey(self) -> Option<&'static str> {
@@ -118,7 +152,7 @@ impl Tool {
             Tool::Grabber => Some("F8"),
             Tool::Scrubber => Some("F9"),
             Tool::Pencil => Some("F10"),
-            Tool::Smart => None,
+            Tool::Smart | Tool::Split | Tool::Glue | Tool::Erase | Tool::Mute => None,
         }
     }
 }
@@ -685,6 +719,19 @@ pub fn truncate_chars(s: &mut String, max: usize) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tool_ids_round_trip_and_aliases_resolve() {
+        for t in super::Tool::ALL {
+            assert_eq!(super::Tool::from_id(t.id()), Some(t));
+            assert!(!t.label().is_empty());
+        }
+        assert_eq!(super::Tool::from_id("cut"), Some(super::Tool::Split));
+        assert_eq!(super::Tool::from_id("Eraser"), Some(super::Tool::Erase));
+        assert_eq!(super::Tool::from_id("nope"), None);
+        let json = serde_json::to_string(&super::Tool::Mute).unwrap_or_default();
+        assert_eq!(serde_json::from_str::<super::Tool>(&json).ok(), Some(super::Tool::Mute));
+    }
+
     use super::*;
 
     #[test]

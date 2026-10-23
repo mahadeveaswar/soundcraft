@@ -314,6 +314,10 @@ pub fn menu_bar(app: &mut SoundApp, ui: &mut egui::Ui) {
                                 instrument_menu(app, ui);
                             }
                         }
+                        if root.label == "Edit" {
+                            ui.separator();
+                            crate::edit_tools::tools_submenu(app, ui);
+                        }
                         if root.label == "View" {
                             ui.separator();
                             crate::track_header_compact::view_menu(app, ui);

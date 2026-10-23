@@ -38,6 +38,15 @@ pub fn specs() -> Vec<CommandSpec> {
             has_selection,
             split_at_playhead
         ),
+        cmd!(
+            "clip.split",
+            "Split Clip",
+            ["Clip"],
+            None,
+            "{clip?: id, clips?: [id], at: position}; splits only the named clips (default: the selected ones) at `at`; refuses locked clips and a position outside every clip",
+            always,
+            split_clips
+        ),
         cmd!(noundo "transport.locate_left", "Go to Left Locator", [], None, "{}", always, |e, _| {
             let at = e.session().edit.timeline_selection.start;
             transport::locate(e, at)
@@ -217,6 +226,42 @@ fn split_at_playhead(e: &mut Engine, p: &Value) -> Result<Value> {
     Ok(json!({"separated": n, "at": at}))
 }
 
+/// Split the named clips (not every clip on their tracks) at one position.
+fn split_clips(e: &mut Engine, p: &Value) -> Result<Value> {
+    let Some(at) = position_param(e, "clip.split", p, "at")? else {
+        return Err(bad("clip.split", "`at` is required"));
+    };
+    let ids = clip_ids_param(e, p);
+    let mut targets: Vec<(TrackId, Vec<ClipId>)> = Vec::new();
+    {
+        let s = e.session();
+        let mut inside = false;
+        for id in &ids {
+            let Some((t, c)) = s.find_clip(*id) else { continue };
+            if at <= c.start || at >= c.end() {
+                continue;
+            }
+            inside = true;
+            if crate::edit::locked(c) {
+                return Err(bad("clip.split", format!("clip `{}` is locked", c.name)));
+            }
+            match targets.iter_mut().find(|(g, _)| *g == t) {
+                Some((_, v)) => v.push(*id),
+                None => targets.push((t, vec![*id])),
+            }
+        }
+        if !inside {
+            return Err(bad("clip.split", "the position is not inside any of the clips"));
+        }
+    }
+    let s = e.session_mut();
+    let mut n = 0;
+    for (t, v) in &targets {
+        n += crate::edit::separate_clips_at(s, *t, at, |c| v.contains(&c.id));
+    }
+    Ok(json!({"separated": n, "at": at}))
+}
+
 // ---- previous / next selection ---------------------------------------------------------------------
 
 fn shown_tracks(s: &soundcraft_model::Session) -> Vec<&Track> {
@@ -391,6 +436,39 @@ mod tests {
         assert_eq!(starts, vec![0, 400, 1000]);
         assert!(e.undo());
         assert_eq!(e.session().track(t).unwrap().clips().len(), 2);
+    }
+
+    #[test]
+    fn split_clips_splits_only_the_named_clip_and_undoes() {
+        let (mut e, t, ids) = audio(&[(0, 1000, 0), (1000, 1000, 5000)]);
+        let id0 = ids[0].0;
+        assert_eq!(e.execute("clip.split", &json!({"clip": id0, "at": 700})).unwrap()["separated"], 1);
+        let starts: Vec<_> = e.session().track(t).unwrap().clips().iter().map(|c| c.start).collect();
+        assert_eq!(starts, vec![0, 700, 1000], "only the named clip is split");
+        assert!(e.undo());
+        assert_eq!(e.session().track(t).unwrap().clips().len(), 2);
+    }
+
+    #[test]
+    fn split_clips_refuses_locked_and_outside_positions() {
+        let (mut e, t, ids) = audio(&[(0, 1000, 0)]);
+        let id0 = ids[0].0;
+        assert!(e.execute("clip.split", &json!({"clip": id0, "at": 1500})).is_err());
+        assert!(e.execute("clip.split", &json!({"clip": id0})).is_err());
+        e.session_mut().find_clip_mut(ids[0]).unwrap().edit_locked = true;
+        assert!(e.execute("clip.split", &json!({"clip": id0, "at": 400})).is_err());
+        assert_eq!(e.session().track(t).unwrap().clips().len(), 1);
+    }
+
+    #[test]
+    fn glue_mute_and_delete_accept_explicit_clips_without_a_selection() {
+        let (mut e, t, ids) = audio(&[(0, 1000, 0), (1000, 500, 1000)]);
+        let raw: Vec<u64> = ids.iter().map(|c| c.0).collect();
+        e.execute("clip.mute", &json!({"clips": [raw[0]]})).unwrap();
+        assert!(e.session().track(t).unwrap().clips().iter().any(|c| c.muted));
+        e.execute("clip.unmute", &json!({"clips": [raw[0]]})).unwrap();
+        assert_eq!(e.execute("clip.glue", &json!({"clips": raw})).unwrap()["glued"], 1);
+        assert_eq!(e.session().track(t).unwrap().clips().len(), 1);
     }
 
     #[test]

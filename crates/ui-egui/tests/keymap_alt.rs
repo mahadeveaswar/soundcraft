@@ -68,9 +68,17 @@ fn slash_toggles_loop_and_number_row_chooses_tools() {
     let on = app.engine.session().edit.loop_playback;
     press(&mut app, Key::Slash, Modifiers::NONE);
     assert_ne!(app.engine.session().edit.loop_playback, on);
-    for (key, tool) in
-        [(Key::Num6, Tool::Zoom), (Key::Num1, Tool::Grabber), (Key::Num2, Tool::Selector), (Key::Num8, Tool::Pencil), (Key::Num9, Tool::Scrubber)]
-    {
+    for (key, tool) in [
+        (Key::Num1, Tool::Grabber),
+        (Key::Num2, Tool::Selector),
+        (Key::Num3, Tool::Split),
+        (Key::Num4, Tool::Glue),
+        (Key::Num5, Tool::Erase),
+        (Key::Num6, Tool::Zoom),
+        (Key::Num7, Tool::Mute),
+        (Key::Num8, Tool::Pencil),
+        (Key::Num9, Tool::Scrubber),
+    ] {
         press(&mut app, key, Modifiers::NONE);
         assert_eq!(app.engine.session().edit.tool, tool, "{key:?}");
     }
@@ -99,6 +107,10 @@ fn the_default_preset_keeps_plain_letters_out_of_it() {
     let tool = app.engine.session().edit.tool;
     press(&mut app, Key::Num6, Modifiers::NONE);
     assert_eq!(app.engine.session().edit.tool, tool, "6 is not the zoom tool in the Default preset");
+    for key in [Key::Num3, Key::Num4, Key::Num5, Key::Num7] {
+        press(&mut app, key, Modifiers::NONE);
+        assert_eq!(app.engine.session().edit.tool, tool, "{key:?} picks no tool in the Default preset");
+    }
     // Shift+M is the Default key for mute.
     press(&mut app, Key::M, Modifiers::SHIFT);
     assert!(app.engine.session().track_by_name("Kick").unwrap().mixer.mute);

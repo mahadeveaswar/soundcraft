@@ -90,7 +90,7 @@ pub fn width(g: Group) -> f32 {
         Group::State => keys(4),
         Group::AutoCombo => 78.0,
         Group::EditModes => 4.0 * 44.0 + 3.0 * KEY_GAP,
-        Group::Tools => keys(7),
+        Group::Tools => keys(11),
         Group::Actions => keys(3),
         Group::Snap => KEY + KEY_GAP + 64.0 + KEY_GAP + KEY + KEY_GAP + 80.0,
         Group::Zoom => keys(4),

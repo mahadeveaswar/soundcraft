@@ -12,6 +12,7 @@ pub mod control;
 pub mod credits;
 pub mod dialogs;
 pub mod docking;
+pub mod edit_tools;
 pub mod edit_window;
 pub mod extra_windows;
 pub mod folder_ui;
@@ -377,19 +378,80 @@ pub struct MeterDisplay {
 /// An in-progress mouse gesture in the Edit window.
 #[derive(Debug, Clone)]
 pub enum Gesture {
-    Select { track: TrackId, anchor: Samples, tracks: Vec<TrackId> },
-    MoveClips { clips: Vec<soundcraft_model::ClipId>, grab_at: Samples, delta: Samples, from_track: TrackId, to_track: TrackId },
-    TrimStart { clip: soundcraft_model::ClipId, track: TrackId, to: Samples },
-    TrimEnd { clip: soundcraft_model::ClipId, track: TrackId, to: Samples },
-    Fade { clip: soundcraft_model::ClipId, track: TrackId, fade_in: bool, to: Samples },
-    FadeCurve { clip: soundcraft_model::ClipId, fade_in: bool, curvature: f32, anchor: (f32, f32), height: f32 },
-    Scrub { last: Samples },
-    Fader { track: TrackId, start_db: f32 },
-    ClipGain { clip: soundcraft_model::ClipId, track: TrackId, pos: f32, anchor: (f32, f32), fine: bool, fader_bottom: egui::Pos2 },
-    Pencil { track: TrackId, stroke: Option<auto_lanes_ui::StrokeState>, erase: bool },
-    Breakpoint { track: TrackId, param: soundcraft_model::AutoParam, at: Samples },
-    MidiClip { track: TrackId, from: Samples, to: Samples },
-    ZoomBox { start: f32 },
+    Select {
+        track: TrackId,
+        anchor: Samples,
+        tracks: Vec<TrackId>,
+    },
+    MoveClips {
+        clips: Vec<soundcraft_model::ClipId>,
+        grab_at: Samples,
+        delta: Samples,
+        from_track: TrackId,
+        to_track: TrackId,
+    },
+    TrimStart {
+        clip: soundcraft_model::ClipId,
+        track: TrackId,
+        to: Samples,
+    },
+    TrimEnd {
+        clip: soundcraft_model::ClipId,
+        track: TrackId,
+        to: Samples,
+    },
+    Fade {
+        clip: soundcraft_model::ClipId,
+        track: TrackId,
+        fade_in: bool,
+        to: Samples,
+    },
+    FadeCurve {
+        clip: soundcraft_model::ClipId,
+        fade_in: bool,
+        curvature: f32,
+        anchor: (f32, f32),
+        height: f32,
+    },
+    Scrub {
+        last: Samples,
+    },
+    Fader {
+        track: TrackId,
+        start_db: f32,
+    },
+    ClipGain {
+        clip: soundcraft_model::ClipId,
+        track: TrackId,
+        pos: f32,
+        anchor: (f32, f32),
+        fine: bool,
+        fader_bottom: egui::Pos2,
+    },
+    Pencil {
+        track: TrackId,
+        stroke: Option<auto_lanes_ui::StrokeState>,
+        erase: bool,
+    },
+    Breakpoint {
+        track: TrackId,
+        param: soundcraft_model::AutoParam,
+        at: Samples,
+    },
+    MidiClip {
+        track: TrackId,
+        from: Samples,
+        to: Samples,
+    },
+    ZoomBox {
+        start: f32,
+    },
+    /// Erase or Mute dragged over clips: they are only collected until release, then one command runs.
+    Sweep {
+        erase: bool,
+        mute_to: bool,
+        clips: Vec<soundcraft_model::ClipId>,
+    },
 }
 
 pub struct SoundApp {

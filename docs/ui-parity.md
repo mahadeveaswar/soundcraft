@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-23 · **Change:** minor (alternative key set, arrange context menus) · **Target:** the incumbent professional DAW's menu tree (2026.4.1)
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-23 · **Change:** minor (edit tools, tool menu and palette) · **Target:** the incumbent professional DAW's menu tree (2026.4.1)
 
 How SoundCraft feels in the hands of a Pro Tools user: tools, modes, modifiers, shortcuts,
 windows, meters. Measured from `crates/model/src/session.rs` (tools, modes), the command
@@ -15,7 +15,8 @@ Legend: ✅ matches · 🟡 partial · ❌ missing.
 
 | Feature | Status | Notes |
 |---|---|---|
-| Tools: Zoom, Trim, Selector, Grabber, Scrubber, Pencil, Smart (7) | ✅ present | Trim variants (TCE, loop, scrub trim) and Grabber variants (separation, object) partial; Multitool fade/trim handles don't adjust audio (#5) |
+| Tools: Zoom, Trim, Selector, Grabber, Scrubber, Pencil, Smart, Split, Glue, Erase, Mute (11) | ✅ present | The Smart tool: near a clip edge it trims, in the top corners of a clip it fades, over the upper half of a clip or an empty lane it selects a range, over the lower half it moves clips.  Trim variants (TCE, loop, scrub trim) and Grabber variants (separation, object) partial; Multitool fade/trim handles don't adjust audio (#5) |
+| Edit tools: Split, Glue, Erase, Mute (4 more, 11 in all) | ✅ | Click a clip: Split cuts it at the pointer (on the grid in the grid modes, Ctrl/Cmd swaps the snap, Shift also cuts the selected clips under that time), Glue joins it to the clip that starts where it ends, Erase deletes it, Mute toggles its mute. Erase and Mute also work by dragging across clips, applied once on release. Each is one undo step, locked clips are refused with a message, and none changes the selection. The right-click menu starts with a Tools submenu (check mark, icon and key on every line); Ctrl (Cmd on macOS) with right-click on a lane opens a compact tool palette. Alternative keys: 1 object select, 2 range select, 3 split, 4 glue, 5 erase, 6 zoom, 7 mute, 8 draw, 9 scrub; the Default set keeps F5 to F10 and has no key for the new tools |
 | Smart-tool Fade In / Fade Out drag bounds and preview | ✅ | One thin curve replaces the dragged side's previous curve and matches its appearance after release; bounded to the clip, including full-clip fades. Hovering the curve's upper endpoint shows the fade cursor and lets the existing fade be dragged |
 | Fade midpoint curvature | ✅ | Visible fades retain a small midpoint handle in Smart mode, including after release and extreme bends. Hover shows the vertical resize cursor; repeated drags change curvature without changing length. Curves sample at physical-pixel resolution; preview, playback and bounce share the envelope. Length drags retain curvature |
 | Live waveform fade preview | ✅ | Waveform amplitude updates during fade-length and midpoint-curvature drags, sharing the curve's temporary envelope. Mono/stereo, waveform styles, zoom and clip gain remain effective; release preserves the displayed waveform with one undo step and cached peaks |
@@ -74,6 +75,7 @@ Generic renders of the demo session (`docs/images/top-bar-<style>-<theme>-<width
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-23 | minor | Split, Glue, Erase and Mute edit tools, right-click Tools submenu, tool palette, Alternative keys 3/4/5/7. Readiness estimate unchanged |
 | 2026-10-13 | minor | A plugin opens when it's inserted (#486) |
 | 2026-10-13 | minor | Drag across checkboxes (#399) |
 | 2026-10-22 | minor | Mac queue complete and promoted (tag rel-2026-10-22): Standard and Classic menus and toolbars, Settings window, themes, panels; later items: Inspector EQ curve, MIDI track controls, Mix-window panels, side-by-side docking. Readiness estimate unchanged |

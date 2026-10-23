@@ -48,11 +48,13 @@ fn click(h: &mut H<'_>, at: egui::Pos2, button: PointerButton) {
 }
 
 /// The menu line whose label is `name`, optionally followed by one key-text word (lines carry their key text
-/// after the label), if such a menu is open.
+/// after the label; toolbar tooltips such as `Glue (4)` are not menu lines), if such a menu is open.
 fn line<'a>(h: &'a H<'_>, name: &'a str) -> Option<egui_kittest::Node<'a>> {
     h.query_all_by_label_contains(name).find(|n| {
         let label = n.accesskit_node().label().unwrap_or_default();
-        label.strip_prefix(name).is_some_and(|rest| rest.is_empty() || (rest.starts_with(' ') && rest.split_whitespace().count() <= 1))
+        label
+            .strip_prefix(name)
+            .is_some_and(|rest| rest.is_empty() || (rest.starts_with(' ') && !rest.starts_with(" (") && rest.split_whitespace().count() <= 1))
     })
 }
 
@@ -144,7 +146,7 @@ fn an_empty_lane_offers_paste_selection_markers_and_add_track() {
     for name in ["Paste", "Select All", "Select None", "Locators to Selection", "Add Marker", "Add Track"] {
         assert!(line(&h, name).is_some(), "the empty-lane menu has `{name}`");
     }
-    assert!(line(&h, "Glue").is_none(), "no clip lines on an empty lane");
+    assert!(line(&h, "Split at Playhead").is_none(), "no clip lines on an empty lane");
 }
 
 #[test]

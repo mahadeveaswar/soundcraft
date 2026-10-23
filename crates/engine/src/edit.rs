@@ -80,11 +80,16 @@ fn rebase_midi_start(clip: &mut Clip, old_start: Samples, t: TimeCtx<'_>) {
 
 /// Split every clip on a track's active playlist that spans `at`.
 pub fn separate_at(s: &mut Session, track: TrackId, at: Samples) -> usize {
+    separate_clips_at(s, track, at, |_| true)
+}
+
+/// Like [`separate_at`], but only clips for which `pick` is true are split.
+pub fn separate_clips_at(s: &mut Session, track: TrackId, at: Samples, pick: impl Fn(&Clip) -> bool) -> usize {
     let tc_tempo = s.tempo.clone();
     let sr = s.sample_rate;
     let t = TimeCtx { tempo: &tc_tempo, sr };
     let mut ids = Vec::new();
-    let n_split = s.track(track).map_or(0, |tr| tr.clips().iter().filter(|c| at > c.start && at < c.end()).count());
+    let n_split = s.track(track).map_or(0, |tr| tr.clips().iter().filter(|c| at > c.start && at < c.end() && pick(c)).count());
     for _ in 0..n_split {
         ids.push(s.new_clip_id());
     }
@@ -95,6 +100,7 @@ pub fn separate_at(s: &mut Session, track: TrackId, at: Samples) -> usize {
     for c in pl.clips.drain(..) {
         if at > c.start
             && at < c.end()
+            && pick(&c)
             && let Some(id) = ids.pop()
             && let Some((l, r)) = split_clip(&c, at, id, t)
         {

@@ -132,6 +132,7 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
         egui::Panel::top("universe").exact_size(64.0).frame(egui::Frame::NONE.fill(Tokens::current().universe_bg)).show(ui, |ui| universe(app, ui));
     }
     crate::docking::show(app, ui, crate::MainWindow::Edit);
+    crate::edit_tools::show_palette(app, ui.ctx());
 }
 
 /// Universe: the whole session in miniature; the box is the visible area (drag or click to move).
@@ -2188,7 +2189,14 @@ fn lane_interaction(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: Rect, 
     // is over the popup, the lane has no hover position, and the rest of this function bails out.
     // The clip is remembered at the right-click so the menu keeps its target while it is used.
     let menu_clip_id = id.with("menu_clip");
-    if resp.secondary_clicked() {
+    // Ctrl (Cmd on macOS) with right-click opens the tool palette instead of the menu.
+    let palette_click = resp.secondary_clicked() && ui.input(|i| i.modifiers.command);
+    if palette_click {
+        if let Some(p) = resp.interact_pointer_pos() {
+            egui::Popup::close_all(ui.ctx());
+            crate::edit_tools::open_palette(ui.ctx(), p);
+        }
+    } else if resp.secondary_clicked() {
         let clip = resp.interact_pointer_pos().and_then(|p| {
             let s = app.engine.session();
             clip_at(track, sample_at(s, tl, p.x).max(0)).map(|c| c.id)
@@ -2198,7 +2206,9 @@ fn lane_interaction(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: Rect, 
     }
     // The clip may have been removed or moved since the right-click; only use it if it still exists.
     let menu_clip = ui.ctx().data(|d| d.get_temp::<Option<ClipId>>(menu_clip_id)).flatten().filter(|c| track.clips().iter().any(|x| x.id == *c));
-    resp.context_menu(|ui| crate::context_menu::arrange_menu(app, ui, menu_clip, track.id));
+    if !palette_click {
+        resp.context_menu(|ui| crate::context_menu::arrange_menu(app, ui, menu_clip, track.id));
+    }
     // Audio files dropped from the Clip List.
     if let Some(src) = resp.dnd_release_payload::<crate::DragSource>()
         && let Some(p) = ui.ctx().pointer_latest_pos()
@@ -2223,7 +2233,7 @@ fn lane_interaction(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: Rect, 
     let origin = if resp.drag_started() { ui.input(|i| i.pointer.press_origin()).unwrap_or(p) } else { p };
     let at_origin = sample_at(&s, tl, origin.x).max(0);
     let auto_view = AutoParam::parse(&track.view);
-    let point_hit = if matches!(tool, Tool::Smart | Tool::Grabber | Tool::Pencil) {
+    let point_hit = if matches!(tool, Tool::Smart | Tool::Grabber | Tool::Pencil | Tool::Split | Tool::Glue | Tool::Erase | Tool::Mute) {
         shown_automation(track).and_then(|param| breakpoint_at(&s, tl, lane, track, &param, origin).map(|at| (param, at)))
     } else {
         None
@@ -2283,10 +2293,20 @@ fn lane_interaction(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: Rect, 
             Tool::Grabber => egui::CursorIcon::Grab,
             Tool::Selector => egui::CursorIcon::Text,
             Tool::Zoom => egui::CursorIcon::ZoomIn,
-            Tool::Pencil => egui::CursorIcon::Crosshair,
+            Tool::Pencil | Tool::Split => egui::CursorIcon::Crosshair,
+            Tool::Glue => egui::CursorIcon::Alias,
+            Tool::Erase => egui::CursorIcon::NotAllowed,
+            Tool::Mute => egui::CursorIcon::PointingHand,
             _ => egui::CursorIcon::Default,
         };
         ui.ctx().set_cursor_icon(icon);
+        if matches!(eff, Tool::Split | Tool::Glue | Tool::Erase | Tool::Mute) && auto_view.is_none() && app.gesture.is_none() {
+            if eff == Tool::Split {
+                let x = x_of(&s, tl, split_point(&s, at, mods));
+                ui.painter().line_segment([pos2(x, lane.min.y), pos2(x, lane.max.y)], Stroke::new(1.0, Tokens::current().accent));
+            }
+            crate::edit_tools::pointer_glyph(ui.painter(), p, eff);
+        }
     }
     let fade_corner = if tool == Tool::Smart && point_hit.is_none() {
         fade_handle.map(|(_, side)| side).or_else(|| {
@@ -2386,6 +2406,15 @@ fn lane_interaction(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: Rect, 
                 Some(Gesture::Pencil { track: track.id, stroke: None, erase: mods.shift })
             }
             Tool::Zoom => Some(Gesture::ZoomBox { start: origin.x }),
+            Tool::Erase | Tool::Mute if auto_view.is_none() => hit.as_ref().and_then(|c| {
+                if c.time_locked || c.edit_locked {
+                    locked_message(app, c);
+                    None
+                } else {
+                    Some(Gesture::Sweep { erase: eff == Tool::Erase, mute_to: !c.muted, clips: vec![c.id] })
+                }
+            }),
+            Tool::Split | Tool::Glue | Tool::Erase | Tool::Mute => None,
         };
     }
     if let Some(Gesture::ClipGain { clip, track: t, pos, anchor, fine, fader_bottom }) = &mut app.gesture
@@ -2448,6 +2477,11 @@ fn lane_interaction(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: Rect, 
                     new_midi_clip(app, &s, track.id, at, at);
                 }
             }
+            Tool::Split | Tool::Glue | Tool::Erase | Tool::Mute => {
+                if auto_view.is_none() {
+                    edit_tool_click(app, &s, track, eff, hit.as_ref(), at, mods);
+                }
+            }
             _ if !selector_press => place_insertion(app, ui, &s, track.id, at, mods.shift),
             _ => {}
         }
@@ -2461,6 +2495,67 @@ fn lane_interaction(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: Rect, 
         let _ = app.run("edit.select", json!({"clips": [c.id.0]}));
         if eff == Tool::Grabber && matches!(c.content, ClipContent::Midi { .. }) {
             app.ui.show_midi_editor = true;
+        }
+    }
+}
+
+/// Where the Split tool cuts for a click at `at`: on the grid in the grid modes, anywhere otherwise;
+/// Ctrl (Cmd on macOS) swaps the two, as for clip drags.
+fn split_point(s: &Session, at: Samples, mods: egui::Modifiers) -> Samples {
+    drag_snap(s, at, mods.command)
+}
+
+fn locked_message(app: &mut SoundApp, c: &Clip) {
+    app.ui.status = format!("Clip `{}` is locked", c.name);
+}
+
+/// A click with the Split, Glue, Erase or Mute tool: one command, so one undo step. Selection stays as
+/// it was (Shift with Split also cuts the selected clips under that time).
+fn edit_tool_click(app: &mut SoundApp, s: &Session, track: &Track, tool: Tool, hit: Option<&Clip>, at: Samples, mods: egui::Modifiers) {
+    let Some(c) = hit else {
+        if tool == Tool::Glue {
+            app.ui.status = "Nothing to glue".into();
+        }
+        return;
+    };
+    if c.time_locked || c.edit_locked {
+        locked_message(app, c);
+        return;
+    }
+    match tool {
+        Tool::Split => {
+            let at = split_point(s, at, mods);
+            let mut ids = vec![c.id.0];
+            if mods.shift {
+                ids.extend(
+                    s.edit
+                        .selected_clips
+                        .iter()
+                        .filter(|id| **id != c.id)
+                        .filter(|id| s.find_clip(**id).is_some_and(|(_, x)| at > x.start && at < x.end() && !(x.time_locked || x.edit_locked)))
+                        .map(|id| id.0),
+                );
+            }
+            let _ = app.run("clip.split", json!({"clips": ids, "at": at}));
+        }
+        Tool::Glue => {
+            let next = track.clips().iter().filter(|x| x.id != c.id && (x.start - c.end()).abs() <= 1).min_by_key(|x| x.start);
+            match next {
+                Some(n) => {
+                    let selection: Vec<u64> = s.edit.selected_clips.iter().map(|x| x.0).collect();
+                    if app.run("clip.glue", json!({"clips": [c.id.0, n.id.0]})).is_ok() {
+                        // The tool leaves the selection as it was.
+                        let _ = app.run("edit.select", json!({"clips": selection}));
+                    }
+                }
+                None => app.ui.status = "Nothing to glue: no clip follows this one".into(),
+            }
+        }
+        Tool::Erase => {
+            let _ = app.run("edit.delete", json!({"clips": [c.id.0]}));
+        }
+        _ => {
+            let _ = app.run(if c.muted { "clip.unmute" } else { "clip.mute" }, json!({"clips": [c.id.0]}));
         }
     }
 }
@@ -2563,6 +2658,16 @@ fn drive_drag(app: &mut SoundApp, ctx: &egui::Context) {
         }
         Some(Gesture::TrimStart { to, .. } | Gesture::TrimEnd { to, .. }) => *to = drag_snap(&s, at, ctx.input(|i| i.modifiers.command)),
         Some(Gesture::MidiClip { to, .. }) => *to = at,
+        Some(Gesture::Sweep { clips, .. }) => {
+            let under = rows.iter().find(|(_, r)| p.y >= r[1] && p.y <= r[3]).and_then(|(id, _)| s.track(TrackId(*id)));
+            if let Some(t) = under.filter(|t| AutoParam::parse(&t.view).is_none())
+                && let Some(c) = clip_at(t, at)
+                && !clips.contains(&c.id)
+                && !(c.time_locked || c.edit_locked)
+            {
+                clips.push(c.id);
+            }
+        }
         Some(Gesture::Fade { clip, fade_in, to, .. }) => {
             if let Some(range) = s.find_clip(*clip).and_then(|(_, c)| fade_drag_range(c, *fade_in, at)) {
                 *to = if *fade_in { range.end } else { range.start };
@@ -2666,6 +2771,19 @@ fn finish_drag(app: &mut SoundApp, s: &Session, tl: Rect, p: Option<Pos2>) {
                 crate::auto_lanes_ui::draw_end(app, track, &param, lane_range(t, &param), stroke, erase);
             } else {
                 app.engine.end_merge();
+            }
+        }
+        Some(Gesture::Sweep { erase, mute_to, clips }) => {
+            let ids: Vec<u64> = clips.iter().filter(|c| s.find_clip(**c).is_some_and(|(_, x)| erase || x.muted != mute_to)).map(|c| c.0).collect();
+            if !ids.is_empty() {
+                let id = if erase {
+                    "edit.delete"
+                } else if mute_to {
+                    "clip.mute"
+                } else {
+                    "clip.unmute"
+                };
+                let _ = app.run(id, json!({"clips": ids}));
             }
         }
         Some(Gesture::ZoomBox { start }) => {
@@ -2939,6 +3057,20 @@ fn overlay(app: &mut SoundApp, ui: &mut Ui, tl: Rect, area: Rect) {
                     Stroke::new(2.0, Tokens::current().gesture_outline),
                     StrokeKind::Inside,
                 );
+            }
+        }
+    }
+    if let Some(Gesture::Sweep { erase, clips, .. }) = &app.gesture {
+        let t = Tokens::current();
+        let tint = if *erase { t.rec } else { t.accent }.gamma_multiply(0.4);
+        for c in clips {
+            if let Some((tid, clip)) = s.find_clip(*c)
+                && let Some((_, r)) = app.edit_layout.rows.iter().find(|(i, _)| *i == tid.0)
+            {
+                let (x0, x1) = (x_of(s, tl, clip.start).max(tl.min.x), x_of(s, tl, clip.end()).min(tl.max.x));
+                if x1 > x0 {
+                    painter.rect_filled(Rect::from_min_max(pos2(x0, r[1] + 1.0), pos2(x1, r[3] - 1.0)), 2.0, tint);
+                }
             }
         }
     }

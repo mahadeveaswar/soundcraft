@@ -166,6 +166,15 @@ The Settings window has three pages: `general`, `appearance` and `tracks` (track
   `keymap_overrides`. Both are saved with the UI preferences; saved keys for commands this version lacks
   are dropped at load.
 
+Edit tools. `edit.tool {tool}` picks the arrange tool: `zoom`, `trim`, `selector`, `grabber`, `scrubber`,
+`pencil`, `smart`, `split` (alias `cut`), `glue`, `erase` (alias `eraser`) or `mute`; it is saved with the
+session and an older session still loads. The click and drag gestures of the new tools run ordinary
+commands, so scripts can do the same: `clip.split {clip | clips, at}` cuts only the named clips (default:
+the selected ones) at a position, refuses locked clips and a position outside every named clip, and is one
+undo step; `clip.glue {clips}`, `clip.mute {clips}`, `clip.unmute {clips}` and `edit.delete {clips}` take
+explicit clips and need no selection. The Alternative key set binds `edit.tool#{"tool":"split"}` to 3,
+glue to 4, erase to 5 and mute to 7 (objects select 1, range select 2, zoom 6, draw 8, scrub 9).
+
 The other General controls use `ui.theme`, `ui.menu_layout`, `ui.toolbar_style`,
 `ui.header_style`, `ui.transport_position` and `window.config_auto_update` (not saved). The
 Appearance and Track colours pages use the `ui.theme_*` commands described under Themes.

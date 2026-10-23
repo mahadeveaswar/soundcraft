@@ -281,7 +281,16 @@ pub fn draw(painter: &Painter, r: Rect, name: &str, c: Color32) {
             painter.rect_stroke(Rect::from_min_max(p(r, 0.54, 0.3), p(r, 0.92, 0.7)), 1.0, s, egui::StrokeKind::Middle);
             painter.rect_filled(Rect::from_min_max(p(r, 0.42, 0.44), p(r, 0.58, 0.56)), 0.0, c);
         }
-        "delete" => {
+        "mute" => {
+            painter.add(Shape::convex_polygon(
+                vec![p(r, 0.14, 0.4), p(r, 0.3, 0.4), p(r, 0.5, 0.2), p(r, 0.5, 0.8), p(r, 0.3, 0.6), p(r, 0.14, 0.6)],
+                c,
+                Stroke::NONE,
+            ));
+            painter.line_segment([p(r, 0.62, 0.36), p(r, 0.88, 0.64)], s);
+            painter.line_segment([p(r, 0.62, 0.64), p(r, 0.88, 0.36)], s);
+        }
+        "delete" | "erase" => {
             painter.add(Shape::closed_line(vec![p(r, 0.16, 0.6), p(r, 0.56, 0.16), p(r, 0.88, 0.44), p(r, 0.5, 0.86)], s));
             painter.line_segment([p(r, 0.36, 0.38), p(r, 0.7, 0.7)], s);
         }
