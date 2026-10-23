@@ -353,7 +353,7 @@ fn paste(e: &mut Engine, p: &Value) -> Result<Value> {
     Ok(json!({"pasted": pasted}))
 }
 
-fn clear(e: &mut Engine, p: &Value) -> Result<Value> {
+pub(super) fn clear(e: &mut Engine, p: &Value) -> Result<Value> {
     let tracks = tracks_required(e, "edit.clear", p)?;
     let range = range_param(e, "edit.clear", p)?;
     let ids = clip_ids_param(e, p);

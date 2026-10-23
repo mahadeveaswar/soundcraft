@@ -42,11 +42,11 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
-fn cur(e: &Engine) -> i64 {
+pub(super) fn cur(e: &Engine) -> i64 {
     if e.transport.playing { e.transport.position } else { e.session().edit.selection.start }
 }
 
-fn locate(e: &mut Engine, at: i64) -> Result<Value> {
+pub(super) fn locate(e: &mut Engine, at: i64) -> Result<Value> {
     let s = e.session_mut();
     s.edit.playhead = at;
     if s.edit.selection.is_empty() || !s.edit.selection.contains(at) {

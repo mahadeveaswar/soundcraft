@@ -6,6 +6,7 @@ use soundcraft_model::{ClipId, TrackId};
 use soundcraft_time::{Range, Samples};
 use std::sync::OnceLock;
 
+mod arrange_ops;
 mod audio_midi;
 mod audiosuite;
 mod auto_draw;
@@ -160,6 +161,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(sampler::specs());
         v.extend(video::specs());
         v.extend(zoom_toggle::specs());
+        v.extend(arrange_ops::specs());
         v.extend(grid_adapt::specs());
         v
     })
