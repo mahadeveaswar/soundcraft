@@ -742,6 +742,32 @@ fn window_api() -> Option<&'static CStr> {
     }
 }
 
+/// Monitor scale factor for a window DPI (96 dpi = 1.0), bounded to something a plugin can use.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn scale_for_dpi(dpi: u32) -> f64 {
+    if dpi == 0 { 1.0 } else { (f64::from(dpi) / 96.0).clamp(0.5, 8.0) }
+}
+
+/// The window rect `[left, top, right, bottom]` after the plugin has constrained the size the
+/// user is dragging: `new_w`x`new_h` is the outer size wanted, and the edge opposite the dragged
+/// one stays put. `edge` is the `WM_SIZING` code (1 left, 2 right, 3 top, 4 top-left, 5 top-right,
+/// 6 bottom, 7 bottom-left, 8 bottom-right).
+#[cfg_attr(not(windows), allow(dead_code))]
+fn anchor_rect(edge: u32, rect: [i32; 4], new_w: i32, new_h: i32) -> [i32; 4] {
+    let [mut l, mut t, mut r, mut b] = rect;
+    if matches!(edge, 1 | 4 | 7) {
+        l = r.saturating_sub(new_w);
+    } else {
+        r = l.saturating_add(new_w);
+    }
+    if matches!(edge, 3..=5) {
+        t = b.saturating_sub(new_h);
+    } else {
+        b = t.saturating_add(new_h);
+    }
+    [l, t, r, b]
+}
+
 struct GuiInner {
     plugin: *const clap_plugin,
     gui: *const clap_plugin_gui,
@@ -874,10 +900,7 @@ impl GuiLink {
             return Err("the plugin could not create its editor".into());
         }
         g.created = true;
-        if let Some(f) = vt.set_scale {
-            // SAFETY: live plugin with a created GUI.
-            unsafe { f(g.plugin, 1.0) };
-        }
+        let _dpi = hostwin::dpi_scope();
         let (mut w, mut h) = (640u32, 480u32);
         if let Some(f) = vt.get_size {
             let (mut a, mut b) = (0u32, 0u32);
@@ -886,13 +909,31 @@ impl GuiLink {
                 (w, h) = (a.min(16_384), b.min(16_384));
             }
         }
-        let win = match hostwin::HostWindow::new(title, f64::from(w), f64::from(h)) {
+        let resizable = match vt.can_resize {
+            // SAFETY: live plugin with a created GUI; main thread.
+            Some(f) => unsafe { f(g.plugin) },
+            None => false,
+        };
+        let win = match hostwin::HostWindow::new(title, f64::from(w), f64::from(h), resizable) {
             Ok(win) => win,
             Err(e) => {
                 GuiLink::destroy(g);
                 return Err(e);
             }
         };
+        // Tell the plugin the monitor scale before it builds its window, then take the size it
+        // reports for that scale.
+        if let (Some(scale), Some(f)) = (win.scale(), vt.set_scale) {
+            // SAFETY: live plugin with a created GUI.
+            unsafe { f(g.plugin, scale) };
+            if let Some(get_size) = vt.get_size {
+                let (mut a, mut b) = (0u32, 0u32);
+                // SAFETY: live plugin with a created GUI; both out-pointers are valid locals.
+                if unsafe { get_size(g.plugin, &mut a, &mut b) } && a > 0 && b > 0 {
+                    win.fit(f64::from(a.min(16_384)), f64::from(b.min(16_384)));
+                }
+            }
+        }
         let parent = clap_window { api: api.as_ptr(), specific: clap_window_handle { win32: win.parent() } };
         // SAFETY: live plugin with a created embedded GUI; `parent` names our live window and
         // outlives the call.
@@ -901,6 +942,7 @@ impl GuiLink {
             GuiLink::destroy(g);
             return Err("the editor could not attach to its window".into());
         }
+        win.bind(g.plugin, g.gui);
         g.window = Some(win);
         let shown = match vt.show {
             // SAFETY: live plugin with a created, parented GUI.
@@ -919,6 +961,9 @@ impl GuiLink {
     }
 
     fn destroy(g: &mut GuiInner) {
+        if let Some(w) = &g.window {
+            w.unbind();
+        }
         if g.created
             && let Some(f) = GuiLink::vt(g).and_then(|v| v.destroy)
         {
@@ -1443,15 +1488,25 @@ impl Drop for Instance {
 /// Messages are dispatched by the app's own event loop on the main thread.
 #[cfg(windows)]
 mod hostwin {
+    use super::{anchor_rect, scale_for_dpi};
+    use clap_sys::ext::gui::clap_plugin_gui;
+    use clap_sys::plugin::clap_plugin;
     use std::ffi::c_void;
-    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+    use std::sync::{Arc, OnceLock};
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+    use windows_sys::Win32::Graphics::Gdi::{COLOR_BTNFACE, RDW_ALLCHILDREN, RDW_ERASE, RDW_INVALIDATE, RDW_UPDATENOW, RedrawWindow};
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows_sys::Win32::UI::HiDpi::{
+        AdjustWindowRectExForDpi, DPI_AWARENESS_CONTEXT, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForSystem, GetDpiForWindow,
+        SetThreadDpiAwarenessContext,
+    };
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        AdjustWindowRectEx, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, GWL_EXSTYLE, GWL_STYLE,
-        GetWindowLongPtrW, IDC_ARROW, IsWindow, IsWindowVisible, LoadCursorW, RegisterClassExW, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE,
-        SWP_NOZORDER, SetForegroundWindow, SetWindowPos, ShowWindow, WM_CLOSE, WNDCLASSEXW, WS_CAPTION, WS_CLIPCHILDREN, WS_OVERLAPPED, WS_SYSMENU,
+        CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, GWL_EXSTYLE, GWL_STYLE, GWLP_USERDATA, GetClientRect,
+        GetWindowLongPtrW, IDC_ARROW, IsWindow, IsWindowVisible, LoadCursorW, RegisterClassExW, SIZE_MINIMIZED, SW_HIDE, SW_SHOW, SWP_NOACTIVATE,
+        SWP_NOMOVE, SWP_NOZORDER, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, WM_CLOSE, WM_DPICHANGED, WM_EXITSIZEMOVE,
+        WM_NCDESTROY, WM_SIZE, WM_SIZING, WNDCLASSEXW, WS_CAPTION, WS_CLIPCHILDREN, WS_MAXIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU, WS_THICKFRAME,
     };
 
     pub const SUPPORTED: bool = true;
@@ -1465,16 +1520,179 @@ mod hostwin {
         s.encode_utf16().filter(|&c| c != 0).chain(Some(0)).collect()
     }
 
-    const STYLE: u32 = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN;
+    const FIXED_STYLE: u32 = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN;
+    /// Used only when the plugin says its editor can be resized.
+    const SIZABLE_STYLE: u32 = FIXED_STYLE | WS_THICKFRAME | WS_MAXIMIZEBOX;
+
+    /// What the window procedure may touch. The window holds one strong reference (released in
+    /// `WM_NCDESTROY`), so the procedure never sees a freed state.
+    struct State {
+        /// The plugin and its `clap.gui` table, bound while the GUI exists (main thread only, the
+        /// only thread that runs the window procedure); null otherwise.
+        plugin: AtomicPtr<clap_plugin>,
+        gui: AtomicPtr<clap_plugin_gui>,
+        resizable: AtomicBool,
+        /// Set while the host itself resizes the window, so the resulting `WM_SIZE` is not
+        /// forwarded to the plugin a second time.
+        in_size: AtomicBool,
+    }
+
+    impl State {
+        fn table(&self) -> Option<(*const clap_plugin, clap_plugin_gui)> {
+            let plugin = self.plugin.load(Ordering::Acquire).cast_const();
+            // SAFETY: null or the plugin's static extension table, valid while bound (see `bind`).
+            let gui = unsafe { self.gui.load(Ordering::Acquire).as_ref() }.copied()?;
+            (!plugin.is_null()).then_some((plugin, gui))
+        }
+
+        /// The client size the plugin accepts for a requested `w`x`h` (unchanged when it has no say).
+        fn constrain(&self, w: i32, h: i32) -> (i32, i32) {
+            let (Some((plugin, gui)), true) = (self.table(), w > 0 && h > 0) else { return (w, h) };
+            let Some(adjust) = gui.adjust_size else { return (w, h) };
+            let (mut a, mut b) = (w as u32, h as u32);
+            // SAFETY: live plugin with a created GUI (bound); both out-pointers are valid locals.
+            if unsafe { adjust(plugin, &mut a, &mut b) } && a > 0 && b > 0 {
+                (i32::try_from(a.min(16_384)).unwrap_or(w), i32::try_from(b.min(16_384)).unwrap_or(h))
+            } else {
+                (w, h)
+            }
+        }
+
+        fn on_size(&self, hwnd: HWND) {
+            if self.in_size.swap(true, Ordering::Relaxed) {
+                return;
+            }
+            let mut c = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+            // SAFETY: a live window of this thread; `c` is writable.
+            if unsafe { GetClientRect(hwnd, &mut c) } != 0
+                && let Some((plugin, gui)) = self.table()
+                && let Some(set_size) = gui.set_size
+            {
+                let w = u32::try_from(c.right.saturating_sub(c.left)).unwrap_or(0);
+                let h = u32::try_from(c.bottom.saturating_sub(c.top)).unwrap_or(0);
+                // SAFETY: live plugin with a created GUI (bound), main thread.
+                unsafe { set_size(plugin, w, h) };
+            }
+            self.in_size.store(false, Ordering::Relaxed);
+        }
+    }
+
+    fn state_of<'a>(hwnd: HWND) -> Option<&'a State> {
+        // SAFETY: the user data is null or the `Arc<State>` pointer stored in `HostWindow::new`,
+        // alive until `WM_NCDESTROY` clears it (main thread only).
+        unsafe { (GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const State).as_ref() }
+    }
+
+    /// Repaints the host window and every child (the plugin's window) after open, resize and move.
+    fn redraw(hwnd: HWND) {
+        // SAFETY: a live window of this thread; null rect/region mean the whole client area.
+        unsafe { RedrawWindow(hwnd, std::ptr::null(), std::ptr::null_mut(), RDW_ALLCHILDREN | RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW) };
+    }
+
+    fn dpi_of(hwnd: HWND) -> u32 {
+        // SAFETY: accepts any window handle; 0 on failure.
+        let d = unsafe { GetDpiForWindow(hwnd) };
+        if d == 0 {
+            // SAFETY: no arguments.
+            unsafe { GetDpiForSystem() }
+        } else {
+            d
+        }
+    }
+
+    fn styles(hwnd: HWND) -> (u32, u32) {
+        // SAFETY: a live window of this thread; values are read, not changed.
+        unsafe { (GetWindowLongPtrW(hwnd, GWL_STYLE) as u32, GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32) }
+    }
+
+    fn handle(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
+        let state = state_of(hwnd);
+        match msg {
+            WM_CLOSE => {
+                // SAFETY: `hwnd` is the window this procedure was called for.
+                unsafe { ShowWindow(hwnd, SW_HIDE) };
+                Some(0)
+            }
+            WM_NCDESTROY => {
+                if state.is_some() {
+                    // SAFETY: the pointer came from `Arc::into_raw` in `new`; cleared first so
+                    // later messages see none, then the window's reference is released once.
+                    unsafe {
+                        let p = SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0) as *const State;
+                        if !p.is_null() {
+                            drop(Arc::from_raw(p));
+                        }
+                    }
+                }
+                None
+            }
+            WM_SIZING => {
+                let st = state?;
+                if !st.resizable.load(Ordering::Relaxed) {
+                    return None;
+                }
+                // SAFETY: for this message `lparam` points to the writable proposed window rect.
+                let r = unsafe { (lparam as *mut RECT).as_mut() }?;
+                let (style, ex) = styles(hwnd);
+                let (ew, eh) = outer_size(style, ex, 0.0, 0.0, dpi_of(hwnd));
+                let (cw, ch) = st.constrain(r.right.saturating_sub(r.left).saturating_sub(ew), r.bottom.saturating_sub(r.top).saturating_sub(eh));
+                let [l, t, rr, b] = anchor_rect(wparam as u32, [r.left, r.top, r.right, r.bottom], cw.saturating_add(ew), ch.saturating_add(eh));
+                (r.left, r.top, r.right, r.bottom) = (l, t, rr, b);
+                Some(1)
+            }
+            WM_SIZE => {
+                if wparam as u32 != SIZE_MINIMIZED {
+                    let st = state?;
+                    st.on_size(hwnd);
+                    redraw(hwnd);
+                }
+                None
+            }
+            WM_EXITSIZEMOVE => {
+                redraw(hwnd);
+                None
+            }
+            WM_DPICHANGED => {
+                let st = state?;
+                // SAFETY: for this message `lparam` points to the suggested window rect.
+                if let Some(r) = unsafe { (lparam as *const RECT).as_ref() } {
+                    st.in_size.store(true, Ordering::Relaxed);
+                    // SAFETY: a live window of this thread; only position and size change.
+                    unsafe {
+                        SetWindowPos(
+                            hwnd,
+                            std::ptr::null_mut(),
+                            r.left,
+                            r.top,
+                            r.right.saturating_sub(r.left),
+                            r.bottom.saturating_sub(r.top),
+                            SWP_NOZORDER | SWP_NOACTIVATE,
+                        )
+                    };
+                    st.in_size.store(false, Ordering::Relaxed);
+                }
+                if let Some((plugin, gui)) = st.table()
+                    && let Some(set_scale) = gui.set_scale
+                {
+                    // SAFETY: live plugin with a created GUI (bound), main thread.
+                    unsafe { set_scale(plugin, scale_for_dpi((wparam & 0xFFFF) as u32)) };
+                }
+                st.on_size(hwnd);
+                redraw(hwnd);
+                Some(0)
+            }
+            _ => None,
+        }
+    }
 
     unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        if msg == WM_CLOSE {
-            // SAFETY: `hwnd` is the window this procedure was called for.
-            unsafe { ShowWindow(hwnd, SW_HIDE) };
-            return 0;
+        // Nothing may unwind into the system: a panic falls back to default handling.
+        let handled = std::panic::catch_unwind(|| handle(hwnd, msg, wparam, lparam)).ok().flatten();
+        match handled {
+            Some(r) => r,
+            // SAFETY: default handling of a message for the window it was sent to.
+            None => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
         }
-        // SAFETY: default handling of a message for the window it was sent to.
-        unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
     }
 
     /// Registers the window class once; the name lives for the whole process.
@@ -1495,7 +1713,9 @@ mod hostwin {
                     hIcon: std::ptr::null_mut(),
                     // SAFETY: a system cursor (null instance + predefined id).
                     hCursor: unsafe { LoadCursorW(std::ptr::null_mut(), IDC_ARROW) },
-                    hbrBackground: std::ptr::null_mut(),
+                    // A system colour brush (colour index + 1 is the documented stand-in for a
+                    // handle): the area the plugin does not paint is cleared, not left stale.
+                    hbrBackground: (COLOR_BTNFACE + 1) as usize as *mut c_void,
                     lpszMenuName: std::ptr::null(),
                     lpszClassName: name.as_ptr(),
                     hIconSm: std::ptr::null_mut(),
@@ -1507,17 +1727,36 @@ mod hostwin {
             .as_deref()
     }
 
-    /// Outer window size for a client area of `w`×`h`.
-    fn outer_size(style: u32, ex_style: u32, w: f64, h: f64) -> (i32, i32) {
+    /// Outer window size for a client area of `w`x`h` at `dpi`.
+    fn outer_size(style: u32, ex_style: u32, w: f64, h: f64, dpi: u32) -> (i32, i32) {
         let mut r = RECT { left: 0, top: 0, right: w as i32, bottom: h as i32 };
         // SAFETY: `r` is a valid, writable rect.
-        unsafe { AdjustWindowRectEx(&mut r, style, 0, ex_style) };
+        unsafe { AdjustWindowRectExForDpi(&mut r, style, 0, ex_style, dpi.max(96)) };
         (r.right.saturating_sub(r.left), r.bottom.saturating_sub(r.top))
+    }
+
+    /// Makes this thread per-monitor-DPI aware while it lives (a no-op when the process already
+    /// is), so the host window and the plugin's child window agree on pixels.
+    pub struct DpiScope(DPI_AWARENESS_CONTEXT);
+
+    pub fn dpi_scope() -> DpiScope {
+        // SAFETY: a constant context value; returns the previous one (null when unsupported).
+        DpiScope(unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) })
+    }
+
+    impl Drop for DpiScope {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                // SAFETY: restores the context this thread had before `dpi_scope`.
+                unsafe { SetThreadDpiAwarenessContext(self.0) };
+            }
+        }
     }
 
     /// Owns the window handle; destroyed in `close` (main thread only).
     pub struct HostWindow {
         hwnd: HWND,
+        state: Arc<State>,
     }
 
     // SAFETY: the handle is only used on the main thread (every method checks); the struct
@@ -1530,13 +1769,15 @@ mod hostwin {
             (on_main_thread() && unsafe { IsWindow(self.hwnd) } != 0).then_some(self.hwnd)
         }
 
-        pub fn new(title: &str, w: f64, h: f64) -> Result<HostWindow, String> {
+        pub fn new(title: &str, w: f64, h: f64, resizable: bool) -> Result<HostWindow, String> {
             if !on_main_thread() {
                 return Err("plugin editors must be opened on the main thread".into());
             }
             let class = class_name().ok_or_else(|| "cannot register the editor window class".to_string())?;
             let title = wide(title);
-            let (ow, oh) = outer_size(STYLE, 0, w, h);
+            let style = if resizable { SIZABLE_STYLE } else { FIXED_STYLE };
+            // SAFETY: no arguments.
+            let (ow, oh) = outer_size(style, 0, w, h, unsafe { GetDpiForSystem() });
             // SAFETY: main thread; the active window (or null) of this thread's queue.
             let owner = unsafe { GetActiveWindow() };
             // SAFETY: registered class and NUL-terminated strings that outlive the call; the
@@ -1546,7 +1787,7 @@ mod hostwin {
                     0,
                     class.as_ptr(),
                     title.as_ptr(),
-                    STYLE,
+                    style,
                     CW_USEDEFAULT,
                     CW_USEDEFAULT,
                     ow,
@@ -1560,7 +1801,18 @@ mod hostwin {
             if hwnd.is_null() {
                 return Err("cannot create the editor window".into());
             }
-            Ok(HostWindow { hwnd })
+            let state = Arc::new(State {
+                plugin: AtomicPtr::new(std::ptr::null_mut()),
+                gui: AtomicPtr::new(std::ptr::null_mut()),
+                resizable: AtomicBool::new(resizable),
+                in_size: AtomicBool::new(false),
+            });
+            // SAFETY: our own live window; the stored reference is released in `WM_NCDESTROY`.
+            unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, Arc::into_raw(Arc::clone(&state)) as isize) };
+            let win = HostWindow { hwnd, state };
+            // Fit the client area at the window's own monitor scale (the system scale was a guess).
+            win.fit(w, h);
+            Ok(win)
         }
 
         /// The window handle (for resizes).
@@ -1573,6 +1825,28 @@ mod hostwin {
             self.live().unwrap_or(std::ptr::null_mut())
         }
 
+        /// The monitor scale (1.0 = 96 dpi) the window is on.
+        pub fn scale(&self) -> Option<f64> {
+            self.live().map(|h| scale_for_dpi(dpi_of(h)))
+        }
+
+        /// Sets the client size in pixels.
+        pub fn fit(&self, w: f64, h: f64) {
+            resize(self.hwnd, w, h);
+        }
+
+        /// Routes size, constraint and scale messages to the plugin's GUI. `plugin` and `gui`
+        /// must stay valid until [`HostWindow::unbind`] (the GUI is destroyed after it).
+        pub fn bind(&self, plugin: *const clap_plugin, gui: *const clap_plugin_gui) {
+            self.state.plugin.store(plugin.cast_mut(), Ordering::Release);
+            self.state.gui.store(gui.cast_mut(), Ordering::Release);
+        }
+
+        pub fn unbind(&self) {
+            self.state.plugin.store(std::ptr::null_mut(), Ordering::Release);
+            self.state.gui.store(std::ptr::null_mut(), Ordering::Release);
+        }
+
         pub fn raise(&self) {
             if let Some(h) = self.live() {
                 // SAFETY: a live window of this thread.
@@ -1580,6 +1854,7 @@ mod hostwin {
                     ShowWindow(h, SW_SHOW);
                     SetForegroundWindow(h);
                 }
+                redraw(h);
             }
         }
 
@@ -1589,6 +1864,7 @@ mod hostwin {
         }
 
         pub fn close(self) {
+            self.unbind();
             if let Some(h) = self.live() {
                 // SAFETY: our own live window; the plugin's GUI was destroyed first.
                 unsafe { DestroyWindow(h) };
@@ -1602,11 +1878,18 @@ mod hostwin {
         if !on_main_thread() || window.is_null() || unsafe { IsWindow(window) } == 0 {
             return;
         }
-        // SAFETY: a live window of this thread; style values are read, not changed.
-        let (style, ex) = unsafe { (GetWindowLongPtrW(window, GWL_STYLE) as u32, GetWindowLongPtrW(window, GWL_EXSTYLE) as u32) };
-        let (ow, oh) = outer_size(style, ex, w, h);
-        // SAFETY: as above; only the size changes.
+        let (style, ex) = styles(window);
+        let (ow, oh) = outer_size(style, ex, w, h, dpi_of(window));
+        let st = state_of(window);
+        if let Some(s) = st {
+            s.in_size.store(true, Ordering::Relaxed);
+        }
+        // SAFETY: a live window of this thread; only the size changes.
         unsafe { SetWindowPos(window, std::ptr::null_mut(), 0, 0, ow, oh, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE) };
+        if let Some(s) = st {
+            s.in_size.store(false, Ordering::Relaxed);
+        }
+        redraw(window);
     }
 }
 
@@ -1620,7 +1903,7 @@ mod hostwin {
     pub struct HostWindow;
 
     impl HostWindow {
-        pub fn new(_title: &str, _w: f64, _h: f64) -> Result<HostWindow, String> {
+        pub fn new(_title: &str, _w: f64, _h: f64, _resizable: bool) -> Result<HostWindow, String> {
             Err("embedded plugin editors are not hosted on this platform".into())
         }
         pub fn raw(&self) -> *mut c_void {
@@ -1634,6 +1917,18 @@ mod hostwin {
             false
         }
         pub fn close(self) {}
+        pub fn scale(&self) -> Option<f64> {
+            None
+        }
+        pub fn fit(&self, _w: f64, _h: f64) {}
+        pub fn bind(&self, _plugin: *const clap_sys::plugin::clap_plugin, _gui: *const clap_sys::ext::gui::clap_plugin_gui) {}
+        pub fn unbind(&self) {}
+    }
+
+    pub struct DpiScope;
+
+    pub fn dpi_scope() -> DpiScope {
+        DpiScope
     }
 
     pub fn resize(_window: *mut c_void, _w: f64, _h: f64) {}
@@ -1641,6 +1936,24 @@ mod hostwin {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dpi_maps_to_a_bounded_scale() {
+        assert_eq!(super::scale_for_dpi(96), 1.0);
+        assert_eq!(super::scale_for_dpi(168), 1.75);
+        assert_eq!(super::scale_for_dpi(0), 1.0);
+        assert_eq!(super::scale_for_dpi(u32::MAX), 8.0);
+    }
+
+    #[test]
+    fn a_constrained_size_keeps_the_edge_opposite_the_drag() {
+        let rect = [100, 50, 500, 450];
+        assert_eq!(super::anchor_rect(8, rect, 300, 200), [100, 50, 400, 250]);
+        assert_eq!(super::anchor_rect(4, rect, 300, 200), [200, 250, 500, 450]);
+        assert_eq!(super::anchor_rect(5, rect, 300, 200), [100, 250, 400, 450]);
+        assert_eq!(super::anchor_rect(7, rect, 300, 200), [200, 50, 500, 250]);
+        let _ = super::anchor_rect(4, [i32::MIN, i32::MIN, i32::MAX, i32::MAX], i32::MAX, i32::MAX);
+    }
+
     use super::*;
 
     #[test]

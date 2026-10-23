@@ -4,7 +4,8 @@ use crate::ffi::{AFTERTOUCH, BusBuffers, EVENT_CAP, EditorLink, HostContext, Ins
 use soundcraft_dsp::{Plugin, PluginEditor, PluginInfo, Transport, Unit};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Mutex, PoisonError};
 use vst3::ComWrapper;
 
 /// Largest block we set a plugin up for.
@@ -27,6 +28,75 @@ enum Mapping {
 
 /// A hosted VST3 plugin. Parameter ids are VST3 `ParamID`s as decimal strings ("0", "17", …);
 /// values are plain (display) values with their names and ranges in `info().params`.
+/// Calls with note events delivered but no audible output before the diagnostics say so.
+const SILENT_AFTER_CALLS: u64 = 2_000;
+
+/// One-per-instance diagnostics shared between the audio thread (atomic counters only: no
+/// logging, locking or allocation there) and the UI-side poll, which logs each fact once.
+#[derive(Default)]
+pub(crate) struct Diag {
+    calls: AtomicU64,
+    note_events: AtomicU64,
+    errors: AtomicU64,
+    sound: AtomicBool,
+    /// Bus layout and format, written by `prepare` (not on the audio thread).
+    setup: Mutex<String>,
+    logged_setup: AtomicBool,
+    logged_sound: AtomicBool,
+    logged_silent: AtomicBool,
+}
+
+impl Diag {
+    /// Audio thread: one `process` call finished.
+    fn record(&self, notes: usize, failed: bool, audible: bool) {
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        self.note_events.fetch_add(notes as u64, Ordering::Relaxed);
+        if failed {
+            self.errors.fetch_add(1, Ordering::Relaxed);
+        }
+        if audible && !self.sound.load(Ordering::Relaxed) {
+            self.sound.store(true, Ordering::Relaxed);
+        }
+    }
+
+    fn set_setup(&self, text: String) {
+        *self.setup.lock().unwrap_or_else(PoisonError::into_inner) = text;
+        self.logged_setup.store(false, Ordering::Relaxed);
+    }
+
+    /// UI side: the lines that are new since the last call (each fact is reported once).
+    pub fn report(&self, id: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        if !self.logged_setup.load(Ordering::Relaxed) {
+            let text = self.setup.lock().unwrap_or_else(PoisonError::into_inner).clone();
+            if !text.is_empty() {
+                self.logged_setup.store(true, Ordering::Relaxed);
+                out.push(format!("vst3 {id}: {text}"));
+            }
+        }
+        if self.sound.load(Ordering::Relaxed) {
+            if !self.logged_sound.swap(true, Ordering::Relaxed) {
+                out.push(format!(
+                    "vst3 {id}: produced audible output ({} blocks, {} note events so far)",
+                    self.calls.load(Ordering::Relaxed),
+                    self.note_events.load(Ordering::Relaxed)
+                ));
+            }
+        } else if self.calls.load(Ordering::Relaxed) >= SILENT_AFTER_CALLS
+            && self.note_events.load(Ordering::Relaxed) > 0
+            && !self.logged_silent.swap(true, Ordering::Relaxed)
+        {
+            out.push(format!(
+                "vst3 {id}: {} blocks and {} note events processed, output still silent ({} failed blocks); the instrument may still be loading its content or listen on another MIDI channel or output",
+                self.calls.load(Ordering::Relaxed),
+                self.note_events.load(Ordering::Relaxed),
+                self.errors.load(Ordering::Relaxed)
+            ));
+        }
+        out
+    }
+}
+
 pub struct Vst3Plugin {
     inst: Instance,
     info: &'static PluginInfo,
@@ -52,6 +122,9 @@ pub struct Vst3Plugin {
     has_output: bool,
     event_input: bool,
     held: [bool; 128],
+    diag: Arc<Diag>,
+    /// The MIDI channel each held note was started on (its note-off must match).
+    held_ch: [u8; 128],
     channels: usize,
     max_block: usize,
     latency: usize,
@@ -98,6 +171,8 @@ impl Vst3Plugin {
             has_output: false,
             event_input: false,
             held: [false; 128],
+            diag: Arc::new(Diag::default()),
+            held_ch: [0; 128],
             channels: 2,
             max_block: 0,
             latency: 0,
@@ -198,6 +273,10 @@ impl Plugin for Vst3Plugin {
                 self.latency = self.inst.latency() as usize;
                 self.tail = self.inst.tail() as usize;
                 self.midi_map = self.inst.midi_mapping();
+                self.diag.set_setup(format!(
+                    "configured at {sr} Hz, max block {mb}, inputs {:?}, outputs {:?}, event input {}, latency {} samples, tail {} samples",
+                    layout.inputs, layout.outputs, layout.event_input, self.latency, self.tail
+                ));
             }
             Err(e) => {
                 log::warn!("{}: {e}", self.info.id);
@@ -291,6 +370,12 @@ impl Plugin for Vst3Plugin {
                 self.position,
                 self.transport.as_ref(),
             );
+            let audible = r.is_ok()
+                && self.has_output
+                && !self.diag.sound.load(Ordering::Relaxed)
+                && (0..self.outputs.channels(0))
+                    .any(|c| self.outputs.channel(0, c).and_then(|s| s.get(..n)).is_some_and(|s| s.iter().any(|x| x.abs() > 1e-9)));
+            self.diag.record(k, r.is_err(), audible);
             self.pending.clear();
             self.notes.drain(..k);
             self.position = self.position.saturating_add(i64::try_from(n).unwrap_or(0));
@@ -331,22 +416,33 @@ impl Plugin for Vst3Plugin {
     }
 
     fn note_on(&mut self, offset: usize, note: u8, velocity: u8) {
-        if note > 127 || !self.event_input {
-            return;
-        }
-        let time = u32::try_from(offset).unwrap_or(u32::MAX);
-        self.push_note(NoteEvent::On { time, key: note, velocity: f32::from(velocity.min(127)) / 127.0 });
-        if let Some(h) = self.held.get_mut(note as usize) {
-            *h = true;
-        }
+        self.note_on_ch(offset, 0, note, velocity);
     }
 
     fn note_off(&mut self, offset: usize, note: u8) {
+        self.note_off_ch(offset, 0, note);
+    }
+
+    fn note_on_ch(&mut self, offset: usize, channel: u8, note: u8, velocity: u8) {
         if note > 127 || !self.event_input {
             return;
         }
         let time = u32::try_from(offset).unwrap_or(u32::MAX);
-        self.push_note(NoteEvent::Off { time, key: note });
+        self.push_note(NoteEvent::On { time, channel: channel & 0x0F, key: note, velocity: f32::from(velocity.min(127)) / 127.0 });
+        if let Some(h) = self.held.get_mut(note as usize) {
+            *h = true;
+        }
+        if let Some(c) = self.held_ch.get_mut(note as usize) {
+            *c = channel & 0x0F;
+        }
+    }
+
+    fn note_off_ch(&mut self, offset: usize, channel: u8, note: u8) {
+        if note > 127 || !self.event_input {
+            return;
+        }
+        let time = u32::try_from(offset).unwrap_or(u32::MAX);
+        self.push_note(NoteEvent::Off { time, channel: channel & 0x0F, key: note });
         if let Some(h) = self.held.get_mut(note as usize) {
             *h = false;
         }
@@ -360,7 +456,7 @@ impl Plugin for Vst3Plugin {
             0xD0 => (AFTERTOUCH, f64::from(d1) / 127.0),
             0xE0 => (PITCH_BEND, f64::from(u16::from(d2) << 7 | u16::from(d1)) / 16383.0),
             0xA0 if self.event_input => {
-                self.push_note(NoteEvent::Pressure { time, key: d1, pressure: f32::from(d2) / 127.0 });
+                self.push_note(NoteEvent::Pressure { time, channel: msg[0] & 0x0F, key: d1, pressure: f32::from(d2) / 127.0 });
                 return;
             }
             _ => return,
@@ -375,7 +471,8 @@ impl Plugin for Vst3Plugin {
     fn all_notes_off(&mut self) {
         for k in 0..128u8 {
             if self.held.get(k as usize).copied().unwrap_or(false) {
-                self.note_off(0, k);
+                let ch = self.held_ch.get(k as usize).copied().unwrap_or(0);
+                self.note_off_ch(0, ch, k);
             }
         }
     }
@@ -405,6 +502,7 @@ impl Plugin for Vst3Plugin {
             link,
             host: self.inst.host_ref(),
             info: self.info,
+            diag: Arc::clone(&self.diag),
             index: self.info.params.iter().enumerate().map(|(i, p)| (p.id, i)).collect(),
             units: self.ids.iter().map(|id| units.remove(id).unwrap_or_default()).collect(),
             ids: self.ids.clone(),
@@ -433,6 +531,7 @@ struct Vst3Editor {
     link: Arc<EditorLink>,
     host: ComWrapper<HostContext>,
     info: &'static PluginInfo,
+    diag: Arc<Diag>,
     /// Position of each SoundCraft param id in `info.params` (looked up once per row and frame).
     index: HashMap<&'static str, usize>,
     /// The plugin's own unit label of each param (same order as `ids`).
@@ -485,6 +584,9 @@ impl PluginEditor for Vst3Editor {
 
     fn idle(&mut self) -> Vec<(String, f32)> {
         self.link.idle();
+        for line in self.diag.report(self.info.id) {
+            log::info!("{line}");
+        }
         let mut out = Vec::new();
         for (vid, n) in self.host.take_edits() {
             let Some(i) = self.ids.iter().position(|&x| x == vid) else { continue };
@@ -515,5 +617,29 @@ impl PluginEditor for Vst3Editor {
         // but some plugins put them in both.
         let units = self.units.get(i).map_or("", |u| u.trim());
         if units.is_empty() || text.trim_end().to_lowercase().ends_with(&units.to_lowercase()) { Some(text) } else { Some(format!("{text} {units}")) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostics_report_each_fact_once() {
+        let d = Diag::default();
+        assert!(d.report("x").is_empty(), "nothing to say before prepare");
+        d.set_setup("configured".into());
+        assert_eq!(d.report("x"), vec!["vst3 x: configured".to_string()]);
+        assert!(d.report("x").is_empty());
+        for _ in 0..SILENT_AFTER_CALLS {
+            d.record(1, false, false);
+        }
+        let silent = d.report("x");
+        assert_eq!(silent.len(), 1);
+        assert!(silent[0].contains("still silent"));
+        assert!(d.report("x").is_empty(), "the warning is logged once");
+        d.record(0, false, true);
+        assert!(d.report("x")[0].contains("audible"));
+        assert!(d.report("x").is_empty());
     }
 }

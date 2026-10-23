@@ -963,9 +963,9 @@ impl IBStreamTrait for MemoryStream {
 /// A host → plugin note event, safe to build anywhere; converted inside `process`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum NoteEvent {
-    On { time: u32, key: u8, velocity: f32 },
-    Off { time: u32, key: u8 },
-    Pressure { time: u32, key: u8, pressure: f32 },
+    On { time: u32, channel: u8, key: u8, velocity: f32 },
+    Off { time: u32, channel: u8, key: u8 },
+    Pressure { time: u32, channel: u8, key: u8, pressure: f32 },
 }
 
 impl NoteEvent {
@@ -987,17 +987,19 @@ impl NoteEvent {
         e.sampleOffset = i32::try_from(self.time().saturating_sub(offset)).unwrap_or(0);
         e.flags = sv::Event_::EventFlags_::kIsLive as u16;
         match self {
-            NoteEvent::On { key, velocity, .. } => {
+            NoteEvent::On { channel, key, velocity, .. } => {
                 e.r#type = sv::Event_::EventTypes_::kNoteOnEvent as u16;
-                e.__field0.noteOn = sv::NoteOnEvent { channel: 0, pitch: i16::from(key), tuning: 0.0, velocity, length: 0, noteId: -1 };
+                e.__field0.noteOn =
+                    sv::NoteOnEvent { channel: i16::from(channel & 0x0F), pitch: i16::from(key), tuning: 0.0, velocity, length: 0, noteId: -1 };
             }
-            NoteEvent::Off { key, .. } => {
+            NoteEvent::Off { channel, key, .. } => {
                 e.r#type = sv::Event_::EventTypes_::kNoteOffEvent as u16;
-                e.__field0.noteOff = sv::NoteOffEvent { channel: 0, pitch: i16::from(key), velocity: 0.0, noteId: -1, tuning: 0.0 };
+                e.__field0.noteOff =
+                    sv::NoteOffEvent { channel: i16::from(channel & 0x0F), pitch: i16::from(key), velocity: 0.0, noteId: -1, tuning: 0.0 };
             }
-            NoteEvent::Pressure { key, pressure, .. } => {
+            NoteEvent::Pressure { channel, key, pressure, .. } => {
                 e.r#type = sv::Event_::EventTypes_::kPolyPressureEvent as u16;
-                e.__field0.polyPressure = sv::PolyPressureEvent { channel: 0, pitch: i16::from(key), pressure, noteId: -1 };
+                e.__field0.polyPressure = sv::PolyPressureEvent { channel: i16::from(channel & 0x0F), pitch: i16::from(key), pressure, noteId: -1 };
             }
         }
         e
@@ -1044,6 +1046,16 @@ impl BusBuffers {
 
     pub fn channel_mut(&mut self, bus: usize, ch: usize) -> Option<&mut [f32]> {
         self.data.get_mut(bus).and_then(|p| p.get_mut(ch)).map(Vec::as_mut_slice)
+    }
+
+    /// Zeroes the first `frames` of every channel, so a bus the plugin flags as silent (and does
+    /// not write) reads as silence rather than as the previous block.
+    pub fn zero(&mut self, frames: usize) {
+        for ch in self.data.iter_mut().flatten() {
+            if let Some(s) = ch.get_mut(..frames) {
+                s.fill(0.0);
+            }
+        }
     }
 
     /// Points the VST3 tables at the current data (no allocation).
@@ -1097,9 +1109,9 @@ fn apply_transport(c: &mut sv::ProcessContext, t: &Transport) {
     #[allow(clippy::unnecessary_cast)]
     let state = state as u32;
     c.state = state;
-    c.tempo = t.tempo;
-    c.timeSigNumerator = i32::try_from(t.numerator).unwrap_or(4);
-    c.timeSigDenominator = i32::try_from(t.denominator).unwrap_or(4);
+    c.tempo = if t.tempo.is_finite() && t.tempo > 0.0 { t.tempo } else { 120.0 };
+    c.timeSigNumerator = i32::try_from(t.numerator).ok().filter(|&n| n > 0).unwrap_or(4);
+    c.timeSigDenominator = i32::try_from(t.denominator).ok().filter(|&n| n > 0).unwrap_or(4);
     c.projectTimeSamples = t.samples;
     c.projectTimeMusic = t.quarters;
     c.barPositionMusic = t.bar_start;
@@ -1473,6 +1485,7 @@ impl Instance {
             }
         });
         self.out_events.with(Vec::clear);
+        outputs.zero(frames);
         inputs.refresh();
         outputs.refresh();
         self.context.continousTimeSamples = project_time;
@@ -1587,6 +1600,32 @@ fn rect_size(r: &sb::ViewRect) -> (f64, f64) {
     (f64::from(w), f64::from(h))
 }
 
+/// Monitor scale factor for a window DPI (96 dpi = 1.0), bounded to something a plugin can use.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn scale_for_dpi(dpi: u32) -> f64 {
+    if dpi == 0 { 1.0 } else { (f64::from(dpi) / 96.0).clamp(0.5, 8.0) }
+}
+
+/// The window rect `[left, top, right, bottom]` after the plugin has constrained the size the
+/// user is dragging: `new_w`x`new_h` is the outer size wanted, and the edge opposite the dragged
+/// one stays put. `edge` is the `WM_SIZING` code (1 left, 2 right, 3 top, 4 top-left, 5 top-right,
+/// 6 bottom, 7 bottom-left, 8 bottom-right).
+#[cfg_attr(not(windows), allow(dead_code))]
+fn anchor_rect(edge: u32, rect: [i32; 4], new_w: i32, new_h: i32) -> [i32; 4] {
+    let [mut l, mut t, mut r, mut b] = rect;
+    if matches!(edge, 1 | 4 | 7) {
+        l = r.saturating_sub(new_w);
+    } else {
+        r = l.saturating_add(new_w);
+    }
+    if matches!(edge, 3..=5) {
+        t = b.saturating_sub(new_h);
+    } else {
+        b = t.saturating_add(new_h);
+    }
+    [l, t, r, b]
+}
+
 #[derive(Default)]
 struct EditorInner {
     /// `None` once the instance is gone.
@@ -1651,6 +1690,8 @@ impl EditorLink {
             return Err("plugin editors must be opened on the main thread".into());
         }
         let platform = window::PLATFORM_TYPE.ok_or_else(|| "VST3 editors are not hosted on this platform yet".to_string())?;
+        // Per-monitor DPI awareness for the host window and the plugin's child window alike.
+        let _dpi = window::dpi_scope();
         let mut g = self.lock();
         if let Some(w) = &g.window {
             if w.is_visible() {
@@ -1669,12 +1710,25 @@ impl EditorLink {
         // SAFETY: valid view; `r` is writable. On failure the default size stays.
         unsafe { view.getSize(&mut r) };
         let (w, h) = rect_size(&r);
-        let win = window::HostWindow::new(title, w, h)?;
+        // SAFETY: valid view.
+        let resizable = unsafe { view.canResize() } == sb::kResultTrue;
+        let win = window::HostWindow::new(title, w, h, resizable)?;
         let frame = ComWrapper::new(PlugFrame { window: std::sync::atomic::AtomicPtr::new(win.raw()) });
         if let Some(f) = frame.as_com_ref::<sb::IPlugFrame>() {
             // SAFETY: valid view; the frame outlives the view's attachment (kept in `g.frame`
             // and detached in `teardown`).
             unsafe { view.setFrame(f.as_ptr()) };
+        }
+        // Tell the plugin the monitor scale before it builds its window, then take the size it
+        // reports for that scale.
+        if let Some(scale) = win.scale() {
+            window::set_view_scale(&view, scale);
+            let mut r2 = sb::ViewRect { left: 0, top: 0, right: 0, bottom: 0 };
+            // SAFETY: valid view; `r2` is writable.
+            if ok(unsafe { view.getSize(&mut r2) }) {
+                let (w2, h2) = rect_size(&r2);
+                win.fit(w2, h2);
+            }
         }
         // SAFETY: valid view; the parent is the live content view of `win`, of the type named.
         if !ok(unsafe { view.attached(win.parent(), platform) }) {
@@ -1683,6 +1737,7 @@ impl EditorLink {
             win.close();
             return Err("the editor could not attach to its window".into());
         }
+        win.bind(view.as_ptr());
         win.raise();
         g.view = Some(view);
         g.frame = Some(frame);
@@ -1691,6 +1746,9 @@ impl EditorLink {
     }
 
     fn teardown(g: &mut EditorInner) {
+        if let Some(w) = &g.window {
+            w.unbind();
+        }
         if let Some(view) = g.view.take() {
             // SAFETY: valid, attached view; main thread (callers check). `removed` before the
             // window goes, and the frame is detached before it is released.
@@ -1874,7 +1932,7 @@ mod window {
             unsafe { self.window.as_ref() }
         }
 
-        pub fn new(title: &str, w: f64, h: f64) -> Result<HostWindow, String> {
+        pub fn new(title: &str, w: f64, h: f64, _resizable: bool) -> Result<HostWindow, String> {
             let mtm = MainThreadMarker::new().ok_or_else(|| "not on the main thread".to_string())?;
             let _app = NSApplication::sharedApplication(mtm);
             let rect = NSRect::new(NSPoint::new(200.0, 200.0), NSSize::new(w, h));
@@ -1918,6 +1976,19 @@ mod window {
             self.get().is_some_and(|w| w.isVisible())
         }
 
+        /// macOS scales plugin views itself: no content scale is sent.
+        pub fn scale(&self) -> Option<f64> {
+            None
+        }
+
+        pub fn fit(&self, w: f64, h: f64) {
+            resize(self.raw(), w, h);
+        }
+
+        pub fn bind(&self, _view: *mut super::sb::IPlugView) {}
+
+        pub fn unbind(&self) {}
+
         pub fn close(self) {
             if let Some(w) = self.get() {
                 w.orderOut(None);
@@ -1929,6 +2000,14 @@ mod window {
             }
         }
     }
+
+    pub struct DpiScope;
+
+    pub fn dpi_scope() -> DpiScope {
+        DpiScope
+    }
+
+    pub fn set_view_scale(_view: &vst3::ComPtr<super::sb::IPlugView>, _scale: f64) {}
 
     /// Resizes a host window's content (`window` from [`HostWindow::raw`]); main thread only.
     pub fn resize(window: *mut c_void, w: f64, h: f64) {
@@ -1948,15 +2027,25 @@ mod window {
 /// the window. Messages are dispatched by the app's own event loop on the main thread.
 #[cfg(windows)]
 mod window {
+    use super::sb::{self, IPlugViewContentScaleSupportTrait, IPlugViewTrait};
+    use super::{anchor_rect, rect_size, scale_for_dpi};
     use std::ffi::{c_char, c_void};
-    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+    use std::sync::{Arc, OnceLock};
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+    use windows_sys::Win32::Graphics::Gdi::{COLOR_BTNFACE, RDW_ALLCHILDREN, RDW_ERASE, RDW_INVALIDATE, RDW_UPDATENOW, RedrawWindow};
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows_sys::Win32::UI::HiDpi::{
+        AdjustWindowRectExForDpi, DPI_AWARENESS_CONTEXT, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForSystem, GetDpiForWindow,
+        SetThreadDpiAwarenessContext,
+    };
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        AdjustWindowRectEx, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, GWL_EXSTYLE, GWL_STYLE,
-        GetWindowLongPtrW, IDC_ARROW, IsWindow, IsWindowVisible, LoadCursorW, RegisterClassExW, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE,
-        SWP_NOZORDER, SetForegroundWindow, SetWindowPos, ShowWindow, WM_CLOSE, WNDCLASSEXW, WS_CAPTION, WS_CLIPCHILDREN, WS_OVERLAPPED, WS_SYSMENU,
+        CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, GWL_EXSTYLE, GWL_STYLE, GWLP_USERDATA, GetClientRect,
+        GetWindowLongPtrW, IDC_ARROW, IsWindow, IsWindowVisible, LoadCursorW, MINMAXINFO, RegisterClassExW, SIZE_MINIMIZED, SW_HIDE, SW_SHOW,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, WM_CLOSE, WM_DPICHANGED,
+        WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_NCDESTROY, WM_SIZE, WM_SIZING, WNDCLASSEXW, WS_CAPTION, WS_CLIPCHILDREN, WS_MAXIMIZEBOX, WS_OVERLAPPED,
+        WS_SYSMENU, WS_THICKFRAME,
     };
 
     pub const PLATFORM_TYPE: Option<*const c_char> = Some(vst3::Steinberg::kPlatformTypeHWND);
@@ -1970,16 +2059,210 @@ mod window {
         s.encode_utf16().filter(|&c| c != 0).chain(Some(0)).collect()
     }
 
-    const STYLE: u32 = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN;
+    const FIXED_STYLE: u32 = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN;
+    /// Used only when the plugin view says it can be resized.
+    const SIZABLE_STYLE: u32 = FIXED_STYLE | WS_THICKFRAME | WS_MAXIMIZEBOX;
+
+    /// What the window procedure may touch: the bound plugin view (null while none is attached)
+    /// and a re-entrancy guard. The window holds one strong reference (released in
+    /// `WM_NCDESTROY`), so the procedure never sees a freed state.
+    struct State {
+        /// The attached `IPlugView*`, bound after `attached` and unbound before `removed`, both on
+        /// the main thread, which is also the only thread that runs the window procedure.
+        view: AtomicPtr<c_void>,
+        resizable: AtomicBool,
+        /// Set while the host itself resizes the window or calls `onSize`, so the resulting
+        /// `WM_SIZE` is not forwarded to the plugin a second time.
+        in_size: AtomicBool,
+    }
+
+    impl State {
+        fn with_view<R>(&self, f: impl FnOnce(&vst3::ComRef<'_, sb::IPlugView>) -> R) -> Option<R> {
+            let p = self.view.load(Ordering::Acquire).cast::<sb::IPlugView>();
+            // SAFETY: the pointer is null or the live, attached view (see the field docs); a null
+            // pointer yields `None`.
+            let v = unsafe { vst3::ComRef::from_raw(p) }?;
+            Some(f(&v))
+        }
+
+        /// The size the plugin wants for a client area of `w`x`h` (unchanged without a view).
+        fn constrain(&self, w: i32, h: i32) -> (i32, i32) {
+            let mut r = sb::ViewRect { left: 0, top: 0, right: w, bottom: h };
+            let changed = self.with_view(|v| {
+                // SAFETY: valid view; `r` is writable.
+                unsafe { v.checkSizeConstraint(&mut r) == sb::kResultOk }
+            });
+            if changed == Some(true) {
+                let (cw, ch) = rect_size(&r);
+                (cw as i32, ch as i32)
+            } else {
+                (w, h)
+            }
+        }
+
+        fn on_size(&self, hwnd: HWND) {
+            if self.in_size.swap(true, Ordering::Relaxed) {
+                return;
+            }
+            let mut c = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+            // SAFETY: a live window of this thread; `c` is writable.
+            if unsafe { GetClientRect(hwnd, &mut c) } != 0 {
+                let mut r = sb::ViewRect { left: 0, top: 0, right: c.right.saturating_sub(c.left), bottom: c.bottom.saturating_sub(c.top) };
+                self.with_view(|v| {
+                    // SAFETY: valid view; `r` is writable.
+                    unsafe { v.onSize(&mut r) }
+                });
+            }
+            self.in_size.store(false, Ordering::Relaxed);
+        }
+    }
+
+    fn state_of<'a>(hwnd: HWND) -> Option<&'a State> {
+        // SAFETY: the user data is null or the `Arc<State>` pointer stored in `HostWindow::new`,
+        // alive until `WM_NCDESTROY` clears it (main thread only).
+        unsafe { (GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const State).as_ref() }
+    }
+
+    /// Repaints the host window and every child (the plugin's window) after open, resize and move.
+    fn redraw(hwnd: HWND) {
+        // SAFETY: a live window of this thread; null rect/region mean the whole client area.
+        unsafe { RedrawWindow(hwnd, std::ptr::null(), std::ptr::null_mut(), RDW_ALLCHILDREN | RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW) };
+    }
+
+    fn dpi_of(hwnd: HWND) -> u32 {
+        // SAFETY: accepts any window handle; 0 on failure.
+        let d = unsafe { GetDpiForWindow(hwnd) };
+        if d == 0 {
+            // SAFETY: no arguments.
+            unsafe { GetDpiForSystem() }
+        } else {
+            d
+        }
+    }
+
+    /// Frame size around the client area for `style` at `dpi`.
+    fn frame_extra(style: u32, ex_style: u32, dpi: u32) -> (i32, i32) {
+        outer_size(style, ex_style, 0.0, 0.0, dpi)
+    }
+
+    /// Outer window size for a client area of `w`x`h` at `dpi`.
+    fn outer_size(style: u32, ex_style: u32, w: f64, h: f64, dpi: u32) -> (i32, i32) {
+        let mut r = RECT { left: 0, top: 0, right: w as i32, bottom: h as i32 };
+        // SAFETY: `r` is a valid, writable rect.
+        unsafe { AdjustWindowRectExForDpi(&mut r, style, 0, ex_style, dpi.max(96)) };
+        (r.right.saturating_sub(r.left), r.bottom.saturating_sub(r.top))
+    }
+
+    fn styles(hwnd: HWND) -> (u32, u32) {
+        // SAFETY: a live window of this thread; values are read, not changed.
+        unsafe { (GetWindowLongPtrW(hwnd, GWL_STYLE) as u32, GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32) }
+    }
+
+    /// Tells the plugin view the monitor's scale (`IPlugViewContentScaleSupport`), when it has it.
+    fn set_content_scale(view: &vst3::ComRef<'_, sb::IPlugView>, scale: f64) {
+        if let Some(cs) = view.to_com_ptr().cast::<sb::IPlugViewContentScaleSupport>() {
+            // SAFETY: valid interface of the live view; a plain number argument.
+            unsafe { cs.setContentScaleFactor(scale as f32) };
+        }
+    }
+
+    fn handle(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
+        let state = state_of(hwnd);
+        match msg {
+            WM_CLOSE => {
+                // SAFETY: `hwnd` is the window this procedure was called for.
+                unsafe { ShowWindow(hwnd, SW_HIDE) };
+                Some(0)
+            }
+            WM_NCDESTROY => {
+                if state.is_some() {
+                    // SAFETY: the pointer came from `Arc::into_raw` in `new`; cleared first so
+                    // later messages see none, then the window's reference is released once.
+                    unsafe {
+                        let p = SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0) as *const State;
+                        if !p.is_null() {
+                            drop(Arc::from_raw(p));
+                        }
+                    }
+                }
+                None
+            }
+            WM_GETMINMAXINFO => {
+                let st = state?;
+                if !st.resizable.load(Ordering::Relaxed) {
+                    return None;
+                }
+                // SAFETY: for this message `lparam` points to a writable MINMAXINFO.
+                let mm = unsafe { (lparam as *mut MINMAXINFO).as_mut() }?;
+                let (style, ex) = styles(hwnd);
+                let (ew, eh) = frame_extra(style, ex, dpi_of(hwnd));
+                let (mw, mh) = st.constrain(1, 1);
+                mm.ptMinTrackSize.x = mw.saturating_add(ew);
+                mm.ptMinTrackSize.y = mh.saturating_add(eh);
+                Some(0)
+            }
+            WM_SIZING => {
+                let st = state?;
+                if !st.resizable.load(Ordering::Relaxed) {
+                    return None;
+                }
+                // SAFETY: for this message `lparam` points to the writable proposed window rect.
+                let r = unsafe { (lparam as *mut RECT).as_mut() }?;
+                let (style, ex) = styles(hwnd);
+                let (ew, eh) = frame_extra(style, ex, dpi_of(hwnd));
+                let (cw, ch) = st.constrain(r.right.saturating_sub(r.left).saturating_sub(ew), r.bottom.saturating_sub(r.top).saturating_sub(eh));
+                let [l, t, rr, b] = anchor_rect(wparam as u32, [r.left, r.top, r.right, r.bottom], cw.saturating_add(ew), ch.saturating_add(eh));
+                (r.left, r.top, r.right, r.bottom) = (l, t, rr, b);
+                Some(1)
+            }
+            WM_SIZE => {
+                if wparam as u32 != SIZE_MINIMIZED {
+                    let st = state?;
+                    st.on_size(hwnd);
+                    redraw(hwnd);
+                }
+                None
+            }
+            WM_EXITSIZEMOVE => {
+                redraw(hwnd);
+                None
+            }
+            WM_DPICHANGED => {
+                let st = state?;
+                // SAFETY: for this message `lparam` points to the suggested window rect.
+                if let Some(r) = unsafe { (lparam as *const RECT).as_ref() } {
+                    st.in_size.store(true, Ordering::Relaxed);
+                    // SAFETY: a live window of this thread; only position and size change.
+                    unsafe {
+                        SetWindowPos(
+                            hwnd,
+                            std::ptr::null_mut(),
+                            r.left,
+                            r.top,
+                            r.right.saturating_sub(r.left),
+                            r.bottom.saturating_sub(r.top),
+                            SWP_NOZORDER | SWP_NOACTIVATE,
+                        )
+                    };
+                    st.in_size.store(false, Ordering::Relaxed);
+                }
+                st.with_view(|v| set_content_scale(v, scale_for_dpi((wparam & 0xFFFF) as u32)));
+                st.on_size(hwnd);
+                redraw(hwnd);
+                Some(0)
+            }
+            _ => None,
+        }
+    }
 
     unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        if msg == WM_CLOSE {
-            // SAFETY: `hwnd` is the window this procedure was called for.
-            unsafe { ShowWindow(hwnd, SW_HIDE) };
-            return 0;
+        // Nothing may unwind into the system: a panic falls back to default handling.
+        let handled = std::panic::catch_unwind(|| handle(hwnd, msg, wparam, lparam)).ok().flatten();
+        match handled {
+            Some(r) => r,
+            // SAFETY: default handling of a message for the window it was sent to.
+            None => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
         }
-        // SAFETY: default handling of a message for the window it was sent to.
-        unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
     }
 
     /// Registers the window class once; the name lives for the whole process.
@@ -2000,7 +2283,9 @@ mod window {
                     hIcon: std::ptr::null_mut(),
                     // SAFETY: a system cursor (null instance + predefined id).
                     hCursor: unsafe { LoadCursorW(std::ptr::null_mut(), IDC_ARROW) },
-                    hbrBackground: std::ptr::null_mut(),
+                    // A system colour brush (colour index + 1 is the documented stand-in for a
+                    // handle): the area the plugin does not paint is cleared, not left stale.
+                    hbrBackground: (COLOR_BTNFACE + 1) as usize as *mut c_void,
                     lpszMenuName: std::ptr::null(),
                     lpszClassName: name.as_ptr(),
                     hIconSm: std::ptr::null_mut(),
@@ -2012,17 +2297,29 @@ mod window {
             .as_deref()
     }
 
-    /// Outer window size for a client area of `w`×`h`.
-    fn outer_size(style: u32, ex_style: u32, w: f64, h: f64) -> (i32, i32) {
-        let mut r = RECT { left: 0, top: 0, right: w as i32, bottom: h as i32 };
-        // SAFETY: `r` is a valid, writable rect.
-        unsafe { AdjustWindowRectEx(&mut r, style, 0, ex_style) };
-        (r.right.saturating_sub(r.left), r.bottom.saturating_sub(r.top))
+    /// Makes this thread per-monitor-DPI aware while it lives (a no-op when the process already
+    /// is), so the host window and the plugin's child window agree on pixels. Restores the
+    /// previous awareness on drop.
+    pub struct DpiScope(DPI_AWARENESS_CONTEXT);
+
+    pub fn dpi_scope() -> DpiScope {
+        // SAFETY: a constant context value; returns the previous one (null when unsupported).
+        DpiScope(unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) })
+    }
+
+    impl Drop for DpiScope {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                // SAFETY: restores the context this thread had before `dpi_scope`.
+                unsafe { SetThreadDpiAwarenessContext(self.0) };
+            }
+        }
     }
 
     /// Owns the window handle; destroyed in `close` (main thread only).
     pub struct HostWindow {
         hwnd: HWND,
+        state: Arc<State>,
     }
 
     // SAFETY: the handle is only used on the main thread (every method checks); the struct
@@ -2035,13 +2332,16 @@ mod window {
             (on_main_thread() && unsafe { IsWindow(self.hwnd) } != 0).then_some(self.hwnd)
         }
 
-        pub fn new(title: &str, w: f64, h: f64) -> Result<HostWindow, String> {
+        /// `w`x`h` is the client size in pixels; `resizable` adds the sizing frame and maximise box.
+        pub fn new(title: &str, w: f64, h: f64, resizable: bool) -> Result<HostWindow, String> {
             if !on_main_thread() {
                 return Err("not on the main thread".into());
             }
             let class = class_name().ok_or_else(|| "cannot register the editor window class".to_string())?;
             let title = wide(title);
-            let (ow, oh) = outer_size(STYLE, 0, w, h);
+            let style = if resizable { SIZABLE_STYLE } else { FIXED_STYLE };
+            // SAFETY: no arguments.
+            let (ow, oh) = outer_size(style, 0, w, h, unsafe { GetDpiForSystem() });
             // SAFETY: main thread; the active window (or null) of this thread's queue.
             let owner = unsafe { GetActiveWindow() };
             // SAFETY: registered class and NUL-terminated strings that outlive the call; the
@@ -2051,7 +2351,7 @@ mod window {
                     0,
                     class.as_ptr(),
                     title.as_ptr(),
-                    STYLE,
+                    style,
                     CW_USEDEFAULT,
                     CW_USEDEFAULT,
                     ow,
@@ -2065,7 +2365,17 @@ mod window {
             if hwnd.is_null() {
                 return Err("cannot create the editor window".into());
             }
-            Ok(HostWindow { hwnd })
+            let state = Arc::new(State {
+                view: AtomicPtr::new(std::ptr::null_mut()),
+                resizable: AtomicBool::new(resizable),
+                in_size: AtomicBool::new(false),
+            });
+            // SAFETY: our own live window; the stored reference is released in `WM_NCDESTROY`.
+            unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, Arc::into_raw(Arc::clone(&state)) as isize) };
+            let win = HostWindow { hwnd, state };
+            // Fit the client area at the window's own monitor scale (the system scale was a guess).
+            win.fit(w, h);
+            Ok(win)
         }
 
         /// The window handle (for the plug frame's resizes).
@@ -2078,6 +2388,26 @@ mod window {
             self.live().unwrap_or(std::ptr::null_mut())
         }
 
+        /// The monitor scale (1.0 = 96 dpi) the window is on.
+        pub fn scale(&self) -> Option<f64> {
+            self.live().map(|h| scale_for_dpi(dpi_of(h)))
+        }
+
+        /// Sets the client size in pixels.
+        pub fn fit(&self, w: f64, h: f64) {
+            resize(self.hwnd, w, h);
+        }
+
+        /// Routes size, constraint and scale messages to the attached view.
+        pub fn bind(&self, view: *mut sb::IPlugView) {
+            self.state.view.store(view.cast(), Ordering::Release);
+        }
+
+        /// Stops routing; call before the view is removed.
+        pub fn unbind(&self) {
+            self.state.view.store(std::ptr::null_mut(), Ordering::Release);
+        }
+
         pub fn raise(&self) {
             if let Some(h) = self.live() {
                 // SAFETY: a live window of this thread.
@@ -2085,6 +2415,7 @@ mod window {
                     ShowWindow(h, SW_SHOW);
                     SetForegroundWindow(h);
                 }
+                redraw(h);
             }
         }
 
@@ -2094,6 +2425,7 @@ mod window {
         }
 
         pub fn close(self) {
+            self.unbind();
             if let Some(h) = self.live() {
                 // SAFETY: our own live window; the view was detached before (see `teardown`).
                 unsafe { DestroyWindow(h) };
@@ -2107,11 +2439,23 @@ mod window {
         if !on_main_thread() || window.is_null() || unsafe { IsWindow(window) } == 0 {
             return;
         }
-        // SAFETY: a live window of this thread; style values are read, not changed.
-        let (style, ex) = unsafe { (GetWindowLongPtrW(window, GWL_STYLE) as u32, GetWindowLongPtrW(window, GWL_EXSTYLE) as u32) };
-        let (ow, oh) = outer_size(style, ex, w, h);
-        // SAFETY: as above; only the size changes.
+        let (style, ex) = styles(window);
+        let (ow, oh) = outer_size(style, ex, w, h, dpi_of(window));
+        let st = state_of(window);
+        if let Some(s) = st {
+            s.in_size.store(true, Ordering::Relaxed);
+        }
+        // SAFETY: a live window of this thread; only the size changes.
         unsafe { SetWindowPos(window, std::ptr::null_mut(), 0, 0, ow, oh, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE) };
+        if let Some(s) = st {
+            s.in_size.store(false, Ordering::Relaxed);
+        }
+        redraw(window);
+    }
+
+    /// Tells the view the monitor scale before it attaches.
+    pub fn set_view_scale(view: &vst3::ComPtr<sb::IPlugView>, scale: f64) {
+        set_content_scale(&view.as_com_ref(), scale);
     }
 }
 
@@ -2129,7 +2473,7 @@ mod window {
     pub struct HostWindow;
 
     impl HostWindow {
-        pub fn new(_title: &str, _w: f64, _h: f64) -> Result<HostWindow, String> {
+        pub fn new(_title: &str, _w: f64, _h: f64, _resizable: bool) -> Result<HostWindow, String> {
             Err("VST3 editors are not hosted on this platform yet".into())
         }
         pub fn raw(&self) -> *mut c_void {
@@ -2143,7 +2487,21 @@ mod window {
             false
         }
         pub fn close(self) {}
+        pub fn scale(&self) -> Option<f64> {
+            None
+        }
+        pub fn fit(&self, _w: f64, _h: f64) {}
+        pub fn bind(&self, _view: *mut super::sb::IPlugView) {}
+        pub fn unbind(&self) {}
     }
+
+    pub struct DpiScope;
+
+    pub fn dpi_scope() -> DpiScope {
+        DpiScope
+    }
+
+    pub fn set_view_scale(_view: &vst3::ComPtr<super::sb::IPlugView>, _scale: f64) {}
 
     pub fn resize(_window: *mut c_void, _w: f64, _h: f64) {}
 }
@@ -2175,6 +2533,48 @@ mod tests {
         assert_eq!((c.projectTimeSamples, c.projectTimeMusic, c.barPositionMusic), (96_000, 3.5, 3.0));
         apply_transport(&mut c, &Transport { playing: false, ..t });
         assert_eq!(c.state & playing, 0);
+        apply_transport(&mut c, &Transport { tempo: f64::NAN, numerator: 0, denominator: 0, ..t });
+        assert_eq!((c.tempo, c.timeSigNumerator, c.timeSigDenominator), (120.0, 4, 4), "hostile values fall back");
+    }
+
+    #[test]
+    fn dpi_maps_to_a_bounded_scale() {
+        assert_eq!(scale_for_dpi(96), 1.0);
+        assert_eq!(scale_for_dpi(168), 1.75);
+        assert_eq!(scale_for_dpi(0), 1.0, "unknown dpi means no scaling");
+        assert_eq!(scale_for_dpi(u32::MAX), 8.0);
+        assert_eq!(scale_for_dpi(1), 0.5);
+    }
+
+    #[test]
+    fn a_constrained_size_keeps_the_edge_opposite_the_drag() {
+        let rect = [100, 50, 500, 450];
+        // Dragging the right/bottom edges: the top-left corner stays.
+        assert_eq!(anchor_rect(8, rect, 300, 200), [100, 50, 400, 250]);
+        assert_eq!(anchor_rect(2, rect, 300, 200), [100, 50, 400, 250]);
+        // Dragging the left/top edges: the bottom-right corner stays.
+        assert_eq!(anchor_rect(4, rect, 300, 200), [200, 250, 500, 450]);
+        assert_eq!(anchor_rect(1, rect, 300, 200), [200, 50, 500, 250]);
+        assert_eq!(anchor_rect(3, rect, 300, 200), [100, 250, 400, 450]);
+        // Mixed corners.
+        assert_eq!(anchor_rect(5, rect, 300, 200), [100, 250, 400, 450]);
+        assert_eq!(anchor_rect(7, rect, 300, 200), [200, 50, 500, 250]);
+        // Extreme values do not overflow.
+        let _ = anchor_rect(4, [i32::MIN, i32::MIN, i32::MAX, i32::MAX], i32::MAX, i32::MAX);
+    }
+
+    #[test]
+    fn note_events_carry_their_channel() {
+        let on = NoteEvent::On { time: 0, channel: 9, key: 36, velocity: 0.5 }.to_raw(0);
+        let off = NoteEvent::Off { time: 0, channel: 9, key: 36 }.to_raw(0);
+        let pr = NoteEvent::Pressure { time: 0, channel: 0x1F, key: 36, pressure: 0.5 }.to_raw(0);
+        // SAFETY: each event was built with the union member read.
+        unsafe {
+            assert_eq!(on.__field0.noteOn.channel, 9);
+            assert_eq!(off.__field0.noteOff.channel, 9);
+            assert_eq!(pr.__field0.polyPressure.channel, 15, "the channel is masked to 0..15");
+        }
+        assert_eq!((on.busIndex, on.sampleOffset), (0, 0));
     }
 
     #[test]
@@ -2229,7 +2629,7 @@ mod tests {
             assert_ne!(q.getPoint(0, std::ptr::null_mut(), &mut v), sb::kResultOk);
         }
         let el = EventList::new(1);
-        let mut e = NoteEvent::On { time: 5, key: 60, velocity: 1.0 }.to_raw(2);
+        let mut e = NoteEvent::On { time: 5, channel: 3, key: 60, velocity: 1.0 }.to_raw(2);
         // SAFETY: as above.
         unsafe {
             assert_eq!(el.addEvent(&mut e), sb::kResultOk);
@@ -2239,6 +2639,7 @@ mod tests {
             assert_eq!(el.getEvent(0, &mut out), sb::kResultOk);
             assert_eq!(out.sampleOffset, 3);
             assert_eq!(out.__field0.noteOn.pitch, 60);
+            assert_eq!(out.__field0.noteOn.channel, 3, "the track channel reaches the event");
             assert_ne!(el.getEvent(1, &mut out), sb::kResultOk);
         }
         let s = MemoryStream { inner: Mutex::new((Vec::new(), 0)) };

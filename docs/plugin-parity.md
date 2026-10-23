@@ -54,10 +54,31 @@ User report #152: a saved instrument level does not reach the bounce.
 | Crash isolation | in-process (DSP on HDX) | in-process | Out-of-process hosting would beat Pro Tools |
 | Plugin delay reporting changes on the fly | ✅ | 🟡 | Aux insert latency bug #103 (PR #133) |
 
+## Troubleshooting hosted editors and instruments
+
+Hosted VST3 and embedded CLAP editors open in a SoundCraft window on Windows. The window is
+per-monitor DPI aware, is told the monitor scale before the plugin builds its view, repaints
+itself after open, resize and move, and can be resized by dragging its frame when the plugin says
+its editor is resizable (the plugin may limit the size). If an editor still looks wrong:
+
+- Garbled or half-drawn editor: close and reopen it (the scale is sent again), then drag the window
+  to the other monitor and back. Note the display scale and whether the window frame can be
+  resized; a plugin with a fixed-size editor has no sizing frame by design.
+- No sound from a hosted instrument: turn on info logging (`RUST_LOG=info`). Once per instance the
+  log states the sample rate, block size, bus layout and latency, and later whether the instrument
+  ever produced audible output. A line saying that many blocks and note events were processed with
+  silent output means the notes reached the plugin: check that the instrument has finished loading
+  its content, that it listens on the track's MIDI channel (default channel 1; the track's
+  `midi.channel` override changes it) and that its audio output is the first stereo output. Playing
+  its on-screen keyboard in the editor tests the audio path alone.
+- A track meter that moves while the speakers stay silent points at routing or the output device,
+  not at the plugin.
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-23 | minor | Hosted editors: resizable, DPI-aware, repainted windows; VST3 note channel; one-shot diagnostics; troubleshooting section |
 | 2026-10-13 | trivial | Sampler ping-pong loop phase (#463) |
 | 2026-10-13 | trivial | mix.instrument sets built-in instrument parameters in params (#265) |
 | 2026-10-12 | minor | Editors: VST3 and embedded CLAP editors on Windows |
