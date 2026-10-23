@@ -175,3 +175,52 @@ fn velocity_colour_switch_is_a_view_flag() {
     h.state_mut().run("view.midi_single_colour", json!({})).unwrap();
     assert!(!h.state().engine.session().edit.flag("midi.single_colour"));
 }
+
+#[test]
+fn the_roll_and_the_arrange_window_keep_separate_tools() {
+    use soundcraft_model::Tool;
+    use soundcraft_ui_egui::midi_editor::MidiTool;
+    let (mut h, clip) = harness(1600.0);
+    h.state_mut().run("ui.midi_tool", json!({"tool": "erase"})).unwrap();
+    for tool in Tool::ALL {
+        h.state_mut().run("edit.tool", json!({"tool": tool.id()})).unwrap();
+        assert_eq!(h.state().midi.tool, MidiTool::Erase, "arrange tool {tool:?} leaves the roll tool alone");
+    }
+    h.state_mut().run("edit.tool", json!({"tool": "zoom"})).unwrap();
+    h.state_mut().run("ui.midi_tool", json!({"tool": "pencil"})).unwrap();
+    assert_eq!(h.state().engine.session().edit.tool, Tool::Zoom, "and the roll tool leaves the arrange tool alone");
+    // Clicks on the roll follow the roll's own tool (Select: no edit) whatever the arrange tool is.
+    h.state_mut().run("ui.midi_tool", json!({"tool": "select"})).unwrap();
+    h.run_steps(3);
+    let before = notes(&h, clip);
+    let at = roll(&h).center() + vec2(0.0, 120.0);
+    for tool in Tool::ALL {
+        h.state_mut().run("edit.tool", json!({"tool": tool.id()})).unwrap();
+        h.run_steps(70);
+        click_at(&mut h, at);
+        assert_eq!(notes(&h, clip), before, "a roll click with arrange tool {tool:?} edits nothing");
+    }
+}
+
+#[test]
+fn arrange_tool_keys_do_nothing_while_the_pointer_is_over_the_roll() {
+    use soundcraft_model::Tool;
+    let (mut h, _) = harness(1600.0);
+    h.state_mut().run("edit.tool", json!({"tool": "selector"})).unwrap();
+    let key = |h: &mut Harness<SoundApp>, key: Key| {
+        h.input_mut().events.push(Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE });
+        h.run_steps(3);
+    };
+    h.hover_at(pos2(2.0, 2.0));
+    h.run_steps(6);
+    key(&mut h, Key::F6);
+    assert_eq!(h.state().engine.session().edit.tool, Tool::Trim, "keys work off the roll");
+    h.hover_at(roll(&h).center());
+    h.run_steps(4);
+    key(&mut h, Key::F7);
+    assert_eq!(h.state().engine.session().edit.tool, Tool::Trim, "F7 over the roll leaves the arrange tool");
+    h.input_mut().events.push(Event::PointerGone);
+    h.run_steps(8);
+    key(&mut h, Key::F5);
+    assert_eq!(h.state().engine.session().edit.tool, Tool::Zoom, "and still works elsewhere");
+}

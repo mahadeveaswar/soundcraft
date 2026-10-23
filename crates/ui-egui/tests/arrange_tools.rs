@@ -288,33 +288,51 @@ fn labelled<'a>(h: &'a H<'_>, label: &'a str) -> Option<egui_kittest::Node<'a>> 
 }
 
 #[test]
-fn the_right_click_menu_has_a_tools_submenu_with_a_check_on_the_active_tool() {
+fn the_right_click_menu_lists_every_tool_flat_with_a_check_on_the_active_tool() {
     for on_clip in [true, false] {
         let mut h = demo("alternative", "classic");
         h.state_mut().run("edit.tool", json!({"tool": "selector"})).unwrap();
         steps(&mut h, 3);
         let at = kick_lane(&h, on_clip);
         press(&mut h, at, PointerButton::Secondary, Modifiers::NONE);
-        let tools = labelled(&h, "Tools ⏵").expect("the menu starts with a Tools submenu").rect();
-        // Opening a submenu: hover it.
-        h.state_mut().synthetic.push(Event::PointerMoved(tools.center()));
-        steps(&mut h, 10);
-        for name in ["Object Select 1", "Range Select 2", "Split 3", "Glue 4", "Erase 5", "Zoom 6", "Mute 7", "Draw 8", "Scrub 9", "Trim F6", "Smart"]
-        {
-            assert!(labelled(&h, name).is_some(), "the Tools submenu lists `{name}`");
+        assert!(labelled(&h, "Tools ⏵").is_none(), "there is no Tools submenu any more");
+        let order = [
+            "Object Select Tool 1",
+            "Range Select Tool 2",
+            "Split Tool 3",
+            "Glue Tool 4",
+            "Erase Tool 5",
+            "Zoom Tool 6",
+            "Mute Tool 7",
+            "Draw Tool 8",
+            "Scrub Tool 9",
+            "Trim Tool F6",
+            "Smart Tool",
+        ];
+        let mut last = f32::MIN;
+        for name in order {
+            let y = labelled(&h, name).unwrap_or_else(|| panic!("the menu lists `{name}`")).rect().center().y;
+            assert!(y > last, "`{name}` is below the previous tool");
+            last = y;
         }
         let active = h.state().engine.session().edit.tool;
-        let range = labelled(&h, "Range Select 2").unwrap();
         assert_eq!(active, Tool::Selector);
+        let range = labelled(&h, "Range Select Tool 2").unwrap();
         assert_eq!(range.accesskit_node().toggled(), Some(egui::accesskit::Toggled::True), "the active tool is checked");
-        assert_ne!(labelled(&h, "Erase 5").unwrap().accesskit_node().toggled(), Some(egui::accesskit::Toggled::True));
+        assert_ne!(labelled(&h, "Erase Tool 5").unwrap().accesskit_node().toggled(), Some(egui::accesskit::Toggled::True));
         // Choosing a tool changes the tool and nothing else.
         let before = h.state().engine.session().edit.selected_clips.clone();
-        let split = labelled(&h, "Split 3").unwrap().rect().center();
+        let split = labelled(&h, "Split Tool 3").unwrap().rect().center();
         press(&mut h, split, PointerButton::Primary, Modifiers::NONE);
         assert_eq!(h.state().engine.session().edit.tool, Tool::Split);
         assert_eq!(h.state().engine.session().edit.selected_clips, before, "choosing a tool selects nothing");
     }
+}
+
+#[test]
+fn new_sessions_start_on_the_smart_tool() {
+    assert_eq!(Tool::default(), Tool::Smart);
+    assert_eq!(soundcraft_model::EditState::default().tool, Tool::Smart);
 }
 
 #[test]
@@ -325,7 +343,7 @@ fn ctrl_right_click_opens_the_tool_palette_instead_of_the_menu_and_leaves_the_se
     let at = kick_lane(&h, true);
     press(&mut h, at, PointerButton::Secondary, ctrl);
     assert!(soundcraft_ui_egui::edit_tools::palette_open(&h.ctx), "the palette is open");
-    assert!(labelled(&h, "Tools ⏵").is_none(), "and the normal menu is not");
+    assert!(labelled(&h, "Split Tool 3").is_none(), "and the normal menu is not");
     assert_eq!(h.state().engine.session().edit.selected_clips, before, "no selection change");
     let erase = labelled(&h, "Erase (5)").expect("palette buttons carry their key digit").rect().center();
     press(&mut h, erase, PointerButton::Primary, Modifiers::NONE);

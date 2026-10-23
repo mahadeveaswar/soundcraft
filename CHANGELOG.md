@@ -4,6 +4,13 @@ Dated entries, newest first. Each entry groups changes as Added, Changed, Fixed 
 
 ## 2026-10-23 (win)
 
+### Tool independence and menus (TL2)
+- Fixed: the piano roll no longer follows the arrange tool. Arrange Draw used to turn the roll's Select into Draw; the roll now uses only its own tool (`ui.midi_tool`, saved with the roll state). Setting either tool leaves the other alone, and Split, Glue, Erase and Mute in the arrange window never change roll behaviour.
+- Fixed: the arrange tool keys (F5 to F10, the Alternative digits and user bindings of `edit.tool`) do nothing while the pointer is over the roll or its controller lanes.
+- Changed: the right-click menus of clips and empty lanes list the eleven tools as flat lines at the top ("Object Select Tool", "Range Select Tool", "Split Tool" and so on, each with an icon, a check mark on the active tool and its key), then a separator and the usual items. The Tools submenu is gone from them; the Edit menu submenu and the Ctrl/Cmd+right-click palette stay.
+- Changed: `Tool::default()` is Smart, matching the default edit state. Sessions that saved a tool keep it.
+- Decisions: flat tool lines carry the word "Tool" so they cannot be confused with the clip commands Split, Glue and Mute; a separate header was judged clumsier.
+
 ### Edit tools (TL1)
 - Added: four arrange tools, Split, Glue, Erase and Mute (`Tool::Split|Glue|Erase|Mute`, ids `split`, `glue`, `erase`, `mute`, aliases `cut` and `eraser`; `Tool::ALL` is 11). Click a clip: Split cuts it at the pointer, Glue joins it to the clip that starts where it ends (1 sample tolerance, otherwise the status line says there is nothing to glue), Erase deletes it, Mute toggles its mute. Erase and Mute also work by dragging across clips (the swept clips get a pending tint and one command runs on release; Mute applies the first clip's new state to all). Each is one undo step, locked clips are refused with a status message, and none changes the selection. In an automation lane view they only grab breakpoints, like the Grabber.
 - Added: engine command `clip.split {clip | clips, at}` (undoable; splits only the named clips, not every clip on their tracks; refuses locked clips and a position outside every named clip) on a new `separate_clips_at` helper. `edit.tool` lists the new ids.

@@ -100,6 +100,14 @@ pub fn tools_submenu(app: &mut SoundApp, ui: &mut Ui) {
     });
 }
 
+/// The tools as flat lines at the top of the arrange right-click menus: each reads "<name> Tool" so it
+/// cannot be mistaken for a clip command of the same name (Split, Glue, Mute).
+pub fn tools_flat(app: &mut SoundApp, ui: &mut Ui) {
+    for (tool, label) in MENU {
+        tool_item(app, ui, tool, &format!("{label} Tool"));
+    }
+}
+
 fn palette_id() -> Id {
     Id::new("tool_palette_pos")
 }

@@ -177,7 +177,7 @@ fn a_selected_video_clip_is_not_a_midi_target() {
 }
 
 #[test]
-fn only_pencil_inserts_notes_in_the_midi_roll() {
+fn the_arrange_tool_never_inserts_notes_in_the_midi_roll() {
     use soundcraft_model::{ClipContent, Tool};
 
     let mut app = SoundApp::new(soundcraft_engine::demo::demo_engine(), None, Services::default());
@@ -203,10 +203,7 @@ fn only_pencil_inserts_notes_in_the_midi_roll() {
         frame(&ctx, &mut app, vec![button(point, false)]);
         let (_, edited) = app.engine.session().find_clip(soundcraft_model::ClipId(clip)).unwrap();
         let ClipContent::Midi { sequence } = &edited.content else { panic!("MIDI clip required") };
-        if tool == Tool::Pencil {
-            assert_eq!(sequence.notes.len(), 1);
-            app.run("edit.undo", json!({})).unwrap();
-        }
+        assert!(sequence.notes.is_empty(), "the arrange tool {tool:?} never draws in the roll");
         assert!(*app.engine.session() == before, "{tool:?} click must not change the session");
     }
 }
@@ -598,7 +595,7 @@ fn pencil_clicks_and_gutter_presses_sound_and_release() {
     log.extend(drain_auditions(&mut app));
     assert_eq!(log, [(64, true), (64, false)]);
     // Pencil: a click on empty roll adds a note and sounds it briefly.
-    app.run("edit.tool", json!({"tool": "pencil"})).unwrap();
+    app.run("ui.midi_tool", json!({"tool": "pencil"})).unwrap();
     for _ in 0..60 {
         frame(&ctx, &mut app, vec![]);
     }

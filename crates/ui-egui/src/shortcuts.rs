@@ -128,6 +128,10 @@ pub fn handle(app: &mut SoundApp, ctx: &egui::Context) {
         if roll_owns(key, mods, mac, crate::midi_editor::roll_area_has_pointer(ctx)) {
             continue;
         }
+        // The arrange edit tool is not the roll's tool: its keys do nothing while the pointer is over the roll.
+        if crate::midi_editor::roll_area_has_pointer(ctx) && arrange_tool_key(app, key, mods, mac, alternative) {
+            continue;
+        }
         let keymap_key =
             !(roll_busy && matches!(key, Key::ArrowUp | Key::ArrowDown | Key::ArrowLeft | Key::ArrowRight | Key::Delete | Key::Backspace));
         // The user's own bindings win over everything, including the built-in rules below.
@@ -155,6 +159,21 @@ pub fn handle(app: &mut SoundApp, ctx: &egui::Context) {
     }
     // Tab moves the insertion point here, so egui must not also hand focus to the first widget: that would block every shortcut.
     ctx.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
+}
+
+/// Whether the chord picks an arrange edit tool (F5-F10, the Alternative set's digits, or a user binding).
+fn arrange_tool_key(app: &SoundApp, key: Key, mods: Modifiers, mac: bool, alternative: bool) -> bool {
+    let plain = !mods.command && !mods.ctrl && !mods.alt && !mods.shift;
+    if matches!(key, Key::F5 | Key::F6 | Key::F7 | Key::F8 | Key::F9 | Key::F10) && plain {
+        return true;
+    }
+    if alternative
+        && plain
+        && matches!(key, Key::Num1 | Key::Num2 | Key::Num3 | Key::Num4 | Key::Num5 | Key::Num6 | Key::Num7 | Key::Num8 | Key::Num9)
+    {
+        return true;
+    }
+    app.ui.keymap.lookup_override(key, mods, mac).is_some_and(|(id, _)| id == "edit.tool")
 }
 
 /// Run a command for a key or a menu line: through its dialog when it has one, else directly with `params`.

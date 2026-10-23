@@ -74,11 +74,11 @@ impl EditMode {
 pub enum Tool {
     Zoom,
     Trim,
-    #[default]
     Selector,
     Grabber,
     Scrubber,
     Pencil,
+    #[default]
     Smart,
     /// Click a clip to split it at the pointer.
     Split,

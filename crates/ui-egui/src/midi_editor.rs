@@ -4,7 +4,7 @@ use crate::SoundApp;
 use crate::theme::{Tokens, bold, regular};
 use egui::{Align2, Color32, Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use serde_json::json;
-use soundcraft_model::{ClipContent, ClipId, Tool};
+use soundcraft_model::{ClipContent, ClipId};
 use soundcraft_time::TICKS_PER_QUARTER;
 
 const KEY_W: f32 = 48.0;
@@ -756,7 +756,8 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
         })
     };
     let snap = |tk: f32| -> i64 { ((tk / snap_ticks as f32).round() as i64) * snap_ticks };
-    let tool = if app.midi.tool == MidiTool::Select && s.edit.tool == Tool::Pencil { MidiTool::Pencil } else { app.midi.tool };
+    // The roll has its own tool; the arrange tool never reaches it.
+    let tool = app.midi.tool;
     if resp.hovered() && matches!(tool, MidiTool::Pencil | MidiTool::Split) {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
     }

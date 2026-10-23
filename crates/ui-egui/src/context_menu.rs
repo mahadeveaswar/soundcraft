@@ -90,7 +90,7 @@ fn item_key(app: &mut SoundApp, ui: &mut Ui, key: &str, id: &str, params: Value,
 // ---- arrange: clips and empty lanes -----------------------------------------------------------------
 
 const CLIP: &[Entry] = &[
-    Entry::Custom(crate::edit_tools::tools_submenu),
+    Entry::Custom(crate::edit_tools::tools_flat),
     Entry::Sep,
     Entry::Cmd("edit.cut"),
     Entry::Cmd("edit.copy"),
@@ -142,7 +142,7 @@ const CLIP: &[Entry] = &[
 ];
 
 const LANE: &[Entry] = &[
-    Entry::Custom(crate::edit_tools::tools_submenu),
+    Entry::Custom(crate::edit_tools::tools_flat),
     Entry::Sep,
     Entry::Cmd("edit.paste"),
     Entry::Cmd("edit.select_all"),
