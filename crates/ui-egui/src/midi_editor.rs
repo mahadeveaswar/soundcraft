@@ -1014,6 +1014,30 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
             let _ = app.run("midi.notes_move", json!({"clip": cid.0, "indices": app.midi.selected, "ticks": ticks, "semitones": semi}));
         }
     }
+    // Cut, copy, paste and duplicate act on the notes while the pointer is over the roll or a lane under it
+    // (the shortcut handler leaves these chords alone then).
+    let over_area = ui.rect_contains_pointer(roll) || lane_rects.iter().any(|l| ui.rect_contains_pointer(l.area));
+    if over_area {
+        mark_roll_area_pointer(ui.ctx());
+    }
+    if over_area && !ui.ctx().egui_wants_keyboard_input() {
+        let chord = |key| ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, key));
+        if chord(egui::Key::A) {
+            app.midi.selected = (0..sequence.notes.len()).collect();
+        }
+        if chord(egui::Key::X) {
+            crate::midi_clipboard::copy_selection(app, cid, true);
+        }
+        if chord(egui::Key::C) {
+            crate::midi_clipboard::copy_selection(app, cid, false);
+        }
+        if chord(egui::Key::V) {
+            crate::midi_clipboard::paste(app, cid, None);
+        }
+        if chord(egui::Key::D) {
+            crate::midi_clipboard::duplicate(app, cid);
+        }
+    }
     if !app.midi.selected.is_empty()
         && !ui.ctx().egui_wants_keyboard_input()
         && ui.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace))
@@ -1200,6 +1224,18 @@ fn playhead(ui: &Ui, x: f32, y0: f32, y1: f32, min_x: f32, max_x: f32) {
 fn mark_roll_pointer(ctx: &egui::Context) {
     let now = ctx.cumulative_pass_nr();
     ctx.data_mut(|d| d.insert_temp(egui::Id::new("roll_pointer_pass"), now));
+}
+
+/// Remember that the pointer is over the roll or one of its controller lanes (Cut/Copy/Paste go to the notes).
+fn mark_roll_area_pointer(ctx: &egui::Context) {
+    let now = ctx.cumulative_pass_nr();
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("roll_area_pass"), now));
+}
+
+/// Whether the pointer was over the roll or its lanes in the last few passes.
+pub(crate) fn roll_area_has_pointer(ctx: &egui::Context) -> bool {
+    let now = ctx.cumulative_pass_nr();
+    ctx.data(|d| d.get_temp::<u64>(egui::Id::new("roll_area_pass"))).is_some_and(|then| now.saturating_sub(then) <= 2)
 }
 
 /// Whether the pointer was over the piano roll in the last few passes.

@@ -40,7 +40,8 @@ fn audio_as_midi(e: &mut Engine, p: &Value) -> Result<Value> {
     seq.sort();
     let count = seq.notes.len();
     let clip = Clip::midi(ClipId(0), "Audio as MIDI", 0, r.len(), seq);
-    e.clipboard = Clipboard { tracks: vec![vec![clip]], automation: vec![Vec::new()], ..Clipboard::of_range(e.session(), r) };
+    e.clipboard =
+        Clipboard { tracks: vec![vec![clip]], automation: vec![Vec::new()], notes: e.clipboard.notes.take(), ..Clipboard::of_range(e.session(), r) };
     Ok(json!({"notes": count, "length": r.len()}))
 }
 

@@ -296,6 +296,22 @@ pub fn roll_menu(app: &mut SoundApp, ui: &mut Ui, clip: ClipId, target: RollTarg
         }
         p
     };
+    // Cut, Copy and Paste send the note commands but show the Edit keys (the roll owns them while the pointer is over it).
+    let paste_ok: Result<(), String> = if crate::midi_clipboard::has_notes(app) { Ok(()) } else { Err("copy notes first".into()) };
+    let sel_ok: Result<(), String> = none.map_err(str::to_string);
+    action_item(app, ui, "edit.cut", "Cut", sel_ok.clone(), |a| {
+        crate::midi_clipboard::copy_selection(a, clip, true);
+    });
+    action_item(app, ui, "edit.copy", "Copy", sel_ok.clone(), |a| {
+        crate::midi_clipboard::copy_selection(a, clip, false);
+    });
+    action_item(app, ui, "edit.paste", "Paste", paste_ok, |a| {
+        crate::midi_clipboard::paste(a, clip, Some(target.tick));
+    });
+    action_item(app, ui, "edit.duplicate", "Duplicate", sel_ok, |a| {
+        crate::midi_clipboard::duplicate(a, clip);
+    });
+    ui.separator();
     item_if(app, ui, "midi.note_delete", by_index(json!({})), Some("Delete"), none);
     ui.separator();
     let split = match target.note {
@@ -324,8 +340,36 @@ pub fn roll_menu(app: &mut SoundApp, ui: &mut Ui, clip: ClipId, target: RollTarg
     }
 }
 
-/// A controller lane's menu: clear its events, or remove the lane.
+/// A line that runs `act` (UI-side work around a command) and shows the key of `key`; disabled with the reason
+/// when `ok` is an error.
+fn action_item(app: &mut SoundApp, ui: &mut Ui, key: &str, label: &str, ok: Result<(), String>, act: impl FnOnce(&mut SoundApp)) {
+    let (label, shortcut) = describe(app, key, key, Some(label), ui.ctx().os().is_mac());
+    let mut response = ui.add_enabled(ok.is_ok(), Button::new(label).shortcut_text(shortcut));
+    if let Err(why) = &ok {
+        response = response.on_disabled_hover_text(why);
+    }
+    if response.clicked() {
+        act(app);
+        ui.close();
+    }
+}
+
+/// A controller lane's menu: copy, cut and paste its events, clear them, or remove the lane. Copy and Cut take the
+/// events under the selected notes, or the whole lane when no note is selected.
 pub fn controller_lane_menu(app: &mut SoundApp, ui: &mut Ui, clip: ClipId, lane: &str, cc: i64, index: usize) {
+    if let Some(kind) = app.midi.lanes.get(index).map(|l| l.lane.kind()) {
+        action_item(app, ui, "edit.cut", "Cut Events", Ok(()), |a| {
+            crate::midi_clipboard::copy_lane(a, clip, kind, true);
+        });
+        action_item(app, ui, "edit.copy", "Copy Events", Ok(()), |a| {
+            crate::midi_clipboard::copy_lane(a, clip, kind, false);
+        });
+        let paste_ok = if crate::midi_clipboard::has_notes(app) { Ok(()) } else { Err("copy notes or events first".to_string()) };
+        action_item(app, ui, "edit.paste", "Paste", paste_ok, |a| {
+            crate::midi_clipboard::paste(a, clip, None);
+        });
+        ui.separator();
+    }
     item(app, ui, "midi.ctrl_clear", json!({"clip": clip.0, "lane": lane, "cc": cc}), Some("Clear Lane"));
     item(app, ui, "ui.midi_lane_remove", json!({"index": index}), Some("Remove Lane"));
 }

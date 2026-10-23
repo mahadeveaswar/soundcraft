@@ -102,6 +102,19 @@ pub struct Clipboard {
     pub grid_offset: Samples,
     /// Copy Special › Automation: pasting it leaves the clips alone, in Shuffle mode too.
     pub automation_only: bool,
+    /// Piano-roll Copy/Cut: notes and controller events (see `midi.notes_copy`). Kept apart from
+    /// the clip material above, so each kind of copy survives the other.
+    pub notes: Option<NoteClip>,
+}
+
+/// Notes and controller events on the note clipboard, in ticks relative to the earliest of them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NoteClip {
+    /// Each note with its mute flag.
+    pub notes: Vec<(soundcraft_midi::Note, bool)>,
+    pub ctrls: Vec<soundcraft_midi::CtrlEvent>,
+    /// From the first event to the last note end (or controller tick).
+    pub span_ticks: i64,
 }
 
 impl Clipboard {

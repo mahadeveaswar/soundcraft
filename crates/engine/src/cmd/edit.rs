@@ -251,10 +251,16 @@ fn cut_copy(e: &mut Engine, p: &Value, cut: bool, id: &str) -> Result<Value> {
     if range.is_empty() {
         return Err(bad(id, "selection is empty"));
     }
+    // Only the selected clips are taken when they alone define the range (no band, no range params).
+    let only = clip_mode(e, p);
     let mut cb = Clipboard::of_range(e.session(), range);
     let follow = e.session().edit.automation_follows_edit;
     for t in &tracks {
-        cb.tracks.push(ops::copy_range(e.session(), *t, range));
+        let mut copied = ops::copy_range(e.session(), *t, range);
+        if let Some(ids) = &only {
+            copied.retain(|c| ids.contains(&c.id));
+        }
+        cb.tracks.push(copied);
         let lanes = e
             .session()
             .track(*t)
@@ -292,14 +298,42 @@ fn cut_copy(e: &mut Engine, p: &Value, cut: bool, id: &str) -> Result<Value> {
     if cut {
         let sh = shuffle(e.session());
         let s = e.session_mut();
-        for t in &tracks {
-            cut_track(s, *t, range, sh, follow);
+        match &only {
+            Some(ids) => cut_clips(s, ids, sh),
+            None => {
+                for t in &tracks {
+                    cut_track(s, *t, range, sh, follow);
+                }
+            }
         }
         s.edit.selection = soundcraft_time::Range::point(range.start);
+        s.edit.selected_clips.clear();
     }
     let n: usize = cb.tracks.iter().map(Vec::len).sum();
+    cb.notes = e.clipboard.notes.take();
     e.clipboard = cb;
     Ok(json!({"clips": n, "length": range.len()}))
+}
+
+/// Remove exactly the clips `ids` (later ones first, so a Shuffle ripple does not move the rest). A
+/// clip that overlaps an unselected one is just removed; otherwise Shuffle closes its gap.
+fn cut_clips(s: &mut Session, ids: &[soundcraft_model::ClipId], sh: bool) {
+    let mut found: Vec<(TrackId, soundcraft_time::Range, soundcraft_model::ClipId)> = Vec::new();
+    for t in &s.tracks {
+        for c in t.clips().iter().filter(|c| ids.contains(&c.id)) {
+            found.push((t.id, c.range(), c.id));
+        }
+    }
+    found.sort_by_key(|(_, r, _)| std::cmp::Reverse(r.start));
+    for (t, r, id) in found {
+        if let Some(pl) = s.track_mut(t).and_then(|tr| tr.playlist_mut()) {
+            pl.clips.retain(|c| c.id != id);
+        }
+        let shared = s.track(t).is_some_and(|tr| tr.clips().iter().any(|c| c.range().overlaps(&r)));
+        if sh && !shared {
+            ops::clear_range(s, t, r, true);
+        }
+    }
 }
 
 /// Remove `r` from a track, closing the gap in Shuffle mode; automation follows when `follow`.
@@ -314,10 +348,35 @@ fn cut_track(s: &mut Session, t: TrackId, r: soundcraft_time::Range, sh: bool, f
 }
 
 fn paste(e: &mut Engine, p: &Value) -> Result<Value> {
-    let tracks = tracks_required(e, "edit.paste", p)?;
+    let mut tracks = tracks_required(e, "edit.paste", p)?;
     let given = position_param(e, "edit.paste", p, "at")?;
     let cb = e.clipboard.clone();
+    if cb.tracks.is_empty() {
+        return Err(bad("edit.paste", "clipboard is empty"));
+    }
     let s = e.session();
+    // More clipboard tracks than targets: continue downward from the first target in track order.
+    if tracks.len() < cb.tracks.len() {
+        let order: Vec<TrackId> = s.tracks.iter().map(|t| t.id).collect();
+        tracks.sort_by_key(|t| order.iter().position(|o| o == t).unwrap_or(usize::MAX));
+        if let Some(first) = tracks.first().and_then(|t| order.iter().position(|o| o == t)) {
+            let more = order[first..].iter().filter(|t| !tracks.contains(t)).take(cb.tracks.len() - tracks.len());
+            let more: Vec<TrackId> = more.copied().collect();
+            tracks.extend(more);
+        }
+    }
+    // A track takes only clips of its own kind (a MIDI clip does not go onto an audio track).
+    let fits = |t: &TrackId, clips: &[soundcraft_model::Clip]| {
+        let midi = s.track(*t).is_some_and(|tr| tr.kind.is_midi());
+        clips.iter().all(|c| matches!(c.content, soundcraft_model::ClipContent::Midi { .. }) == midi)
+    };
+    let pairs: Vec<bool> = tracks.iter().enumerate().map(|(i, t)| cb.tracks.get(i % cb.tracks.len()).is_some_and(|c| fits(t, c))).collect();
+    if !pairs.iter().any(|ok| *ok) && !cb.automation_only && cb.tracks.iter().any(|c| !c.is_empty()) {
+        let has_midi = cb.tracks.iter().flatten().any(|c| matches!(c.content, soundcraft_model::ClipContent::Midi { .. }));
+        let target_midi = tracks.first().and_then(|t| s.track(*t)).is_some_and(|tr| tr.kind.is_midi());
+        let (held, target) = (if has_midi { "MIDI" } else { "audio" }, if target_midi { "a MIDI track" } else { "an audio track" });
+        return Err(bad("edit.paste", format!("clipboard holds {held} clips; target is {target}")));
+    }
     let at = match given {
         Some(at) => at,
         None if s.edit.edit_mode == EditMode::GridRelative => grid_adapt::effective_grid(s, s.edit.selection.start)
@@ -330,12 +389,18 @@ fn paste(e: &mut Engine, p: &Value) -> Result<Value> {
     let replace = Some(s.edit.selection).filter(|r| sh && given.is_none() && !r.is_empty());
     let s = e.session_mut();
     let mut pasted = 0;
+    let mut new_ids = Vec::new();
     for (i, t) in tracks.iter().enumerate() {
         let Some(clips) = cb.tracks.get(i % cb.tracks.len().max(1)) else { continue };
+        if !pairs.get(i).copied().unwrap_or(false) && !clips.is_empty() {
+            continue;
+        }
         if let Some(r) = replace {
             cut_track(s, *t, r, true, follow);
         }
-        pasted += ops::paste(s, *t, at, clips, cb.length, sh).map_err(|why| bad("edit.paste", why))?.len();
+        let ids = ops::paste(s, *t, at, clips, cb.length, sh).map_err(|why| bad("edit.paste", why))?;
+        pasted += ids.len();
+        new_ids.extend(ids);
         if follow && let (Some(lanes), Some(tr)) = (cb.automation.get(i % cb.automation.len().max(1)), s.track_mut(*t)) {
             let locked = crate::edit::locked_params(tr);
             for l in lanes.iter().filter(|l| !locked.contains(&l.param)) {
@@ -350,6 +415,7 @@ fn paste(e: &mut Engine, p: &Value) -> Result<Value> {
         }
     }
     s.edit.selection = soundcraft_time::Range::new(at, at + cb.length);
+    s.edit.selected_clips = new_ids;
     Ok(json!({"pasted": pasted}))
 }
 
@@ -1241,5 +1307,119 @@ mod tests {
         e.execute("edit.restore_last_selection", &json!({})).unwrap();
         assert_eq!(e.session().edit.selection, soundcraft_time::Range::new(7_000, 9_000));
         assert_eq!(json!(tracks(&e)), json!([ids[1]]));
+    }
+    // ---- clipboard behaviour (arrange) ----
+
+    fn two_tracks() -> (Engine, TrackId, TrackId) {
+        let mut e = Engine::default();
+        let ids = e.execute("track.new", &json!({"count": 2, "kind": "audio"})).unwrap()["tracks"].clone();
+        let (a, b) = (TrackId(ids[0].as_u64().unwrap()), TrackId(ids[1].as_u64().unwrap()));
+        for (t, at) in [(a, 1_000), (b, 1_000)] {
+            let s = e.session_mut();
+            let id = s.new_clip_id();
+            crate::edit::place_clip(s, t, Clip::audio(id, "c", soundcraft_model::SourceId(0), 0, at, 4_000));
+        }
+        (e, a, b)
+    }
+
+    fn starts(e: &Engine, t: TrackId) -> Vec<(i64, i64)> {
+        e.session().track(t).unwrap().clips().iter().map(|c| (c.start, c.length)).collect()
+    }
+
+    #[test]
+    fn an_audio_clip_copies_and_pastes_at_the_insertion_point_and_at_a_given_position() {
+        let (mut e, a, _) = two_tracks();
+        let clip = e.session().track(a).unwrap().clips()[0].id;
+        e.execute("edit.select", &json!({"clips": [clip.0]})).unwrap();
+        e.execute("edit.copy", &json!({})).unwrap();
+        e.execute("edit.select", &json!({"tracks": [a.0], "start": 20_000, "end": 20_000})).unwrap();
+        e.execute("edit.paste", &json!({})).unwrap();
+        assert_eq!(starts(&e, a), vec![(1_000, 4_000), (20_000, 4_000)]);
+        assert_eq!(e.session().edit.selected_clips.len(), 1, "the pasted clip is selected");
+        assert_ne!(e.session().edit.selected_clips[0], clip);
+        e.execute("edit.paste", &json!({"tracks": [a.0], "at": 40_000})).unwrap();
+        assert_eq!(starts(&e, a).len(), 3);
+        assert_eq!(starts(&e, a)[2].0, 40_000);
+    }
+
+    #[test]
+    fn paste_lands_on_another_track_and_undo_restores() {
+        let (mut e, a, b) = two_tracks();
+        let clip = e.session().track(a).unwrap().clips()[0].id;
+        e.execute("edit.select", &json!({"clips": [clip.0]})).unwrap();
+        e.execute("edit.copy", &json!({})).unwrap();
+        let before = e.session().clone();
+        e.execute("edit.paste", &json!({"tracks": [b.0], "at": 30_000})).unwrap();
+        assert_eq!(starts(&e, b).len(), 2);
+        assert_eq!(starts(&e, a).len(), 1);
+        e.undo();
+        assert_eq!(e.session().tracks, before.tracks);
+    }
+
+    #[test]
+    fn a_two_track_clipboard_pasted_to_one_target_continues_on_the_next_track() {
+        let (mut e, a, b) = two_tracks();
+        e.execute("edit.select", &json!({"tracks": [a.0, b.0], "start": 1_000, "end": 5_000})).unwrap();
+        e.execute("edit.copy", &json!({})).unwrap();
+        e.execute("edit.paste", &json!({"tracks": [a.0], "at": 20_000})).unwrap();
+        assert_eq!(starts(&e, a).len(), 2);
+        assert_eq!(starts(&e, b).len(), 2, "the second clipboard track lands on the track below");
+    }
+
+    #[test]
+    fn pasting_the_wrong_clip_kind_or_an_empty_clipboard_is_an_error_without_an_undo_step() {
+        let (mut e, a, _) = two_tracks();
+        let steps = e.undo_history().len();
+        assert!(e.execute("edit.paste", &json!({"tracks": [a.0], "at": 0})).is_err(), "empty clipboard");
+        assert_eq!(e.undo_history().len(), steps);
+        let m = TrackId(e.execute("track.new", &json!({"kind": "midi"})).unwrap()["tracks"][0].as_u64().unwrap());
+        let steps = e.undo_history().len();
+        let clip = e.session().track(a).unwrap().clips()[0].id;
+        e.execute("edit.select", &json!({"clips": [clip.0]})).unwrap();
+        e.execute("edit.copy", &json!({})).unwrap();
+        let err = e.execute("edit.paste", &json!({"tracks": [m.0], "at": 0})).unwrap_err().to_string();
+        assert!(err.contains("audio clips") && err.contains("MIDI track"), "{err}");
+        assert_eq!(e.undo_history().len(), steps);
+    }
+
+    #[test]
+    fn a_midi_clip_cuts_and_pastes_with_equal_notes() {
+        let mut e = Engine::default();
+        let t = TrackId(e.execute("track.new", &json!({"kind": "midi"})).unwrap()["tracks"][0].as_u64().unwrap());
+        let clip = e.execute("midi.new_clip", &json!({"track": t.0, "start": 0, "end": 48_000})).unwrap()["clip"].as_u64().unwrap();
+        e.execute("midi.note_add", &json!({"clip": clip, "pitch": 64, "start_ticks": 240, "length_ticks": 240})).unwrap();
+        let notes = |e: &Engine| {
+            e.session()
+                .track(t)
+                .unwrap()
+                .clips()
+                .iter()
+                .map(|c| match &c.content {
+                    ClipContent::Midi { sequence } => sequence.notes.clone(),
+                    _ => Vec::new(),
+                })
+                .collect::<Vec<_>>()
+        };
+        let before = notes(&e);
+        e.execute("edit.select", &json!({"clips": [clip]})).unwrap();
+        e.execute("edit.cut", &json!({})).unwrap();
+        assert!(e.session().track(t).unwrap().clips().is_empty());
+        assert!(e.session().edit.selected_clips.is_empty(), "cut clears the clip selection");
+        e.execute("edit.paste", &json!({"tracks": [t.0], "at": 0})).unwrap();
+        assert_eq!(notes(&e), before);
+    }
+
+    #[test]
+    fn cutting_selected_clips_leaves_an_unselected_overlapping_clip_alone() {
+        let (mut e, a, b) = two_tracks();
+        let (ca, cb) = (e.session().track(a).unwrap().clips()[0].id, e.session().track(b).unwrap().clips()[0].id);
+        e.execute("edit.select", &json!({"clips": [ca.0]})).unwrap();
+        e.execute("edit.select", &json!({"clips": [ca.0]})).unwrap();
+        e.execute("edit.cut", &json!({})).unwrap();
+        assert!(starts(&e, a).is_empty());
+        assert!(e.session().find_clip(cb).is_some(), "the other track's overlapping clip stays");
+        e.execute("edit.paste", &json!({"tracks": [a.0], "at": 9_000})).unwrap();
+        assert_eq!(starts(&e, a), vec![(9_000, 4_000)]);
+        assert_eq!(starts(&e, b).len(), 1, "the paste added nothing to the other track");
     }
 }

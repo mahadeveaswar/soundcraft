@@ -34,6 +34,7 @@ mod midi_theory;
 pub use midi_theory::{chord_name_at, scale_key};
 pub mod grid_adapt;
 pub(crate) use auto_convert::write_lane_events;
+mod midi_clip;
 mod midi_tools;
 mod mix;
 mod more_util;
@@ -150,6 +151,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(midi_sel::specs());
         v.extend(midi_theory::specs());
         v.extend(midi_tools::specs());
+        v.extend(midi_clip::specs());
         v.extend(view_more::specs());
         v.extend(track_more::specs());
         v.extend(track_palette::specs());
@@ -338,6 +340,18 @@ pub fn effective_range(s: &soundcraft_model::Session) -> Range {
         }
     }
     out.unwrap_or(sel)
+}
+
+/// The selected clips, when they alone define what range commands act on: no range params, an
+/// empty edit selection and at least one selected clip that still exists. Cut and copy then take
+/// exactly those clips instead of everything inside their bounding range.
+pub fn clip_mode(e: &Engine, p: &Value) -> Option<Vec<ClipId>> {
+    let s = e.session();
+    if ["start", "end", "length"].iter().any(|k| p.get(k).is_some()) || !s.edit.selection.is_empty() {
+        return None;
+    }
+    let ids: Vec<ClipId> = s.edit.selected_clips.iter().copied().filter(|id| s.find_clip(*id).is_some()).collect();
+    if ids.is_empty() { None } else { Some(ids) }
 }
 
 /// Range from `start`/`end` params, else the effective range (see [`effective_range`]).

@@ -54,6 +54,11 @@ fn search_chord(m: Modifiers, mac: bool) -> bool {
     mac && m.command && m.ctrl
 }
 
+/// The chords the piano roll handles itself while the pointer is over it (Cmd+X, C, V, D, A).
+pub(crate) fn roll_owns(key: Key, mods: Modifiers, mac: bool, roll_busy: bool) -> bool {
+    roll_busy && matches!(key, Key::X | Key::C | Key::V | Key::D | Key::A) && mods_match(Modifiers::COMMAND, mods, mac)
+}
+
 pub fn handle(app: &mut SoundApp, ctx: &egui::Context) {
     // Cmd+= and Cmd+0 are Mix/Edit and Quantize to Grid, not egui's built-in interface zoom.
     ctx.options_mut(|o| o.zoom_with_keyboard = false);
@@ -79,6 +84,10 @@ pub fn handle(app: &mut SoundApp, ctx: &egui::Context) {
     // The piano roll acts on arrows and Delete itself while the pointer is over it.
     let roll_busy = crate::midi_editor::roll_has_pointer(ctx);
     for (key, mods) in events {
+        // Over the piano roll Cut/Copy/Paste/Duplicate/Select All belong to its notes, whatever the key set.
+        if roll_owns(key, mods, mac, crate::midi_editor::roll_area_has_pointer(ctx)) {
+            continue;
+        }
         let keymap_key =
             !(roll_busy && matches!(key, Key::ArrowUp | Key::ArrowDown | Key::ArrowLeft | Key::ArrowRight | Key::Delete | Key::Backspace));
         // The user's own bindings win over everything, including the built-in rules below.

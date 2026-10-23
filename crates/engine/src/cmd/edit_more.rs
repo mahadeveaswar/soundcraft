@@ -329,6 +329,7 @@ fn auto_copy(e: &mut Engine, p: &Value, which: Lanes, cut: bool, id: &str) -> Re
             }
         }
     }
+    cb.notes = e.clipboard.notes.take();
     e.clipboard = cb;
     Ok(json!({"lanes": lanes_n, "length": r.len()}))
 }
@@ -357,7 +358,7 @@ pub(super) fn copy_clip_gain(e: &mut Engine, p: &Value) -> Result<Value> {
         out.push(env);
     }
     let n = out.iter().map(Vec::len).sum::<usize>();
-    e.clipboard = Clipboard { length: r.len(), clip_gain: out, ..Clipboard::default() };
+    e.clipboard = Clipboard { length: r.len(), clip_gain: out, notes: e.clipboard.notes.take(), ..Clipboard::default() };
     Ok(json!({"points": n, "length": r.len()}))
 }
 
@@ -414,7 +415,7 @@ fn clip_effects(e: &mut Engine, p: &Value, copy: bool, remove: bool, id: &str) -
         if fx.is_empty() {
             return Err(bad(id, "the clip has no clip effects"));
         }
-        e.clipboard = Clipboard { clip_effects: fx, ..Clipboard::default() };
+        e.clipboard = Clipboard { clip_effects: fx, notes: e.clipboard.notes.take(), ..Clipboard::default() };
     }
     let mut removed = 0;
     if remove {

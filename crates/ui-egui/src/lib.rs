@@ -29,6 +29,7 @@ pub mod menu_layout;
 pub mod menus;
 mod meter_pane;
 pub mod midi_audition;
+pub mod midi_clipboard;
 pub mod midi_editor;
 pub mod midi_editor_inspector;
 pub mod midi_editor_state;
@@ -591,6 +592,7 @@ impl SoundApp {
                     // Re-selecting a scrolling mode resumes the playhead follow.
                     self.edit_layout.follow_hold = false;
                 }
+                crate::midi_clipboard::after_command(self, id, &params, &v);
                 if id == "track.clear_clip_indicators" {
                     self.meters.values_mut().chain([&mut self.main_meter]).for_each(|m| m.clip = false);
                 }
