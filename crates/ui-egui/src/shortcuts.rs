@@ -42,7 +42,7 @@ pub fn parse(s: &str) -> Option<(Modifiers, Key)> {
 }
 
 /// Whether the held modifiers `got` fire a shortcut that asks for `want`.
-fn mods_match(want: Modifiers, got: Modifiers, mac: bool) -> bool {
+pub(crate) fn mods_match(want: Modifiers, got: Modifiers, mac: bool) -> bool {
     // Off macOS egui reports Ctrl as both `ctrl` and `command`: Ctrl is the shortcut's Cmd, and a shortcut's
     // Ctrl (the Mac Control key) has no key of its own there, so Ctrl+X is Cut, not Cmd+Ctrl+X.
     let ctrl = if mac { want.ctrl == got.ctrl } else { !want.ctrl };
@@ -57,6 +57,10 @@ fn search_chord(m: Modifiers, mac: bool) -> bool {
 pub fn handle(app: &mut SoundApp, ctx: &egui::Context) {
     // Cmd+= and Cmd+0 are Mix/Edit and Quantize to Grid, not egui's built-in interface zoom.
     ctx.options_mut(|o| o.zoom_with_keyboard = false);
+    if app.extra.key_capture.is_some() {
+        capture(app, ctx);
+        return;
+    }
     if ctx.egui_wants_keyboard_input() || app.dialogs.open.is_some() {
         return;
     }
@@ -71,23 +75,74 @@ pub fn handle(app: &mut SoundApp, ctx: &egui::Context) {
     });
     // Cmd and Ctrl are separate keys only on macOS (asked at runtime so the web build in a Mac browser agrees).
     let mac = ctx.os() == egui::os::OperatingSystem::Mac;
+    let alternative = app.ui.keymap.preset == crate::keymap::Preset::Alternative;
+    // The piano roll acts on arrows and Delete itself while the pointer is over it.
+    let roll_busy = crate::midi_editor::roll_has_pointer(ctx);
     for (key, mods) in events {
-        if fixed(app, key, mods, mac) {
+        let keymap_key =
+            !(roll_busy && matches!(key, Key::ArrowUp | Key::ArrowDown | Key::ArrowLeft | Key::ArrowRight | Key::Delete | Key::Backspace));
+        // The user's own bindings win over everything, including the built-in rules below.
+        if keymap_key && let Some((id, params)) = app.ui.keymap.lookup_override(key, mods, mac) {
+            dispatch(app, &id, params);
             continue;
         }
-        if let Some(id) = command_for(key, mods, mac) {
-            if crate::menus::invoke_shortcut_dialog(app, id) {
-                continue;
+        if fixed(app, key, mods, mac, alternative) {
+            continue;
+        }
+        if alternative {
+            if keymap_key && let Some((id, params)) = app.ui.keymap.lookup(key, mods, mac) {
+                dispatch(app, &id, params);
             }
-            let _ = app.run(id, json!({}));
-        } else if let Some(c) =
-            crate::menus::UI_COMMANDS.iter().find(|c| c.3.and_then(parse).is_some_and(|(m, k)| k == key && mods_match(m, mods, mac)))
+            continue;
+        }
+        if let Some(id) = command_for(key, mods, mac).filter(|id| !app.ui.keymap.overridden(id)) {
+            dispatch(app, id, serde_json::Value::Null);
+        } else if let Some(c) = crate::menus::UI_COMMANDS
+            .iter()
+            .find(|c| !app.ui.keymap.overridden(c.0) && c.3.and_then(parse).is_some_and(|(m, k)| k == key && mods_match(m, mods, mac)))
         {
             let _ = app.run(c.0, json!({}));
         }
     }
     // Tab moves the insertion point here, so egui must not also hand focus to the first widget: that would block every shortcut.
     ctx.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
+}
+
+/// Run a command for a key or a menu line: through its dialog when it has one, else directly with `params`.
+pub(crate) fn run_action(app: &mut SoundApp, id: &str, params: serde_json::Value) -> Result<(), String> {
+    let params = if params.is_null() { json!({}) } else { params };
+    if params.as_object().is_some_and(serde_json::Map::is_empty) && crate::menus::invoke_shortcut_dialog(app, id) {
+        return Ok(());
+    }
+    app.run(id, params).map(|_| ())
+}
+
+fn dispatch(app: &mut SoundApp, id: &str, params: serde_json::Value) {
+    let _ = run_action(app, id, params);
+}
+
+/// While the Keys page waits for a chord: the next key press becomes the pending chord (Escape cancels).
+fn capture(app: &mut SoundApp, ctx: &egui::Context) {
+    if !app.extra.show_settings || app.extra.settings_tab != crate::settings_cmds::SettingsTab::Keys {
+        app.extra.key_capture = None;
+        return;
+    }
+    let mac = ctx.os() == egui::os::OperatingSystem::Mac;
+    let pressed = ctx.input(|i| {
+        i.events.iter().find_map(|e| match e {
+            egui::Event::Key { key, pressed: true, repeat: false, modifiers, .. } => Some((*key, *modifiers)),
+            _ => None,
+        })
+    });
+    let Some((key, mods)) = pressed else { return };
+    let target = app.extra.key_capture.take();
+    if key == Key::Escape && !mods.command && !mods.alt && !mods.shift {
+        return;
+    }
+    match (target, crate::keymap::chord_for(key, mods, mac)) {
+        (Some(action), Some(chord)) => app.extra.key_pending = Some((action, chord)),
+        _ => app.ui.status = "That key cannot be used as a command key".to_string(),
+    }
 }
 
 fn command_for(key: Key, mods: Modifiers, mac: bool) -> Option<&'static str> {
@@ -98,7 +153,9 @@ fn command_for(key: Key, mods: Modifiers, mac: bool) -> Option<&'static str> {
 }
 
 /// Keys with context-dependent meaning. Returns true when handled.
-fn fixed(app: &mut SoundApp, key: Key, m: Modifiers, mac: bool) -> bool {
+/// `alt`: the Alternative preset is active, so the keys it gives to plain letters, digits and function keys
+/// (Enter, F-keys, Alt+1-4, `, Shift+=/-, Commands Focus, R/T) are left to its table.
+fn fixed(app: &mut SoundApp, key: Key, m: Modifiers, mac: bool, alt: bool) -> bool {
     let plain = !m.command && !m.alt && !m.ctrl && !m.shift;
     match key {
         Key::Space if !m.command && !m.alt => {
@@ -118,25 +175,25 @@ fn fixed(app: &mut SoundApp, key: Key, m: Modifiers, mac: bool) -> bool {
             let _ = app.run("window.toggle_mix_edit", json!({}));
             true
         }
-        Key::Enter if plain => {
+        Key::Enter if plain && !alt => {
             let _ = app.run("markers.add", json!({}));
             true
         }
         // Shift+=/- step the Grid value and Alt+Shift+=/- the Nudge value; macOS sends Alt+Shift+= as =, not +.
-        Key::Plus | Key::Equals | Key::Minus if m.shift && !m.command && !m.ctrl && app.ui.window == MainWindow::Edit => {
+        Key::Plus | Key::Equals | Key::Minus if !alt && m.shift && !m.command && !m.ctrl && app.ui.window == MainWindow::Edit => {
             let step = if key == Key::Minus { -1 } else { 1 };
             let _ = app.run(if m.alt { "view.nudge" } else { "view.grid" }, json!({"step": step}));
             true
         }
-        Key::F12 if plain => {
+        Key::F12 if plain && !alt => {
             let _ = app.run("transport.record", json!({}));
             true
         }
-        Key::F1 | Key::F2 | Key::F3 | Key::F4 if plain => {
+        Key::F1 | Key::F2 | Key::F3 | Key::F4 if plain && !alt => {
             edit_mode_key(app, key);
             true
         }
-        Key::Num1 | Key::Num2 | Key::Num3 | Key::Num4 if m.alt && !m.command && !m.ctrl && !m.shift => {
+        Key::Num1 | Key::Num2 | Key::Num3 | Key::Num4 if !alt && m.alt && !m.command && !m.ctrl && !m.shift => {
             let f = match key {
                 Key::Num1 => Key::F1,
                 Key::Num2 => Key::F2,
@@ -146,11 +203,11 @@ fn fixed(app: &mut SoundApp, key: Key, m: Modifiers, mac: bool) -> bool {
             edit_mode_key(app, f);
             true
         }
-        Key::Backtick if plain => {
+        Key::Backtick if plain && !alt => {
             cycle_edit_mode(app);
             true
         }
-        Key::F5 | Key::F6 | Key::F7 | Key::F8 | Key::F9 | Key::F10 if plain => {
+        Key::F5 | Key::F6 | Key::F7 | Key::F8 | Key::F9 | Key::F10 if plain && !alt => {
             let tool = match key {
                 Key::F5 => "zoom",
                 Key::F6 => "trim",
@@ -207,7 +264,8 @@ fn fixed(app: &mut SoundApp, key: Key, m: Modifiers, mac: bool) -> bool {
             true
         }
         // Commands Keyboard Focus: single-key editing (Edit window only).
-        k if !m.command
+        k if !alt
+            && !m.command
             && !m.alt
             && !m.ctrl
             && app.ui.window == MainWindow::Edit
@@ -216,7 +274,7 @@ fn fixed(app: &mut SoundApp, key: Key, m: Modifiers, mac: bool) -> bool {
         {
             true
         }
-        Key::R | Key::T if plain => {
+        Key::R | Key::T if plain && !alt => {
             // Zoom out / in on the timeline (Commands Focus style).
             let id = if key == Key::T { "view.zoom_in" } else { "view.zoom_out" };
             let _ = app.run(id, json!({}));

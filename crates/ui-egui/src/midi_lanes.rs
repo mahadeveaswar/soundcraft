@@ -263,7 +263,7 @@ fn lane_handle(ui: &mut Ui, app: &mut SoundApp, rects: &[LaneRect], idx: usize, 
     resp.on_hover_text("Drag to resize the lane, double-click to reset");
 }
 
-/// The label column of one lane: a dropdown to change its type; right-click removes the lane.
+/// The label column of one lane: a dropdown to change its type; the lane itself has the Clear and Remove menu.
 fn lane_label(ui: &mut Ui, app: &mut SoundApp, rects: &[LaneRect], idx: usize, cid: ClipId) {
     let Some(r) = rects.get(idx) else { return };
     let Some(cur) = app.midi.lanes.get(idx).map(|l| l.lane) else { return };
@@ -283,10 +283,7 @@ fn lane_label(ui: &mut Ui, app: &mut SoundApp, rects: &[LaneRect], idx: usize, c
     {
         c.lane = l;
     }
-    if resp.response.secondary_clicked() {
-        remove(&mut app.midi.lanes, idx);
-    }
-    resp.response.on_hover_text("Lane type. Right-click to remove this lane");
+    resp.response.on_hover_text("Lane type. Right-click the lane for Clear and Remove");
 }
 
 /// The `+` button at the bottom left of the editor: adds the next unused lane.
@@ -417,9 +414,7 @@ fn ctrl_lane(
         line_in_lane(app, ui, &resp, cid, lane, r, tick_at, grid_ticks, &painter);
         return;
     }
-    if resp.secondary_clicked() {
-        let _ = app.run("midi.ctrl_clear", json!({"clip": cid.0, "lane": name, "cc": cc}));
-    }
+    resp.context_menu(|ui| crate::context_menu::controller_lane_menu(app, ui, cid, name, cc, idx));
     if (resp.dragged() || resp.clicked())
         && let Some(p) = resp.interact_pointer_pos()
     {

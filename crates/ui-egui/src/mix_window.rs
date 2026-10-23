@@ -214,13 +214,15 @@ pub(crate) fn strip(app: &mut SoundApp, ui: &mut Ui, id: TrackId, snap: Option<&
     let narrow = opts.compact || app.ui.narrow_mix;
     let w = strip_width(narrow);
     let h = ui.available_height().max(opts.min_height.unwrap_or(STRIP_MIN_HEIGHT));
-    let (r, body) = ui.allocate_exact_size(vec2(w, h), if opts.select_on_click { Sense::click() } else { Sense::hover() });
+    let (r, body) = ui.allocate_exact_size(vec2(w, h), Sense::click());
     if opts.select_on_click {
         body.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Strip {}", track.name)));
     }
     if opts.select_on_click && body.clicked() {
         crate::edit_window::click_track(app, id, ui.input(|i| i.modifiers), |_, t| !t.hidden && t.kind != TrackKind::Video);
     }
+    // The strip's free areas open the track menu, like its name chip does.
+    body.context_menu(|ui| crate::edit_window::track_context_menu(app, ui, id));
     let selected = app.engine.session().edit.selected_tracks.contains(&id);
     let bg = if selected { t.strip_selected } else { t.strip_bg };
     vgradient(ui.painter(), r, shade(bg, 0.06), bg);

@@ -20,6 +20,12 @@ pub struct ExtraState {
     pub ui_scale: f32,
     pub reduce_motion: bool,
     pub tooltips: bool,
+    /// Keys page: the action waiting for its next key press (`shortcuts::handle` stands down for it).
+    pub key_capture: Option<String>,
+    /// Keys page: a captured chord (action key, chord) not yet applied.
+    pub key_pending: Option<(String, String)>,
+    /// Keys page: the filter text.
+    pub key_search: String,
     last_auto_update: f64,
     applied: Option<(f32, bool)>,
 }
@@ -35,6 +41,9 @@ impl Default for ExtraState {
             ui_scale: 1.0,
             reduce_motion: false,
             tooltips: true,
+            key_capture: None,
+            key_pending: None,
+            key_search: String::new(),
             last_auto_update: 0.0,
             applied: None,
         }

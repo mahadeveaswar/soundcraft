@@ -15,16 +15,18 @@ pub enum SettingsTab {
     General,
     Appearance,
     Tracks,
+    Keys,
 }
 
 impl SettingsTab {
-    pub const ALL: [Self; 3] = [Self::General, Self::Appearance, Self::Tracks];
+    pub const ALL: [Self; 4] = [Self::General, Self::Appearance, Self::Tracks, Self::Keys];
 
     pub const fn id(self) -> &'static str {
         match self {
             Self::General => "general",
             Self::Appearance => "appearance",
             Self::Tracks => "tracks",
+            Self::Keys => "keys",
         }
     }
 
@@ -33,6 +35,7 @@ impl SettingsTab {
             Self::General => "General",
             Self::Appearance => "Appearance",
             Self::Tracks => "Track colours",
+            Self::Keys => "Keys",
         }
     }
 
@@ -50,7 +53,7 @@ pub fn run(app: &mut SoundApp, id: &str, p: &Value) -> Result<Value, String> {
     }
 }
 
-/// `window.settings {tab?: "general"|"appearance"|"tracks", value?}`: with a `tab` the window opens
+/// `window.settings {tab?: "general"|"appearance"|"tracks"|"keys", value?}`: with a `tab` the window opens
 /// on that page; otherwise `value` (or a toggle) shows or hides it, and a closed window opens on
 /// General. `window.ui_customization` is the same command with Appearance as its default page.
 fn window(app: &mut SoundApp, p: &Value, default_tab: Option<SettingsTab>) -> Result<Value, String> {
@@ -58,7 +61,7 @@ fn window(app: &mut SoundApp, p: &Value, default_tab: Option<SettingsTab>) -> Re
         None | Some(Value::Null) => None,
         Some(v) => {
             let s = v.as_str().ok_or("`tab` must be a string")?;
-            Some(SettingsTab::parse(s).ok_or_else(|| format!("unknown tab `{s}` (general, appearance or tracks)"))?)
+            Some(SettingsTab::parse(s).ok_or_else(|| format!("unknown tab `{s}` (general, appearance, tracks or keys)"))?)
         }
     };
     let value = match p.get("value") {
@@ -88,8 +91,8 @@ fn bool_param(p: &Value, key: &str) -> Result<Option<bool>, String> {
     }
 }
 
-/// `ui.prefs {ui_scale?, reduce_motion?, tooltips?, reset?}`: set interface preferences (saved in
-/// the UI preferences, no undo) and report all three. `ui_scale` is clamped to 0.75..=1.5.
+/// `ui.prefs {ui_scale?, reduce_motion?, tooltips?, reset?, keymap_preset?, keymap_overrides?, keymap_reassign?,
+/// keymap_reset?}`: set interface preferences (saved in the UI preferences, no undo) and report them. `ui_scale` is clamped to 0.75..=1.5.
 fn prefs(app: &mut SoundApp, p: &Value) -> Result<Value, String> {
     let scale = match p.get("ui_scale") {
         None | Some(Value::Null) => None,
@@ -100,11 +103,59 @@ fn prefs(app: &mut SoundApp, p: &Value) -> Result<Value, String> {
     };
     let motion = bool_param(p, "reduce_motion")?;
     let tips = bool_param(p, "tooltips")?;
+    // Validate the key bindings first so a bad chord changes nothing at all.
+    let keymap = keymap_param(app, p)?;
+    if let Some(k) = keymap {
+        app.ui.keymap = k;
+    }
     if bool_param(p, "reset")? == Some(true) {
         set(app, 1.0, false, true);
     }
     set(app, scale.unwrap_or(app.ui.ui_scale), motion.unwrap_or(app.ui.reduce_motion), tips.unwrap_or(app.ui.tooltips));
-    Ok(json!({"ui_scale": app.ui.ui_scale, "reduce_motion": app.ui.reduce_motion, "tooltips": app.ui.tooltips}))
+    Ok(json!({
+        "ui_scale": app.ui.ui_scale,
+        "reduce_motion": app.ui.reduce_motion,
+        "tooltips": app.ui.tooltips,
+        "keymap_preset": app.ui.keymap.preset.id(),
+        "keymap_overrides": app.ui.keymap.overrides,
+    }))
+}
+
+/// The key preferences after applying `keymap_preset`, `keymap_overrides` ({action: [chords] | null to
+/// restore the preset's keys}), `keymap_reassign` and `keymap_reset` (drop every override), or None when
+/// the call has none of them. Unknown commands in `keymap_overrides` are an error; a chord that does not
+/// parse, or one another command holds without `keymap_reassign`, is an error and nothing changes.
+fn keymap_param(app: &SoundApp, p: &Value) -> Result<Option<crate::keymap::KeymapPrefs>, String> {
+    let keys = ["keymap_preset", "keymap_overrides", "keymap_reset"];
+    if keys.iter().all(|k| matches!(p.get(k), None | Some(Value::Null))) {
+        return Ok(None);
+    }
+    let mut km = app.ui.keymap.clone();
+    if bool_param(p, "keymap_reset")? == Some(true) {
+        km.overrides.clear();
+    }
+    if let Some(v) = p.get("keymap_preset").filter(|v| !v.is_null()) {
+        let s = v.as_str().ok_or("`keymap_preset` must be a string")?;
+        km.preset = crate::keymap::Preset::parse(s).ok_or_else(|| format!("unknown key preset `{s}` (default or alternative)"))?;
+    }
+    let reassign = bool_param(p, "keymap_reassign")?.unwrap_or(false);
+    if let Some(v) = p.get("keymap_overrides").filter(|v| !v.is_null()) {
+        let map = v.as_object().ok_or("`keymap_overrides` must be an object of action to chord list")?;
+        for (action, chords) in map {
+            if chords.is_null() {
+                km.reset(action);
+                continue;
+            }
+            let list = chords
+                .as_array()
+                .ok_or_else(|| format!("`{action}` needs a list of chords"))?
+                .iter()
+                .map(|c| c.as_str().map(str::to_string).ok_or_else(|| format!("`{action}`: chords are strings")))
+                .collect::<Result<Vec<_>, _>>()?;
+            km.assign(action, &list, reassign)?;
+        }
+    }
+    Ok(Some(km))
 }
 
 fn set(app: &mut SoundApp, scale: f32, reduce_motion: bool, tooltips: bool) {
@@ -122,6 +173,11 @@ pub fn sync_on_load(app: &mut SoundApp) {
         return;
     }
     app.extra.prefs_synced = true;
+    // Keys saved by another version may name commands or chords this one lacks: keep only what works.
+    app.ui.keymap.overrides.retain(|key, chords| {
+        chords.retain(|c| crate::shortcuts::parse(c).is_some());
+        crate::keymap::is_known(crate::keymap::split_key(key).0)
+    });
     let ui = (app.ui.ui_scale.clamp(SCALE_RANGE.0, SCALE_RANGE.1), app.ui.reduce_motion, app.ui.tooltips);
     set(app, ui.0, ui.1, ui.2);
 }
@@ -196,6 +252,47 @@ mod tests {
         app.ui = serde_json::from_value::<UiState>(json!({"ui_scale": 1.25, "reduce_motion": true, "tooltips": false})).unwrap();
         sync_on_load(&mut app);
         assert_eq!((app.extra.ui_scale, app.extra.reduce_motion, app.extra.tooltips), (1.25, true, false));
+    }
+
+    #[test]
+    fn key_bindings_round_trip_and_bad_ones_change_nothing() {
+        let mut app = app();
+        assert_eq!(app.run("ui.prefs", json!({})).unwrap()["keymap_preset"], "default");
+        let r = app.run("ui.prefs", json!({"keymap_preset": "alternative", "keymap_overrides": {"clip.glue": ["Cmd+Alt+Shift+G"]}})).unwrap();
+        assert_eq!((r["keymap_preset"].as_str(), r["keymap_overrides"]["clip.glue"][0].as_str()), (Some("alternative"), Some("Cmd+Alt+Shift+G")));
+        // Saved in ui.json and loaded back.
+        let saved = serde_json::to_value(&app.ui).unwrap();
+        let loaded: UiState = serde_json::from_value(saved).unwrap();
+        assert_eq!(loaded.keymap, app.ui.keymap);
+        // A malformed chord, an unknown command, a taken chord and an unknown preset are errors that change nothing.
+        let before = app.ui.keymap.clone();
+        assert!(app.run("ui.prefs", json!({"keymap_overrides": {"clip.mute": ["Hyper+Q"]}})).is_err());
+        assert!(app.run("ui.prefs", json!({"keymap_overrides": {"no.such": ["Cmd+Q"]}})).is_err());
+        assert!(app.run("ui.prefs", json!({"keymap_overrides": {"clip.mute": ["M"]}})).is_err());
+        assert!(app.run("ui.prefs", json!({"keymap_preset": "classic"})).is_err());
+        assert!(app.run("ui.prefs", json!({"keymap_preset": "default", "keymap_overrides": {"clip.mute": ["Hyper+Q"]}})).is_err());
+        assert_eq!(app.ui.keymap, before);
+        // Reassigning takes the chord; null restores a command's own keys; reset drops all.
+        app.run("ui.prefs", json!({"keymap_overrides": {"clip.mute": ["M"]}, "keymap_reassign": true})).unwrap();
+        assert_eq!(app.ui.keymap.bindings("mix.mute"), Vec::<String>::new());
+        app.run("ui.prefs", json!({"keymap_overrides": {"clip.mute": null}})).unwrap();
+        assert!(!app.ui.keymap.overrides.contains_key("clip.mute"));
+        app.run("ui.prefs", json!({"keymap_reset": true})).unwrap();
+        assert!(app.ui.keymap.overrides.is_empty());
+    }
+
+    #[test]
+    fn saved_keys_for_unknown_commands_or_with_broken_chords_are_dropped_on_load() {
+        let mut app = app();
+        app.ui = serde_json::from_value::<UiState>(json!({"keymap": {"preset": "alternative", "overrides": {
+            "future.command": ["Cmd+Q"], "clip.glue": ["Cmd+Alt+Shift+G", "???"], "edit.tool#{\"tool\":\"zoom\"}": ["Z"]}}}))
+        .unwrap();
+        sync_on_load(&mut app);
+        assert!(!app.ui.keymap.overrides.contains_key("future.command"));
+        assert_eq!(app.ui.keymap.overrides["clip.glue"], vec!["Cmd+Alt+Shift+G".to_string()]);
+        assert!(app.ui.keymap.overrides.contains_key("edit.tool#{\"tool\":\"zoom\"}"));
+        let old: UiState = serde_json::from_value(json!({"ui_scale": 1.1})).unwrap();
+        assert_eq!(old.keymap, crate::keymap::KeymapPrefs::default(), "old ui.json files keep the Default preset");
     }
 
     #[test]

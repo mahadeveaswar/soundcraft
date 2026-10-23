@@ -661,26 +661,50 @@ pub fn io_setup(app: &mut SoundApp, ctx: &egui::Context) {
     app.ui.show_io_setup = open;
 }
 
-/// Setup › Keyboard Shortcuts.
+/// Setup › Keyboard Shortcuts: a read-only list of the keys that are active now (key set plus the user's own
+/// keys); Settings › Keys changes them.
 pub fn shortcuts_window(app: &mut SoundApp, ctx: &egui::Context) {
     let mut open = app.ui.show_shortcuts;
     let mac = ctx.os().is_mac();
+    let bound: std::collections::HashMap<String, Vec<String>> = app.ui.keymap.effective().into_iter().collect();
+    let preset = app.ui.keymap.preset.label();
+    let default_set = app.ui.keymap.preset == crate::keymap::Preset::Default;
+    let app_overrides = app.ui.keymap.overrides.clone();
+    let mut change = false;
     win(ctx, &mut open, "Keyboard Shortcuts", vec2(520.0, 480.0), |ui| {
+        ui.horizontal(|ui| {
+            ui.label(format!("Key set: {preset}"));
+            change = ui.button("Change keys...").clicked();
+        });
         egui::ScrollArea::vertical().show(ui, |ui| {
             egui::Grid::new("sc").num_columns(3).striped(true).show(ui, |ui| {
-                let engine = soundcraft_engine::command_specs().iter().map(|c| (c.shortcut, c.label, c.menu.join(" › ")));
-                let windows = crate::menus::UI_COMMANDS.iter().map(|c| (c.3, c.1, c.2.replace(" > ", " › ")));
-                for (shortcut, label, menu) in engine.chain(windows) {
-                    let Some(shortcut) = shortcut else { continue };
-                    ui.label(egui::RichText::new(crate::shortcuts::shortcut_label(shortcut, mac)).font(mono(11.0)));
-                    ui.label(label);
-                    ui.label(egui::RichText::new(menu).small());
+                for a in crate::keymap::actions() {
+                    let mut chords: Vec<String> =
+                        bound.get(&a.key).into_iter().flatten().map(|c| crate::shortcuts::shortcut_label(c, mac)).filter(|c| !c.is_empty()).collect();
+                    // Key families the parser cannot read ("F1-F4", "Plus/Minus") are built into the Default set.
+                    if chords.is_empty()
+                        && default_set
+                        && !app_overrides.contains_key(&a.key)
+                        && let Some(text) =
+                            crate::menus::shortcut_for(&a.key).map(|s| crate::shortcuts::shortcut_label(s, mac)).filter(|s| !s.is_empty())
+                    {
+                        chords.push(text);
+                    }
+                    if chords.is_empty() {
+                        continue;
+                    }
+                    ui.label(egui::RichText::new(chords.join("  ")).font(mono(11.0)));
+                    ui.label(a.label);
+                    ui.label(egui::RichText::new(a.path.replace(" > ", " › ")).small());
                     ui.end_row();
                 }
             });
         });
     });
     app.ui.show_shortcuts = open;
+    if change {
+        let _ = app.run("window.settings", json!({"tab": "keys"}));
+    }
 }
 
 /// Clip Effects: per-clip EQ, dynamics and gain (stored as `clip_fx.<clip>.*` values).

@@ -1,6 +1,7 @@
-//! The Settings window (`window.settings`): a sidebar with three pages (General, Appearance,
-//! Track colours) and a bottom bar (Reset page, Revert, Close). Every control runs a command.
-//! The Appearance and Track colours pages live in `settings_appearance.rs` and `settings_tracks.rs`.
+//! The Settings window (`window.settings`): a sidebar with four pages (General, Appearance,
+//! Track colours, Keys) and a bottom bar (Reset page, Revert, Close). Every control runs a command.
+//! The Appearance, Track colours and Keys pages live in `settings_appearance.rs`, `settings_tracks.rs` and
+//! `settings_keys.rs`.
 
 use crate::SoundApp;
 use crate::settings_cmds::{SCALE_RANGE, SettingsTab};
@@ -40,6 +41,7 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
                         SettingsTab::General => general(app, ui),
                         SettingsTab::Appearance => crate::settings_appearance::page(app, ui),
                         SettingsTab::Tracks => crate::settings_tracks::page(app, ui),
+                        SettingsTab::Keys => crate::settings_keys::page(app, ui),
                     });
                 });
             });
@@ -95,6 +97,9 @@ fn reset_page(app: &mut SoundApp) {
         }
         SettingsTab::Tracks => {
             let _ = app.run("ui.theme_reset", json!({"key": "track_palette"}));
+        }
+        SettingsTab::Keys => {
+            let _ = app.run("ui.prefs", json!({"keymap_reset": true, "keymap_preset": crate::keymap::Preset::default().id()}));
         }
     }
 }

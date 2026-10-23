@@ -158,3 +158,17 @@ fn the_window_keeps_its_size_and_the_bottom_bar_stays_inside() {
     assert_eq!(h.get_by_label("Close").rect(), first, "the window must not grow frame by frame");
     assert!(first.max.y < 640.0, "{first:?}");
 }
+
+#[test]
+fn the_sidebar_lists_the_keys_page_and_opens_it() {
+    let mut h = harness(app());
+    h.state_mut().run("window.settings", json!({})).unwrap();
+    h.run_steps(3);
+    for page in ["General", "Appearance", "Track colours", "Keys"] {
+        assert!(h.query_all_by_label(page).next().is_some(), "the sidebar has `{page}`");
+    }
+    h.state_mut().run("window.settings", json!({"tab": "keys"})).unwrap();
+    h.run_steps(3);
+    assert_eq!(h.state().extra.settings_tab, SettingsTab::Keys);
+    assert!(h.query_by_label("Key set").is_some());
+}

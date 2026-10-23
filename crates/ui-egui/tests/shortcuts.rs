@@ -75,3 +75,22 @@ fn cmd_equals_toggles_mix_and_edit_without_zooming() {
         assert_eq!(ctx.zoom_factor(), 1.25, "{os:?}");
     }
 }
+
+/// Every parseable default shortcut belongs to one command, so none is shadowed and unreachable.
+/// The Space trio (play, stop, toggle) and the Mix/Edit trio (Cmd+=) are each handled by one fixed rule,
+/// so they are the only allowed repeats.
+#[test]
+fn default_shortcuts_are_unique_per_chord() {
+    use std::collections::BTreeMap;
+    let mut seen: BTreeMap<String, Vec<&str>> = BTreeMap::new();
+    let engine = soundcraft_engine::command_specs().iter().map(|c| (c.id, c.shortcut));
+    let ui = soundcraft_ui_egui::menus::UI_COMMANDS.iter().map(|c| (c.0, c.3));
+    for (id, shortcut) in engine.chain(ui) {
+        let Some((m, key)) = shortcut.and_then(shortcuts::parse) else { continue };
+        let chord = format!("{}{}{}{}{key:?}", u8::from(m.command), u8::from(m.ctrl), u8::from(m.alt), u8::from(m.shift));
+        seen.entry(chord).or_default().push(id);
+    }
+    let allowed = ["transport.play", "transport.stop", "transport.toggle", "window.mix", "window.edit", "window.toggle_mix_edit"];
+    let clashes: Vec<_> = seen.values().filter(|ids| ids.len() > 1 && !ids.iter().all(|i| allowed.contains(i))).collect();
+    assert!(clashes.is_empty(), "shortcuts shared by several commands: {clashes:?}");
+}

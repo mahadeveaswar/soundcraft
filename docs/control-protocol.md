@@ -156,6 +156,15 @@ The Settings window has three pages: `general`, `appearance` and `tracks` (track
   interface preferences (scale values outside the range are clamped; wrong types are errors and
   change nothing) and returns all three. They are saved with the UI preferences (`ui.json`) and
   restored at launch; no undo. `reset` returns them to 1.0, false and true.
+  Key sets (Settings > Keys) use the same command: `keymap_preset: "default"|"alternative"`,
+  `keymap_overrides: {action: [chord, ...]}` (an empty list unbinds the action, `null` restores its key
+  set keys; an action is a command id, or `id#{json params}` for a fixed-parameter action such as
+  `edit.tool#{"tool":"zoom"}`), `keymap_reassign: true` (take a chord another command holds; without it a
+  taken chord is an error naming that command) and `keymap_reset: true` (drop every override). Chords
+  are written `Cmd+Shift+K`, `Alt+G`, `F3`, `Delete` (`Cmd` is Ctrl off macOS). A chord that does not parse,
+  an unknown command or a wrong type is an error and nothing changes. The reply adds `keymap_preset` and
+  `keymap_overrides`. Both are saved with the UI preferences; saved keys for commands this version lacks
+  are dropped at load.
 
 The other General controls use `ui.theme`, `ui.menu_layout`, `ui.toolbar_style`,
 `ui.header_style`, `ui.transport_position` and `window.config_auto_update` (not saved). The

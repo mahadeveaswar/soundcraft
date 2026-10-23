@@ -7,6 +7,7 @@
 pub mod auto_lanes_ui;
 pub mod bounce;
 pub mod clip_paint;
+pub mod context_menu;
 pub mod control;
 pub mod credits;
 pub mod dialogs;
@@ -21,6 +22,7 @@ pub mod info_row;
 mod inspector;
 mod inspector_header;
 mod inspector_sections;
+pub mod keymap;
 mod loudness_pane;
 mod master_panel;
 pub mod menu_layout;
@@ -51,6 +53,7 @@ pub mod score_editor;
 pub mod selection_strip;
 pub mod settings_appearance;
 pub mod settings_cmds;
+pub mod settings_keys;
 pub mod settings_tracks;
 pub mod settings_window;
 pub mod shortcuts;
@@ -224,6 +227,8 @@ pub struct UiState {
     pub reduce_motion: bool,
     /// Settings > General: show hover tooltips (`ui.prefs`).
     pub tooltips: bool,
+    /// Key-command preset and the user's own key bindings (Settings > Keys, `ui.prefs`).
+    pub keymap: keymap::KeymapPrefs,
 }
 
 impl Default for UiState {
@@ -311,6 +316,7 @@ impl Default for UiState {
             ui_scale: 1.0,
             reduce_motion: false,
             tooltips: true,
+            keymap: keymap::KeymapPrefs::default(),
         }
     }
 }

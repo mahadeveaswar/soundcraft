@@ -399,8 +399,8 @@ fn menu_node(app: &mut SoundApp, ui: &mut egui::Ui, n: &MenuNode, extra: &[(&str
     let (enabled, checked) = item_state(app, &n.path, id.as_deref());
     let label = live_label(app, id.as_deref()).unwrap_or_else(|| n.label.clone());
     let label = if checked { format!("✔ {label}") } else { label };
-    let shortcut = id.as_deref().and_then(shortcut_for).unwrap_or("");
-    let btn = egui::Button::new(label).shortcut_text(crate::shortcuts::shortcut_label(shortcut, ui.ctx().os().is_mac()));
+    let shortcut = id.as_deref().map(|i| shortcut_text(app, i, ui.ctx().os().is_mac())).unwrap_or_default();
+    let btn = egui::Button::new(label).shortcut_text(shortcut);
     if ui.add_enabled(enabled, btn).clicked()
         && let Some(id) = id
     {
@@ -544,6 +544,15 @@ const MENU_WINDOWS: &[(&str, &str)] = &[
 /// The shortcut of an engine or window command.
 pub fn shortcut_for(id: &str) -> Option<&'static str> {
     soundcraft_engine::find_command(id).map_or_else(|| UI_COMMANDS.iter().find(|c| c.0 == id).and_then(|c| c.3), |c| c.shortcut)
+}
+
+/// The key text menus show for a command under the active key preset and the user's own bindings.
+pub fn shortcut_text(app: &SoundApp, id: &str, mac: bool) -> String {
+    let km = &app.ui.keymap;
+    if km.preset == crate::keymap::Preset::Default && km.overrides.is_empty() {
+        return shortcut_for(id).map(|s| crate::shortcuts::shortcut_label(s, mac)).unwrap_or_default();
+    }
+    km.bindings(id).first().map(|c| crate::shortcuts::shortcut_label(c, mac)).filter(|s| !s.is_empty()).unwrap_or_default()
 }
 
 /// Undo and Redo name the step they would undo or redo; other items keep their catalog label.

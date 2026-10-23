@@ -887,6 +887,23 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
             app.midi.selected.clear();
         }
     }
+    // Right-click: the note under the pointer joins the selection, and the menu keeps its target while it is used.
+    let menu_id = ui.id().with(("roll_menu", cid.0));
+    if resp.secondary_clicked()
+        && let Some(p) = resp.interact_pointer_pos()
+    {
+        let note = hit(p).map(|(i, _)| i);
+        if let Some(i) = note
+            && !app.midi.selected.contains(&i)
+        {
+            app.midi.selected = vec![i];
+        }
+        let target = crate::context_menu::RollTarget { note, tick: snap(tick_at(p.x) as f32) };
+        ui.ctx().data_mut(|d| d.insert_temp(menu_id, target));
+    }
+    let menu_target =
+        ui.ctx().data(|d| d.get_temp::<crate::context_menu::RollTarget>(menu_id)).unwrap_or(crate::context_menu::RollTarget { note: None, tick: 0 });
+    resp.context_menu(|ui| crate::context_menu::roll_menu(app, ui, cid, menu_target));
     if resp.clicked()
         && let Some(p) = resp.interact_pointer_pos()
     {
@@ -954,6 +971,9 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
         }
     }
     // Keyboard: Cmd+A select all; arrows transpose (Shift = octave) and move by the grid.
+    if ui.rect_contains_pointer(roll) {
+        mark_roll_pointer(ui.ctx());
+    }
     if ui.rect_contains_pointer(roll) && !ui.ctx().egui_wants_keyboard_input() {
         let (all, up, down, left, right, shift) = ui.input(|i| {
             let arrows = !i.modifiers.alt && !i.modifiers.command && !i.modifiers.ctrl;
@@ -1062,6 +1082,8 @@ fn velocity_lane(
     if vresp.is_pointer_button_down_on() {
         app.midi.active_lane = app.midi.lanes.iter().position(|l| l.lane == Lane::Velocity).unwrap_or(0);
     }
+    let lane_index = app.midi.lanes.iter().position(|l| l.lane == Lane::Velocity).unwrap_or(0);
+    vresp.context_menu(|ui| crate::context_menu::item(app, ui, "ui.midi_lane_remove", json!({"index": lane_index}), Some("Remove Lane")));
     let vp = ui.painter().with_clip_rect(vel);
     for (i, n) in sequence.notes.iter().enumerate() {
         let x = x_of(n.start);
@@ -1161,6 +1183,19 @@ fn playhead(ui: &Ui, x: f32, y0: f32, y1: f32, min_x: f32, max_x: f32) {
     let p = ui.painter();
     p.line_segment([pos2(x, y0), pos2(x, y1)], Stroke::new(1.5, color));
     p.add(egui::Shape::convex_polygon(vec![pos2(x - 4.0, y0), pos2(x + 4.0, y0), pos2(x, y0 + 6.0)], color, Stroke::NONE));
+}
+
+/// Remember that the pointer is over the piano roll this frame, so `shortcuts::handle` leaves the keys the roll
+/// uses itself (arrows, Delete) to it.
+fn mark_roll_pointer(ctx: &egui::Context) {
+    let now = ctx.cumulative_pass_nr();
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("roll_pointer_pass"), now));
+}
+
+/// Whether the pointer was over the piano roll in the last few passes.
+pub(crate) fn roll_has_pointer(ctx: &egui::Context) -> bool {
+    let now = ctx.cumulative_pass_nr();
+    ctx.data(|d| d.get_temp::<u64>(egui::Id::new("roll_pointer_pass"))).is_some_and(|then| now.saturating_sub(then) <= 2)
 }
 
 #[cfg(test)]
