@@ -463,7 +463,7 @@ fn paste_merge_midi(e: &mut Engine, p: &Value) -> Result<Value> {
             let pos = at.saturating_add(c.start);
             let ClipContent::Midi { sequence } = &c.content else {
                 let mut nc = c.clone();
-                nc.id = s.new_clip_id();
+                s.reid_clip(&mut nc);
                 nc.start = pos;
                 ops::place_clip(s, *t, nc);
                 placed += 1;
@@ -506,7 +506,7 @@ fn paste_merge_midi(e: &mut Engine, p: &Value) -> Result<Value> {
                 }
                 None => {
                     let mut nc = c.clone();
-                    nc.id = s.new_clip_id();
+                    s.reid_clip(&mut nc);
                     nc.start = pos;
                     ops::place_clip(s, *t, nc);
                     placed += 1;
@@ -722,7 +722,7 @@ fn to_playlist(e: &mut Engine, p: &Value, dest: Dest, mv: bool, id: &str) -> Res
                 let mut clips: Vec<Clip> =
                     if dest == Dest::Duplicate { s.track(*t).map(|tr| tr.clips().to_vec()).unwrap_or_default() } else { Vec::new() };
                 for c in &mut clips {
-                    c.id = s.new_clip_id();
+                    s.reid_clip(c);
                 }
                 let Some(tr) = s.track_mut(*t) else { continue };
                 let name = format!("{}.{:02}", tr.name, tr.playlists.len() + 1);
@@ -736,7 +736,7 @@ fn to_playlist(e: &mut Engine, p: &Value, dest: Dest, mv: bool, id: &str) -> Res
             tr.active_playlist = idx;
         }
         for mut c in clips {
-            c.id = s.new_clip_id();
+            s.reid_clip(&mut c);
             c.start = c.start.saturating_add(r.start);
             ops::place_clip(s, *t, c);
         }

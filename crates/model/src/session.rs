@@ -160,6 +160,10 @@ pub struct ZoomToggle {
     pub heights: Vec<(TrackId, crate::TrackHeight)>,
 }
 
+/// Prefixes of the numeric settings (`EditState::values`) that describe one clip and are keyed
+/// by the clip id: the clip's scale. Copies and split halves inherit them.
+pub const CLIP_META_KEYS: [&str; 1] = ["midi.scale."];
+
 /// Edit-window state saved with the session (selection, tools, modes, view settings).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct EditState {
@@ -532,6 +536,29 @@ impl Session {
 
     pub fn new_clip_id(&mut self) -> ClipId {
         ClipId(self.alloc())
+    }
+
+    /// Give `clip` a fresh id for a copy or the right half of a split. Per-clip settings stored in
+    /// the session's numeric settings (see [`CLIP_META_KEYS`], e.g. the clip's scale) follow the
+    /// content, so the copy keeps them. Returns the new id.
+    pub fn reid_clip(&mut self, clip: &mut Clip) -> ClipId {
+        let from = clip.id;
+        clip.id = self.new_clip_id();
+        self.copy_clip_meta(from, clip.id);
+        clip.id
+    }
+
+    /// Copy the per-clip settings of `from` to `to` (see [`CLIP_META_KEYS`]). Nothing is added
+    /// when `from` has none.
+    pub fn copy_clip_meta(&mut self, from: ClipId, to: ClipId) {
+        if from == to {
+            return;
+        }
+        for prefix in CLIP_META_KEYS {
+            if let Some(v) = self.edit.values.get(&format!("{prefix}{}", from.0)).copied() {
+                self.edit.values.insert(format!("{prefix}{}", to.0), v);
+            }
+        }
     }
 
     // ---- persistence ---------------------------------------------------------------------

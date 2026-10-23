@@ -229,6 +229,9 @@ struct Strip {
     sample: Option<Arc<SourceAudio>>,
     /// MIDI notes currently sounding on the instrument (pitch), for note-offs at stops/seek.
     held: Vec<u8>,
+    /// The (transpose, channel) the notes in `held` were started with: when the track's values
+    /// change, the held notes are released first, so no note is left sounding.
+    held_params: (i64, u8),
     /// Live (audition) notes sounding on the instrument, kept apart from `held`.
     live: live::LiveHeld,
     /// The instrument's next block starts somewhere new: send it the controllers in effect there.
@@ -321,6 +324,7 @@ impl Strip {
             instrument: None,
             sample: None,
             held: Vec::new(),
+            held_params: (0, 0),
             live: live::LiveHeld::new(),
             chase: true,
             ctrl_sent: [CTRL_UNKNOWN; CTRL_SLOTS],
@@ -377,6 +381,9 @@ pub struct MixEngine {
     pub input: Vec<Vec<f32>>,
     /// Transport stopped: only monitored inputs sound (no clips).
     pub monitor_only: bool,
+    /// How long an auditioned note's release keeps rendering, in milliseconds; read from the
+    /// session's `options.audition_tail_ms` at the start of every block.
+    audition_tail_ms: f32,
     /// Recording: record-armed tracks hear their input (auto input).
     pub recording: bool,
     /// Mix the metronome (Options > Click) into the output. Playback turns this on; offline renders
@@ -459,6 +466,7 @@ impl MixEngine {
             aux_latency: 0,
             input: Vec::new(),
             monitor_only: false,
+            audition_tail_ms: live::DEFAULT_TAIL_MS,
             recording: false,
             metronome: false,
             external: false,
@@ -650,6 +658,10 @@ impl MixEngine {
     /// Render `frames` (≤ max_block) samples starting at `pos` into `out` (≥ 2 channels).
     pub fn render(&mut self, s: &Session, pos: Samples, frames: usize, out: &mut [Vec<f32>]) {
         let frames = frames.min(self.max_block);
+        if !s.edit.values.is_empty() {
+            self.audition_tail_ms =
+                s.edit.value("options.audition_tail_ms", f64::from(live::DEFAULT_TAIL_MS)).clamp(0.0, f64::from(live::MAX_TAIL_MS)) as f32;
+        }
         // A stopped transport never advances `pos`, so there every block would look like a seek
         // and kill live notes: the guard only applies when the transport runs.
         if pos != self.last_end && !self.monitor_only {
@@ -1052,7 +1064,7 @@ fn process_strip(
                     if std::mem::take(&mut strip.chase) {
                         chase_controllers(s, t, pos, inst, &owned, &mut strip.ctrl_sent);
                     }
-                    schedule_notes(s, t, pos, frames, inst, &mut strip.held, &owned);
+                    schedule_notes(s, t, pos, frames, inst, &mut strip.held, &mut strip.held_params, &owned);
                     send_ctrl_automation(s, t, pos, inst, &owned, &mut strip.ctrl_sent);
                 }
                 if strip.buf.len() >= 2 {
@@ -1538,13 +1550,37 @@ fn midi_offset(s: &Session, t: &Track) -> i64 {
 }
 
 /// Send note on/offs and controllers for MIDI clips overlapping the block.
-fn schedule_notes(s: &Session, t: &Track, pos: Samples, frames: usize, inst: &mut PluginSlot, held: &mut Vec<u8>, owned: &[bool; CTRL_SLOTS]) {
+#[allow(clippy::too_many_arguments)]
+fn schedule_notes(
+    s: &Session,
+    t: &Track,
+    pos: Samples,
+    frames: usize,
+    inst: &mut PluginSlot,
+    held: &mut Vec<u8>,
+    held_params: &mut (i64, u8),
+    owned: &[bool; CTRL_SLOTS],
+) {
     let sr = s.sample_rate;
     // MIDI Track Offsets: the track's notes sound `offset` samples later (earlier if negative), so
     // the block looks that far back into the clips.
     let offset = midi_offset(s, t);
     let pos = pos.saturating_sub(offset);
     let end = pos.saturating_add(frames as i64);
+    let dp = if s.edit.values.is_empty() {
+        0i64
+    } else {
+        Key::new(format_args!("rtp.{}.transpose", t.id.0)).map_or(0.0, |k| s.edit.value(k.as_str(), 0.0)).clamp(-127.0, 127.0) as i64
+    };
+    let ch = midi_channel(s, t);
+    if *held_params != (dp, ch) {
+        // Transpose or channel changed under sounding notes: release them with the values they
+        // were started with, so their note-offs cannot miss.
+        for p in held.drain(..) {
+            inst.plugin.note_off_ch(0, held_params.1, p);
+        }
+        *held_params = (dp, ch);
+    }
     for clip in t.clips() {
         if clip.muted {
             continue;
@@ -1556,12 +1592,11 @@ fn schedule_notes(s: &Session, t: &Track, pos: Samples, frames: usize, inst: &mu
         let base = s.tempo.samples_to_ticks(clip.start, sr);
         // MIDI Real-Time Properties (non-destructive velocity/transpose/duration/delay).
         let rtp = |name: &str, d: f64| Key::new(format_args!("rtp.{}.{name}", t.id.0)).map_or(d, |k| s.edit.value(k.as_str(), d));
-        let (dv, dp, dur, delay) = if s.edit.values.is_empty() {
-            (0i64, 0i64, 1.0f64, 0i64)
+        let (dv, dur, delay) = if s.edit.values.is_empty() {
+            (0i64, 1.0f64, 0i64)
         } else {
             (
                 rtp("velocity", 0.0).clamp(-127.0, 127.0) as i64,
-                rtp("transpose", 0.0).clamp(-127.0, 127.0) as i64,
                 rtp("duration", 100.0).clamp(1.0, 1000.0) / 100.0,
                 rtp("delay", 0.0).clamp(-1e7, 1e7) as i64,
             )
@@ -1581,13 +1616,13 @@ fn schedule_notes(s: &Session, t: &Track, pos: Samples, frames: usize, inst: &mu
                 continue;
             }
             if on >= pos && on < end {
-                inst.plugin.note_on(usize::try_from(on - pos).unwrap_or(0), n.pitch, n.velocity);
+                inst.plugin.note_on_ch(usize::try_from(on - pos).unwrap_or(0), ch, n.pitch, n.velocity);
                 if !held.contains(&n.pitch) && held.len() < 128 {
                     held.push(n.pitch);
                 }
             }
-            if off >= pos && off < end {
-                inst.plugin.note_off(usize::try_from(off - pos).unwrap_or(0), n.pitch);
+            if off >= pos && off < end && held.contains(&n.pitch) {
+                inst.plugin.note_off_ch(usize::try_from(off - pos).unwrap_or(0), ch, n.pitch);
                 held.retain(|p| *p != n.pitch);
             }
         }
@@ -1601,7 +1636,7 @@ fn schedule_notes(s: &Session, t: &Track, pos: Samples, frames: usize, inst: &mu
             }
             let at = s.tempo.tick_to_samples(base.saturating_add(tick), sr);
             if at >= pos && at < end && at < clip.end() {
-                inst.plugin.midi(usize::try_from(at - pos).unwrap_or(0), ctrl_message(c.kind, c.value, dp));
+                inst.plugin.midi(usize::try_from(at - pos).unwrap_or(0), ctrl_message(c.kind, c.value, dp, ch));
             }
         }
     }
@@ -1609,24 +1644,36 @@ fn schedule_notes(s: &Session, t: &Track, pos: Samples, frames: usize, inst: &mu
 
 /// A controller event as a MIDI 1.0 message on channel 1 (where the notes go), with `transpose`
 /// applied to a poly-pressure key.
-fn ctrl_message(kind: CtrlKind, value: i32, transpose: i64) -> [u8; 3] {
+fn ctrl_message(kind: CtrlKind, value: i32, transpose: i64, ch: u8) -> [u8; 3] {
     let v7 = value.clamp(0, 127) as u8;
+    let ch = ch & 0x0F;
     match kind {
-        CtrlKind::Cc(n) => [0xB0, n & 0x7F, v7],
+        CtrlKind::Cc(n) => [0xB0 | ch, n & 0x7F, v7],
         CtrlKind::PitchBend => {
             let v = value.saturating_add(8192).clamp(0, 16383);
-            [0xE0, (v & 0x7F) as u8, (v >> 7) as u8]
+            [0xE0 | ch, (v & 0x7F) as u8, (v >> 7) as u8]
         }
-        CtrlKind::ChannelPressure => [0xD0, v7, 0],
-        CtrlKind::PolyPressure(k) => [0xA0, (i64::from(k) + transpose).clamp(0, 127) as u8, v7],
-        CtrlKind::Program => [0xC0, v7, 0],
+        CtrlKind::ChannelPressure => [0xD0 | ch, v7, 0],
+        CtrlKind::PolyPressure(k) => [0xA0 | ch, (i64::from(k) + transpose).clamp(0, 127) as u8, v7],
+        CtrlKind::Program => [0xC0 | ch, v7, 0],
     }
+}
+
+/// The track's MIDI channel override (`midi.channel.<id>`, 1-16 in the edit values) as 0-15;
+/// 0 (channel 1) when none is set. Looked up without allocating: this runs every block.
+fn midi_channel(s: &Session, t: &Track) -> u8 {
+    if s.edit.values.is_empty() {
+        return 0;
+    }
+    let v = Key::new(format_args!("midi.channel.{}", t.id.0)).map_or(1.0, |k| s.edit.value(k.as_str(), 1.0));
+    (v.clamp(1.0, 16.0) as u8).saturating_sub(1)
 }
 
 /// Before an instrument plays from `pos`: reset its controllers, then send each one the last value
 /// it had on this track before `pos`.
 fn chase_controllers(s: &Session, t: &Track, pos: Samples, inst: &mut PluginSlot, owned: &[bool; CTRL_SLOTS], sent: &mut [i16; CTRL_SLOTS]) {
-    inst.plugin.midi(0, [0xB0, 121, 0]);
+    let ch = midi_channel(s, t);
+    inst.plugin.midi(0, [0xB0 | ch, 121, 0]);
     *sent = [CTRL_UNKNOWN; CTRL_SLOTS];
     let pos = pos.saturating_sub(midi_offset(s, t));
     const BEND: usize = 128;
@@ -1679,7 +1726,7 @@ fn chase_controllers(s: &Session, t: &Track, pos: Samples, inst: &mut PluginSlot
             n => CtrlKind::Cc(u8::try_from(n).unwrap_or(0)),
         };
         if at != i64::MIN {
-            inst.plugin.midi(0, ctrl_message(kind, value, 0));
+            inst.plugin.midi(0, ctrl_message(kind, value, 0, ch));
         }
     }
 }
@@ -1747,6 +1794,7 @@ fn auto_ctrl_value(t: &Track, pos: Samples, slot: usize) -> Option<i32> {
 /// Once per block: send each automation-owned controller whose value changed since last sent.
 fn send_ctrl_automation(s: &Session, t: &Track, pos: Samples, inst: &mut PluginSlot, owned: &[bool; CTRL_SLOTS], sent: &mut [i16; CTRL_SLOTS]) {
     let pos = pos.saturating_sub(midi_offset(s, t));
+    let ch = midi_channel(s, t);
     for l in &t.automation {
         let Some(slot) = lane_slot(&l.param) else { continue };
         if !owned.get(slot).copied().unwrap_or(false) {
@@ -1756,7 +1804,7 @@ fn send_ctrl_automation(s: &Session, t: &Track, pos: Samples, inst: &mut PluginS
         let Ok(v16) = i16::try_from(v) else { continue };
         if *last != v16 {
             *last = v16;
-            inst.plugin.midi(0, ctrl_message(kind, v, 0));
+            inst.plugin.midi(0, ctrl_message(kind, v, 0, ch));
         }
     }
 }
@@ -3091,6 +3139,110 @@ mod tests {
         eng.adopt(vec![PreparedInstance { track: t, slot: INSTRUMENT_SLOT, id: "clap:test.keys".into(), ch: 2, plugin: Box::new(keys) }]);
         render_block(&mut eng, &s, 0);
         assert_eq!(*heard.lock().unwrap(), vec![(72, 80)]);
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum NoteEv {
+        On(u8, u8, u8),
+        Off(u8, u8),
+    }
+
+    /// An instrument that records note events with their MIDI channel.
+    struct Chan {
+        inner: Box<dyn Plugin>,
+        heard: Arc<std::sync::Mutex<Vec<NoteEv>>>,
+    }
+
+    impl Plugin for Chan {
+        fn info(&self) -> &'static soundcraft_dsp::PluginInfo {
+            self.inner.info()
+        }
+        fn prepare(&mut self, sr: f32, mb: usize, ch: usize) {
+            self.inner.prepare(sr, mb, ch);
+        }
+        fn reset(&mut self) {
+            self.inner.reset();
+        }
+        fn set_param(&mut self, id: &str, v: f32) -> bool {
+            self.inner.set_param(id, v)
+        }
+        fn param(&self, id: &str) -> Option<f32> {
+            self.inner.param(id)
+        }
+        fn process(&mut self, io: &mut [Vec<f32>], frames: usize) {
+            self.inner.process(io, frames);
+        }
+        fn note_on_ch(&mut self, _offset: usize, channel: u8, note: u8, velocity: u8) {
+            self.heard.lock().unwrap().push(NoteEv::On(channel, note, velocity));
+        }
+        fn note_off_ch(&mut self, _offset: usize, channel: u8, note: u8) {
+            self.heard.lock().unwrap().push(NoteEv::Off(channel, note));
+        }
+    }
+
+    /// One 60-pitch note lasting a second on an instrument track that records its note events.
+    fn channel_rig() -> (Session, TrackId, MixEngine, Arc<std::sync::Mutex<Vec<NoteEv>>>) {
+        let mut s = Session::default();
+        let t = s.add_track(TrackKind::Instrument, ChannelFormat::Stereo, None);
+        s.track_mut(t).unwrap().instrument = Some(Insert::new("clap:test.chan"));
+        let mut seq = soundcraft_midi::Sequence::default();
+        seq.notes.push(soundcraft_midi::Note { pitch: 60, velocity: 100, release_velocity: 64, channel: 0, start: 0, length: 1920 });
+        let cid = s.new_clip_id();
+        s.track_mut(t).unwrap().playlist_mut().unwrap().clips.push(Clip::midi(cid, "m", 0, 96_000, seq));
+        let heard = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let plugin = Chan { inner: soundcraft_dsp::create("gain").unwrap(), heard: Arc::clone(&heard) };
+        let mut eng = MixEngine::new(48_000.0, 512);
+        eng.set_external_instances(true);
+        eng.adopt(vec![PreparedInstance { track: t, slot: INSTRUMENT_SLOT, id: "clap:test.chan".into(), ch: 2, plugin: Box::new(plugin) }]);
+        (s, t, eng, heard)
+    }
+
+    fn play_through(eng: &mut MixEngine, s: &Session, from: i64, to: i64) {
+        let mut pos = from;
+        while pos < to {
+            render_block(eng, s, pos);
+            pos += 512;
+        }
+    }
+
+    #[test]
+    fn a_note_started_before_a_transpose_change_is_released_at_its_own_pitch() {
+        let (mut s, t, mut eng, heard) = channel_rig();
+        render_block(&mut eng, &s, 0);
+        assert_eq!(*heard.lock().unwrap(), vec![NoteEv::On(0, 60, 100)]);
+        s.edit.values.insert(format!("rtp.{}.transpose", t.0), 5.0);
+        play_through(&mut eng, &s, 512, 60_000);
+        assert_eq!(
+            *heard.lock().unwrap(),
+            vec![NoteEv::On(0, 60, 100), NoteEv::Off(0, 60)],
+            "released at 60 when the value changed, nothing stuck and no stray off at 65"
+        );
+    }
+
+    #[test]
+    fn transpose_and_velocity_apply_and_the_off_matches_the_on() {
+        let (mut s, t, mut eng, heard) = channel_rig();
+        s.edit.values.insert(format!("rtp.{}.transpose", t.0), 7.0);
+        s.edit.values.insert(format!("rtp.{}.velocity", t.0), 50.0);
+        play_through(&mut eng, &s, 0, 60_000);
+        assert_eq!(*heard.lock().unwrap(), vec![NoteEv::On(0, 67, 127), NoteEv::Off(0, 67)]);
+    }
+
+    #[test]
+    fn a_channel_override_reaches_notes_and_controllers() {
+        let (mut s, t, mut eng, heard) = channel_rig();
+        s.edit.values.insert(format!("midi.channel.{}", t.0), 3.0);
+        play_through(&mut eng, &s, 0, 60_000);
+        assert_eq!(*heard.lock().unwrap(), vec![NoteEv::On(2, 60, 100), NoteEv::Off(2, 60)]);
+        assert_eq!(ctrl_message(CtrlKind::Cc(1), 5, 0, 2), [0xB2, 1, 5]);
+        assert_eq!(ctrl_message(CtrlKind::PitchBend, 0, 0, 15), [0xEF, 0, 64]);
+    }
+
+    #[test]
+    fn without_settings_the_notes_play_on_channel_one_untouched() {
+        let (s, _t, mut eng, heard) = channel_rig();
+        play_through(&mut eng, &s, 0, 60_000);
+        assert_eq!(*heard.lock().unwrap(), vec![NoteEv::On(0, 60, 100), NoteEv::Off(0, 60)]);
     }
 
     fn render_block(eng: &mut MixEngine, s: &Session, pos: i64) -> f32 {

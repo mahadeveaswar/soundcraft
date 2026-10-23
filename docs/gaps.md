@@ -1,6 +1,6 @@
 # Where SoundCraft falls short of Pro Tools
 
-> **Last reviewed:** 2026-10-18 · **Last updated:** 2026-10-18 · **Change:** trivial (G-04: mono device playback fold-down) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-18 · **Last updated:** 2026-10-23 · **Change:** trivial (follow-ups recorded) · **Target:** the reference professional DAW (version in target-app-parity.md)
 
 Every known shortfall, one entry each, ranked by how much it stops a Pro Tools user from doing
 real work in SoundCraft. This is the work list: pick from the top. Rows marked **alpha blocker**
@@ -210,10 +210,17 @@ Bounce writes WAV/BWF/RF64, AIFF and FLAC; Pro Tools also writes MP3 and AAC/M4A
 Collaboration, cloud projects, Sketch, Splice, Learn, sign-in: 11 of the 30 menu leaves still
 missing. Out of scope unless the owner decides otherwise.
 
+### Follow-ups from the remaining-items sweep
+
+- **Per-note probability.** The note model has no probability field, so there is no probability lane. Adding one means a new optional note field (default 100 percent, old files load unchanged), a scheduler draw in the mix engine that must be deterministic per playback pass, and a lane in the piano roll. Left for later.
+- **Command channel in the playback crate.** Commands are a plain enum, not boxed closures. The audio callback drops no boxes except in these rare cases: an old session snapshot that does not fit the return channel (16 slots, drained every UI frame), a replaced input ring, and the previous mix engine when the sample rate changes; plus the list blocks of the standard channel. Retired plugin instances and old snapshots already travel back to the UI thread. Judged not worth a wider change; revisit if a real-time check ever flags a free in the callback.
+- **MIDI channel on note events.** `track.midi_params` can send a channel override, but only hosted plugins that take raw MIDI notes honour it for notes (see the control protocol). VST3 and Audio Unit note input and the built-in instruments still play on channel 1.
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-23 | trivial | Follow-ups: per-note probability, command channel assessment and MIDI channel limits recorded; estimates unchanged |
 | 2026-10-18 | trivial | G-04: mono device stereo/surround fold-down fixed and regression-tested; estimates unchanged |
 | 2026-10-16 | trivial | G-04: master volume automation block boundaries fixed and regression-tested; estimates unchanged |
 | 2026-10-16 | trivial | G-04: failed aux/folder/master inserts excluded from latency compensation after containment; estimates unchanged |

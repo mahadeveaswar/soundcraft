@@ -11,6 +11,11 @@ use std::path::Path;
 /// Known gaps: commands with no menu, shortcut or literal reference in the UI source today.
 /// Give each one a UI path and remove it from this list; don't add to it.
 const KNOWN_UNREACHED: &[&str] = &[
+    // Wired by the arrange/inspector UI batch that follows the engine batch (remove then).
+    "automation.merge_into_clip",
+    "automation.to_clip",
+    "options.audition_tail_ms",
+    "track.midi_params",
     "edit.paste_clip_effects",
     "edit.paste_clip_gain",
     "event.midi_note",

@@ -350,7 +350,7 @@ fn select_split(e: &mut Engine, p: &Value) -> Result<Value> {
             }
         };
         let mut nc = c.clone();
-        nc.id = s.new_clip_id();
+        s.reid_clip(&mut nc);
         nc.content = ClipContent::Midi { sequence: soundcraft_midi::Sequence { notes: hit, ctrls: Vec::new(), muted: hit_muted } };
         crate::edit::place_clip(s, nt, nc);
     }

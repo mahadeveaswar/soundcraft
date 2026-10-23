@@ -416,7 +416,7 @@ fn duplicate(e: &mut Engine, p: &Value) -> Result<Value> {
         } else {
             for p in &mut nt.playlists {
                 for c in &mut p.clips {
-                    c.id = s.new_clip_id();
+                    s.reid_clip(c);
                 }
             }
         }
@@ -454,7 +454,7 @@ fn split_mono(e: &mut Engine, p: &Value) -> Result<Value> {
             let id = s.add_track(TrackKind::Audio, ChannelFormat::Mono, Some(&format!("{}.{suffix}", src.name)));
             let mut clips = src.clips().to_vec();
             for c in &mut clips {
-                c.id = s.new_clip_id();
+                s.reid_clip(c);
                 // Mono tracks read channel 0 of the source; record the channel in the name for now.
                 c.name = format!("{}.{suffix}", c.name);
             }
@@ -912,7 +912,7 @@ fn new_playlist(e: &mut Engine, p: &Value, dup: bool) -> Result<Value> {
             clips = tr.clips().to_vec();
         }
         for c in &mut clips {
-            c.id = s.new_clip_id();
+            s.reid_clip(c);
         }
         if let Some(tr) = s.track_mut(*t) {
             let n = name.clone().unwrap_or_else(|| format!("{}.{:02}", tr.name, tr.playlists.len() + 1));

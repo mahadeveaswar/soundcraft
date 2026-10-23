@@ -94,10 +94,10 @@ pub fn specs() -> Vec<CommandSpec> {
             let files = crate::io::bounce_stems_with(e, &dir, r, &soundcraft_audio_io::EncodeOptions { format, bit_depth, dither: true, bwf: None }, fold)?;
             Ok(json!({"files": files}))
         }),
-        cmd!(noundo "file.export_midi", "MIDI...", ["File", "Export"], None, "{path, tracks?}", always, |e, p| {
+        cmd!(noundo "file.export_midi", "MIDI...", ["File", "Export"], None, "{path, tracks?, lanes?: false (also write the automation lanes of MIDI controllers as controller events, replacing the clips' own events of that controller where the lane has points)}", always, |e, p| {
             let path = str_param(p, "path").ok_or_else(|| bad("file.export_midi", "`path` required"))?.to_string();
             let only = if p.get("tracks").is_some() || p.get("track").is_some() { Some(tracks_param(e, "file.export_midi", p)?) } else { None };
-            let bytes = crate::io::export_midi(e, only.as_deref())?;
+            let bytes = crate::io::export_midi_with(e, only.as_deref(), bool_or(p, "lanes", false))?;
             crate::io::write_file(&path, &bytes)?;
             Ok(json!({"path": path, "bytes": bytes.len()}))
         }),

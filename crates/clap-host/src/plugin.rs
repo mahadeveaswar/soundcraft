@@ -272,6 +272,30 @@ impl Plugin for ClapPlugin {
         }
     }
 
+    fn note_on_ch(&mut self, offset: usize, channel: u8, note: u8, velocity: u8) {
+        if channel == 0 || !matches!(self.notes, NoteMode::Midi) || note > 127 {
+            self.note_on(offset, note, velocity);
+            return;
+        }
+        let time = u32::try_from(offset).unwrap_or(u32::MAX);
+        self.push(Event::Midi { time, data: [0x90 | (channel & 0x0F), note, velocity.clamp(1, 127)] });
+        if let Some(h) = self.held.get_mut(note as usize) {
+            *h = true;
+        }
+    }
+
+    fn note_off_ch(&mut self, offset: usize, channel: u8, note: u8) {
+        if channel == 0 || !matches!(self.notes, NoteMode::Midi) || note > 127 {
+            self.note_off(offset, note);
+            return;
+        }
+        let time = u32::try_from(offset).unwrap_or(u32::MAX);
+        self.push(Event::Midi { time, data: [0x80 | (channel & 0x0F), note, 0] });
+        if let Some(h) = self.held.get_mut(note as usize) {
+            *h = false;
+        }
+    }
+
     fn midi(&mut self, offset: usize, msg: [u8; 3]) {
         if self.midi_in {
             self.push(Event::Midi { time: u32::try_from(offset).unwrap_or(u32::MAX), data: msg });

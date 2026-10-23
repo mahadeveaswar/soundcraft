@@ -91,12 +91,14 @@ pub fn separate_at(s: &mut Session, track: TrackId, at: Samples) -> usize {
     let Some(pl) = s.track_mut(track).and_then(|t| t.playlist_mut()) else { return 0 };
     let mut out = Vec::with_capacity(pl.clips.len() + ids.len());
     let mut count = 0;
+    let mut halves = Vec::new();
     for c in pl.clips.drain(..) {
         if at > c.start
             && at < c.end()
             && let Some(id) = ids.pop()
             && let Some((l, r)) = split_clip(&c, at, id, t)
         {
+            halves.push((l.id, r.id));
             out.push(l);
             out.push(r);
             count += 1;
@@ -106,6 +108,9 @@ pub fn separate_at(s: &mut Session, track: TrackId, at: Samples) -> usize {
     }
     pl.clips = out;
     pl.sort();
+    for (from, to) in halves {
+        s.copy_clip_meta(from, to);
+    }
     count
 }
 
@@ -200,7 +205,7 @@ pub fn paste(s: &mut Session, track: TrackId, at: Samples, clips: &[Clip], lengt
     let mut ids = Vec::new();
     for c in clips {
         let mut nc = c.clone();
-        nc.id = s.new_clip_id();
+        s.reid_clip(&mut nc);
         nc.start += at;
         ids.push(nc.id);
         place_clip(s, track, nc);
@@ -1051,5 +1056,27 @@ mod tests {
         assert_eq!(clips(&s, t), vec![(1500, 4000, 1000)]);
         s.find_clip_mut(id).unwrap().time_locked = true;
         assert_eq!(move_clips(&mut s, &[id], 500, &[]), 0);
+    }
+    #[test]
+    fn split_halves_and_pasted_copies_keep_the_clip_scale() {
+        let (mut s, t) = session_with_clip();
+        let id = s.track(t).unwrap().clips()[0].id;
+        s.edit.values.insert(crate::cmd::scale_key(id), 17.0);
+        assert_eq!(separate_at(&mut s, t, 3000), 1);
+        let ids: Vec<ClipId> = s.track(t).unwrap().clips().iter().map(|c| c.id).collect();
+        assert_eq!(ids.len(), 2);
+        for c in &ids {
+            assert_eq!(s.edit.value(&crate::cmd::scale_key(*c), -1.0), 17.0, "both halves keep the scale");
+        }
+        let copied = copy_range(&s, t, Range::new(1500, 2500));
+        let pasted = paste(&mut s, t, 8000, &copied, 1000, false).unwrap();
+        assert_eq!(s.edit.value(&crate::cmd::scale_key(pasted[0]), -1.0), 17.0, "a pasted copy keeps the scale");
+        // A clip without a scale gains no key.
+        let other = s.new_clip_id();
+        let mut c = s.track(t).unwrap().clips()[0].clone();
+        c.id = ClipId(c.id.0 + 1000);
+        s.reid_clip(&mut c);
+        assert!(!s.edit.values.contains_key(&crate::cmd::scale_key(c.id)));
+        assert!(other.0 > 0);
     }
 }

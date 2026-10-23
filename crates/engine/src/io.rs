@@ -335,6 +335,13 @@ pub fn import_midi_bytes(e: &mut Engine, bytes: &[u8], at: Samples, tempo_map: b
 
 /// Export MIDI clips as a format-1 SMF. `only` limits the file to those tracks.
 pub fn export_midi(e: &Engine, only: Option<&[TrackId]>) -> Result<Vec<u8>> {
+    export_midi_with(e, only, false)
+}
+
+/// [`export_midi`], optionally also writing each track's MIDI controller automation lanes as
+/// controller events (`lanes`). A lane with points replaces the clips' own events of the same
+/// controller over the span of its points, as playback does.
+pub fn export_midi_with(e: &Engine, only: Option<&[TrackId]>, lanes: bool) -> Result<Vec<u8>> {
     let s = e.session();
     let mut smf = soundcraft_midi::Smf {
         format: 1,
@@ -364,6 +371,9 @@ pub fn export_midi(e: &Engine, only: Option<&[TrackId]>) -> Result<Vec<u8>> {
                     seq.ctrls.push(ev);
                 }
             }
+        }
+        if lanes {
+            crate::cmd::write_lane_events(s, t, &mut seq);
         }
         seq.sort();
         smf.tracks.push(soundcraft_midi::SmfTrack { name: t.name.clone(), sequence: seq });

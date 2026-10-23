@@ -777,7 +777,7 @@ fn copy_to_new_playlist(e: &mut Engine, p: &Value) -> Result<Value> {
         let clips = ops::copy_range(s, *t, r);
         let mut fresh = Vec::new();
         for mut c in clips {
-            c.id = s.new_clip_id();
+            s.reid_clip(&mut c);
             c.start += r.start;
             fresh.push(c);
         }

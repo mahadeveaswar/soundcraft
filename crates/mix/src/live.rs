@@ -19,8 +19,10 @@ pub struct LiveNote {
 
 /// Seconds a live note may sound without its release arriving before the engine releases it.
 const TIMEOUT_SECS: f32 = 2.0;
-/// Seconds after the last live release that the instrument keeps rendering (its release tail).
-const TAIL_SECS: f32 = 1.5;
+/// Default release tail after the last live release, in milliseconds (`options.audition_tail_ms`).
+pub const DEFAULT_TAIL_MS: f32 = 300.0;
+/// Largest release tail the setting accepts, in milliseconds.
+pub const MAX_TAIL_MS: f32 = 2000.0;
 
 /// The live notes sounding on one strip's instrument.
 pub(crate) struct LiveHeld {
@@ -62,7 +64,7 @@ impl MixEngine {
     /// releases it first, so the instrument always sees balanced pairs.
     pub fn live_note(&mut self, n: LiveNote) {
         let timeout = samples(self.sample_rate, TIMEOUT_SECS);
-        let tail = samples(self.sample_rate, TAIL_SECS);
+        let tail = samples(self.sample_rate, self.audition_tail_ms.clamp(0.0, MAX_TAIL_MS) / 1000.0);
         let Some(strip) = self.strips.get_mut(&n.track) else { return };
         let Strip { instrument, live, .. } = strip;
         let Some(inst) = instrument.as_mut().filter(|i| !i.failed) else { return };
@@ -86,13 +88,13 @@ impl MixEngine {
 
     /// Release every live note on every track.
     pub fn live_all_off(&mut self) {
-        let tail = samples(self.sample_rate, TAIL_SECS);
+        let tail = samples(self.sample_rate, self.audition_tail_ms.clamp(0.0, MAX_TAIL_MS) / 1000.0);
         for strip in self.strips.values_mut() {
             let Strip { instrument, live, .. } = strip;
             if !live.any_held() {
                 continue;
             }
-            if let Some(inst) = instrument.as_mut() {
+            if let Some(inst) = instrument.as_mut().filter(|i| !i.failed) {
                 for (p, left) in live.left.iter_mut().enumerate() {
                     if *left > 0 {
                         inst.plugin.note_off(0, p as u8);
@@ -115,7 +117,7 @@ impl MixEngine {
     /// Advance the safety timeouts and release tails by one block.
     pub(crate) fn live_tick(&mut self, frames: usize) {
         let frames = u32::try_from(frames).unwrap_or(u32::MAX);
-        let tail = samples(self.sample_rate, TAIL_SECS);
+        let tail = samples(self.sample_rate, self.audition_tail_ms.clamp(0.0, MAX_TAIL_MS) / 1000.0);
         for strip in self.strips.values_mut() {
             let Strip { instrument, live, .. } = strip;
             if !live.active() {
@@ -128,7 +130,7 @@ impl MixEngine {
                     }
                     if *left <= frames {
                         *left = 0;
-                        if let Some(inst) = instrument.as_mut() {
+                        if let Some(inst) = instrument.as_mut().filter(|i| !i.failed) {
                             inst.plugin.note_off(0, p as u8);
                         }
                     } else {
@@ -275,6 +277,63 @@ mod tests {
         }
         assert!(!eng.live_active());
         assert!(take(&heard).is_empty());
+    }
+
+    #[test]
+    fn a_failed_instrument_gets_no_note_off_from_all_off_or_the_timeout() {
+        let (s, t, mut eng, heard) = recorder();
+        eng.live_note(note(t, 60, true));
+        eng.live_note(note(t, 64, true));
+        take(&heard);
+        if let Some(i) = eng.strips.get_mut(&t).and_then(|st| st.instrument.as_mut()) {
+            i.failed = true;
+        }
+        eng.live_all_off();
+        assert!(take(&heard).is_empty(), "nothing is sent to a failed instrument");
+        assert!(eng.live_active(), "the table still empties through the tail");
+        // The timeout path too.
+        let (s2, t2, mut eng2, heard2) = recorder();
+        eng2.live_note(note(t2, 60, true));
+        take(&heard2);
+        if let Some(i) = eng2.strips.get_mut(&t2).and_then(|st| st.instrument.as_mut()) {
+            i.failed = true;
+        }
+        for _ in 0..(96_000 / BLOCK + 1) {
+            block(&mut eng2, &s2, 0);
+        }
+        assert!(take(&heard2).is_empty());
+        for _ in 0..(100_000 / BLOCK) {
+            block(&mut eng, &s, 0);
+        }
+        assert!(!eng.live_active());
+    }
+
+    #[test]
+    fn the_release_tail_defaults_to_300_ms_and_follows_the_setting() {
+        let (s, t, mut eng, _heard) = recorder();
+        eng.live_note(note(t, 60, true));
+        eng.live_note(note(t, 60, false));
+        for _ in 0..(12_000 / BLOCK) {
+            block(&mut eng, &s, 0);
+        }
+        assert!(eng.live_active(), "250 ms in, the tail still rings");
+        for _ in 0..(6_000 / BLOCK + 1) {
+            block(&mut eng, &s, 0);
+        }
+        assert!(!eng.live_active(), "gone after 300 ms");
+        let (mut s, t, mut eng, _heard) = recorder();
+        s.edit.values.insert("options.audition_tail_ms".into(), 1000.0);
+        block(&mut eng, &s, 0);
+        eng.live_note(note(t, 60, true));
+        eng.live_note(note(t, 60, false));
+        for _ in 0..(40_000 / BLOCK) {
+            block(&mut eng, &s, 0);
+        }
+        assert!(eng.live_active(), "a 1000 ms tail is still ringing at 830 ms");
+        for _ in 0..(10_000 / BLOCK + 1) {
+            block(&mut eng, &s, 0);
+        }
+        assert!(!eng.live_active());
     }
 
     #[test]
