@@ -6,7 +6,7 @@ use crate::SoundApp;
 use crate::icons;
 use crate::mix_window::{self, input_name, plugin_info, route_name, route_popup};
 use crate::theme::{Tokens, bold, regular};
-use crate::widgets::{db_text, fader_slot, pan_knob, pan_text, text_toggle};
+use crate::widgets::{db_text, fader_slot, pan_knob, pan_text, raised_key, shade, text_toggle};
 use egui::{
     Align, Align2, Color32, Id, Layout, Margin, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui, UiBuilder, WidgetInfo, WidgetType, pos2, vec2,
 };
@@ -18,7 +18,9 @@ pub(crate) const PAD: f32 = 8.0;
 /// Height of a slot row.
 const ROW_H: f32 = 22.0;
 const ROW_GAP: f32 = 4.0;
-const FADER_H: f32 = 132.0;
+const FADER_H: f32 = 196.0;
+/// Height of the equaliser curve card body.
+const EQ_H: f32 = 72.0;
 const RADIUS: f32 = 7.0;
 const HEAD_H: f32 = 24.0;
 
@@ -27,7 +29,9 @@ const HEAD_H: f32 = 24.0;
 pub(crate) enum Section {
     Routing,
     Instrument,
+    Midi,
     Inserts,
+    Eq,
     Sends,
     Channel,
     Notes,
@@ -39,7 +43,9 @@ impl Section {
         match self {
             Section::Routing => "routing",
             Section::Instrument => "instrument",
+            Section::Midi => "midi",
             Section::Inserts => "inserts",
+            Section::Eq => "eq",
             Section::Sends => "sends",
             Section::Channel => "channel",
             Section::Notes => "notes",
@@ -49,7 +55,9 @@ impl Section {
         match self {
             Section::Routing => "Routing",
             Section::Instrument => "Instrument",
+            Section::Midi => "MIDI",
             Section::Inserts => "Inserts",
+            Section::Eq => "Equaliser",
             Section::Sends => "Sends",
             Section::Channel => "Channel",
             Section::Notes => "Notes",
@@ -59,12 +67,12 @@ impl Section {
 
 /// The sections a track kind gets, top to bottom.
 pub(crate) fn inspector_sections(kind: TrackKind) -> &'static [Section] {
-    use Section::{Channel, Inserts, Instrument, Notes, Routing, Sends};
+    use Section::{Channel, Eq, Inserts, Instrument, Midi, Notes, Routing, Sends};
     match kind {
-        TrackKind::Audio | TrackKind::Aux => &[Routing, Inserts, Sends, Channel, Notes],
-        TrackKind::Instrument => &[Routing, Instrument, Inserts, Sends, Channel, Notes],
-        TrackKind::Midi => &[Routing, Notes],
-        TrackKind::Master => &[Routing, Inserts, Channel],
+        TrackKind::Audio | TrackKind::Aux => &[Routing, Inserts, Eq, Sends, Channel, Notes],
+        TrackKind::Instrument => &[Routing, Instrument, Midi, Inserts, Eq, Sends, Channel, Notes],
+        TrackKind::Midi => &[Routing, Midi, Notes],
+        TrackKind::Master => &[Routing, Inserts, Eq, Channel],
         TrackKind::Vca => &[Channel, Notes],
         TrackKind::Folder | TrackKind::Video => &[Notes],
     }
@@ -205,7 +213,9 @@ pub(crate) fn body(app: &mut SoundApp, ui: &mut Ui, s: Section, track: &Track) {
     match s {
         Section::Routing => routing(app, ui, track),
         Section::Instrument => instrument(app, ui, track),
+        Section::Midi => midi(app, ui, track),
         Section::Inserts => inserts(app, ui, track),
+        Section::Eq => eq_card(app, ui, track),
         Section::Sends => sends(app, ui, track),
         Section::Channel => channel(app, ui, track),
         Section::Notes => notes(app, ui, track),
@@ -215,6 +225,11 @@ pub(crate) fn body(app: &mut SoundApp, ui: &mut Ui, s: Section, track: &Track) {
 /// A full-width row of `h` points.
 fn row(ui: &mut Ui, h: f32) -> Rect {
     ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::hover()).0
+}
+
+/// True while the pointer is over `r` (also when another widget of the row is under it).
+fn row_hot(ui: &Ui, r: Rect) -> bool {
+    ui.rect_contains_pointer(r) || ui.input(|i| i.pointer.hover_pos()).is_some_and(|p| r.contains(p))
 }
 
 /// The rounded well behind a slot row.
@@ -268,15 +283,29 @@ fn instrument(app: &mut SoundApp, ui: &mut Ui, track: &Track) {
     let resp = ui.interact(slot_r, ui.id().with(("instrument", id.0)), Sense::click());
     resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "Instrument"));
     well(ui, slot_r, resp.hovered(), ins.is_none());
-    led(ui, pos2(slot_r.min.x + 12.0, slot_r.center().y), ins.is_some(), t.meter_green, resp.hovered());
+    let led_r = Rect::from_center_size(pos2(slot_r.min.x + 12.0, slot_r.center().y), vec2(18.0, ROW_H));
+    let led_resp = ui.interact(led_r, ui.id().with(("instrument-led", id.0)), if ins.is_some() { Sense::click() } else { Sense::hover() });
+    led_resp.widget_info(|| WidgetInfo::selected(WidgetType::Button, ins.is_some(), ins.is_some_and(|i| !i.bypass), "Inspector: Instrument bypass"));
+    let live = ins.is_some_and(|i| !i.bypass);
+    led(ui, led_r.center(), live, t.meter_green, led_resp.hovered() || resp.hovered());
+    if led_resp.clicked() {
+        let _ = app.run("mix.instrument_bypass", json!({"track": id.0}));
+    }
+    let _ = led_resp.on_hover_text(if ins.is_none() {
+        "No instrument"
+    } else if live {
+        "Active: click to bypass the instrument"
+    } else {
+        "Bypassed: click to enable"
+    });
     let text_r = Rect::from_min_max(pos2(slot_r.min.x + 24.0, slot_r.min.y), pos2(slot_r.max.x - 6.0, slot_r.max.y));
     match info {
-        Some(i) => clipped_text(ui, text_r, i.short_name, bold(11.0), t.text),
+        Some(i) => clipped_text(ui, text_r, i.short_name, bold(11.0), if live { t.text } else { t.text_dim }),
         None => clipped_text(ui, text_r, "Select instrument...", regular(11.0), t.text_dim),
     }
     let hosted = ins.is_some_and(|i| soundcraft_mix::is_third_party(&i.plugin));
     let win = (id, slot);
-    if resp.clicked() && hosted && !app.ui.plugin_windows.contains(&win) {
+    if resp.clicked() && !led_r.contains(resp.interact_pointer_pos().unwrap_or_default()) && hosted && !app.ui.plugin_windows.contains(&win) {
         app.ui.plugin_windows.push(win);
     }
     let menu_resp = if hosted { resp.clone().on_hover_text("Click: open instrument · right-click: change") } else { resp.clone() };
@@ -343,8 +372,8 @@ fn inserts(app: &mut SoundApp, ui: &mut Ui, track: &Track) {
         }
         let letter = (b'A' + slot as u8) as char;
         let r = row(ui, ROW_H);
-        let hot = ui.rect_contains_pointer(r);
         let resp = ui.interact(r, ui.id().with(("ins", id.0, slot)), Sense::click());
+        let hot = row_hot(ui, r);
         resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, format!("Insert {letter}")));
         let Some(i) = ins else {
             well(ui, r, resp.hovered(), true);
@@ -379,23 +408,25 @@ fn inserts(app: &mut SoundApp, ui: &mut Ui, track: &Track) {
                 app.ui.plugin_windows.push((id, slot));
             }
         }
-        let cmd = if ui.ctx().os().is_mac() { "⌘" } else { "Ctrl+" };
-        let tip = format!("{name}: click to open · {cmd}click to bypass · right-click to change");
+        let cmd = crate::shortcuts::shortcut_label("Cmd", ui.ctx().os().is_mac());
+        let tip = format!("{name}: click to open · {cmd}+click to bypass · right-click to change");
         egui::Popup::context_menu(&resp.clone().on_hover_text(tip))
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| mix_window::plugin_menu(app, ui, id, slot, true));
-        let up = icon_button(ui, acts(0.0), "triangle_up", hot && slot > 0, "Move up", &format!("Inspector: Insert {letter} up"));
-        let dn =
-            icon_button(ui, acts(1.0), "triangle_down", hot && slot + 1 < INSERT_SLOTS, "Move down", &format!("Inspector: Insert {letter} down"));
-        let rm = icon_button(ui, acts(2.0), "close", hot, "Remove", &format!("Inspector: Insert {letter} remove"));
-        if up.clicked() {
-            let _ = app.run("mix.insert_move", json!({"track": id.0, "from": slot, "to": slot - 1}));
-        }
-        if dn.clicked() {
-            let _ = app.run("mix.insert_move", json!({"track": id.0, "from": slot, "to": slot + 1}));
-        }
-        if rm.clicked() {
-            let _ = app.run("mix.insert_remove", json!({"track": id.0, "slot": slot}));
+        // The actions exist only while the row is under the pointer.
+        if hot {
+            let up = icon_button(ui, acts(0.0), "triangle_up", slot > 0, "Move up", &format!("Inspector: Insert {letter} up"));
+            let dn = icon_button(ui, acts(1.0), "triangle_down", slot + 1 < INSERT_SLOTS, "Move down", &format!("Inspector: Insert {letter} down"));
+            let rm = icon_button(ui, acts(2.0), "close", true, "Remove", &format!("Inspector: Insert {letter} remove"));
+            if up.clicked() {
+                let _ = app.run("mix.insert_move", json!({"track": id.0, "from": slot, "to": slot - 1}));
+            }
+            if dn.clicked() {
+                let _ = app.run("mix.insert_move", json!({"track": id.0, "from": slot, "to": slot + 1}));
+            }
+            if rm.clicked() {
+                let _ = app.run("mix.insert_remove", json!({"track": id.0, "slot": slot}));
+            }
         }
     }
 }
@@ -411,7 +442,7 @@ fn sends(app: &mut SoundApp, ui: &mut Ui, track: &Track) {
         }
         let letter = (b'A' + slot as u8) as char;
         let r = row(ui, ROW_H);
-        let hot = ui.rect_contains_pointer(r);
+        let hot = row_hot(ui, r);
         let Some(send) = snd else {
             let resp = ui.interact(r, ui.id().with(("snd-route", id.0, slot)), Sense::click());
             resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, format!("Send {letter}")));
@@ -475,29 +506,72 @@ fn sends(app: &mut SoundApp, ui: &mut Ui, track: &Track) {
         mr.widget_info(|| WidgetInfo::selected(WidgetType::Button, true, send.mute, format!("Inspector: Send {letter} mute")));
         if send.mute {
             ui.painter().rect_filled(mute_r, 5.0, t.mute);
-        } else if mr.hovered() {
-            ui.painter().rect_filled(mute_r, 5.0, t.button_hi);
+        } else {
+            raised_key(ui.painter(), mute_r, [shade(t.button, 0.08), shade(t.button, -0.08)], mr.hovered());
         }
         ui.painter().text(mute_r.center(), Align2::CENTER_CENTER, "M", bold(9.5), if send.mute { t.text_dark } else { t.text_dim });
         if mr.clicked() {
             let _ = app.run("mix.send_level", json!({"track": id.0, "slot": slot, "mute": !send.mute}));
         }
         let _ = mr.on_hover_text("Mute send");
-        if icon_button(ui, rm_r, "close", hot, "Remove send", &format!("Inspector: Send {letter} remove")).clicked() {
+        if hot && icon_button(ui, rm_r, "close", true, "Remove send", &format!("Inspector: Send {letter} remove")).clicked() {
             let _ = app.run("mix.send_remove", json!({"track": id.0, "slot": slot}));
         }
     }
+}
+
+/// The centre of a stereo pair's two panners (the single panner of a mono track).
+pub(crate) fn pan_centre(pan: &[f32]) -> f32 {
+    match pan {
+        [m] => *m,
+        [l, r, ..] => (l + r) * 0.5,
+        [] => 0.0,
+    }
+}
+
+/// The stereo width of a pair of panners, -1..1 (1 = hard left and right, 0 = mono, negative
+/// swaps the sides); none on a mono track.
+pub(crate) fn pan_width(pan: &[f32]) -> Option<f32> {
+    match pan {
+        [l, r, ..] => Some((r - l) * 0.5),
+        _ => None,
+    }
+}
+
+/// Moves a stereo pair so its centre is `centre`, each side limited to -1..1.
+pub(crate) fn shift_pan(l: f32, r: f32, centre: f32) -> (f32, f32) {
+    let d = centre - (l + r) * 0.5;
+    ((l + d).clamp(-1.0, 1.0), (r + d).clamp(-1.0, 1.0))
+}
+
+/// Sets the width of a stereo pair around its centre, each side limited to -1..1.
+pub(crate) fn set_width(l: f32, r: f32, width: f32) -> (f32, f32) {
+    let c = (l + r) * 0.5;
+    let w = width.clamp(-1.0, 1.0);
+    ((c - w).clamp(-1.0, 1.0), (c + w).clamp(-1.0, 1.0))
+}
+
+/// Writes a stereo pair of panners as one undo step.
+fn write_pan_pair(app: &mut SoundApp, id: TrackId, l: f32, r: f32) {
+    let key = format!("pan:{}", id.0);
+    let _ = app.engine.execute_merged("mix.pan", &json!({"track": id.0, "pan": l, "index": 0}), &key);
+    let _ = app.engine.execute_merged("mix.pan", &json!({"track": id.0, "pan": r, "index": 1}), &key);
 }
 
 fn channel(app: &mut SoundApp, ui: &mut Ui, track: &Track) {
     let t = Tokens::current();
     let id = track.id;
     let (pan_on, trim_on) = channel_rows(track.kind);
-    let needed = 50.0 + if pan_on { 26.0 * track.mixer.pan.len().min(2) as f32 } else { 0.0 } + if trim_on { 52.0 } else { 0.0 };
+    let stereo = track.mixer.pan.len() >= 2;
+    let needed = 50.0 + if pan_on { if stereo { 52.0 } else { 26.0 } } else { 0.0 } + if trim_on { 52.0 } else { 0.0 };
     let h = FADER_H.max(needed);
     let r = row(ui, h);
     let fader_r = Rect::from_min_size(r.min, vec2(38.0, FADER_H));
     mix_window::strip_fader(app, ui, fader_r, id, track.mixer.volume_db);
+    let fine = crate::shortcuts::shortcut_label("Cmd", ui.ctx().os().is_mac());
+    let fr = ui.interact(fader_r, ui.id().with(("inspector-fader-tip", id.0)), Sense::hover());
+    fr.widget_info(|| WidgetInfo::labeled(WidgetType::Slider, true, "Inspector: Volume fader"));
+    let _ = fr.on_hover_text(format!("Volume: drag to set, hold {fine} for fine adjustment, double-click for 0 dB"));
     let slot = fader_slot(fader_r);
     let md = app.meters.get(&id).copied().unwrap_or_default();
     let mr = Rect::from_min_max(pos2(fader_r.max.x + 6.0, slot.min.y), pos2(fader_r.max.x + 30.0, slot.max.y));
@@ -509,28 +583,67 @@ fn channel(app: &mut SoundApp, ui: &mut Ui, track: &Track) {
     c.label(egui::RichText::new("VOLUME").font(bold(9.0)).color(t.text_dim));
     let (rd, _) = c.allocate_exact_size(vec2(c.available_width().min(96.0), 24.0), Sense::hover());
     c.painter().rect(rd, 5.0, t.counter_bg, Stroke::new(1.0, t.border), StrokeKind::Inside);
-    c.painter().text(rd.center(), Align2::CENTER_CENTER, db_text(track.mixer.volume_db), bold(13.0), t.counter_text);
+    // The readout is also a fine control: drag it for 0.1 dB steps, double-click to type a value.
+    let mut db = track.mixer.volume_db.max(-144.0);
+    let dv = c.put(
+        rd.shrink2(vec2(2.0, 2.0)),
+        egui::DragValue::new(&mut db)
+            .range(-144.0..=12.0)
+            .speed(0.1)
+            .max_decimals(1)
+            .custom_formatter(|v, _| db_text(v as f32))
+            .custom_parser(|s| if s.trim().eq_ignore_ascii_case("-inf") { Some(-144.0) } else { s.trim().parse().ok() }),
+    );
+    dv.widget_info(|| WidgetInfo::labeled(WidgetType::DragValue, true, "Inspector: Volume"));
+    if dv.changed() {
+        let _ = app.engine.execute_merged("mix.volume", &json!({"track": id.0, "db": db}), &format!("fader:{}", id.0));
+    }
+    if dv.drag_stopped() || dv.lost_focus() {
+        app.engine.end_merge();
+    }
     c.add_space(2.0);
-    let (pan, trim) = channel_rows(track.kind);
-    if pan {
-        let n = track.mixer.pan.len().min(2);
-        for i in 0..n {
+    if pan_on && !track.mixer.pan.is_empty() {
+        // One pan control; stereo tracks add a width control (the two panners are derived from both).
+        let (pl, pr) = (track.mixer.pan.first().copied().unwrap_or(0.0), track.mixer.pan.get(1).copied().unwrap_or(0.0));
+        c.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.add_sized(vec2(34.0, 20.0), egui::Label::new(egui::RichText::new("Pan").font(regular(10.0)).color(t.text_dim)));
+            let before = pan_centre(&track.mixer.pan);
+            let mut v = before;
+            let resp = pan_knob(ui, 20.0, &mut v, "Pan (drag; double-click centres)");
+            resp.widget_info(|| WidgetInfo::labeled(WidgetType::Slider, true, "Inspector: Pan"));
+            if (v - before).abs() > f32::EPSILON {
+                if stereo {
+                    let (l, r) = shift_pan(pl, pr, v);
+                    write_pan_pair(app, id, l, r);
+                } else {
+                    let _ = app.engine.execute_merged("mix.pan", &json!({"track": id.0, "pan": v, "index": 0}), &format!("pan:{}", id.0));
+                }
+            }
+            if resp.drag_stopped() {
+                app.engine.end_merge();
+            }
+            ui.label(egui::RichText::new(pan_text(v)).font(regular(10.0)).color(t.counter_text));
+        });
+        if let Some(width) = pan_width(&track.mixer.pan) {
             c.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                let name = if n > 1 { if i == 0 { "Pan L" } else { "Pan R" } } else { "Pan" };
-                ui.add_sized(vec2(34.0, 20.0), egui::Label::new(egui::RichText::new(name).font(regular(10.0)).color(t.text_dim)));
-                let mut v = track.mixer.pan.get(i).copied().unwrap_or(0.0);
-                let before = v;
-                let resp = pan_knob(ui, 20.0, &mut v, "Pan (drag; double-click centres)");
-                resp.widget_info(|| WidgetInfo::labeled(WidgetType::Slider, true, format!("Inspector: Pan {i}")));
-                if (v - before).abs() > f32::EPSILON {
-                    let _ = app.engine.execute_merged("mix.pan", &json!({"track": id.0, "pan": v, "index": i}), &format!("pan:{}:{i}", id.0));
+                ui.add_sized(vec2(34.0, 20.0), egui::Label::new(egui::RichText::new("Width").font(regular(10.0)).color(t.text_dim)));
+                let mut pct = width * 100.0;
+                let resp =
+                    ui.add_sized(vec2(62.0, 18.0), egui::DragValue::new(&mut pct).range(-100.0..=100.0).speed(0.5).suffix(" %").max_decimals(0));
+                resp.widget_info(|| WidgetInfo::labeled(WidgetType::DragValue, true, "Inspector: Width"));
+                if resp.changed() {
+                    let (l, r) = set_width(pl, pr, pct / 100.0);
+                    write_pan_pair(app, id, l, r);
                 }
-                ui.label(egui::RichText::new(pan_text(v)).font(regular(10.0)).color(t.counter_text));
+                if resp.drag_stopped() || resp.lost_focus() {
+                    app.engine.end_merge();
+                }
             });
         }
     }
-    if trim {
+    if trim_on {
         c.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             ui.add_sized(vec2(34.0, 20.0), egui::Label::new(egui::RichText::new("Trim").font(regular(10.0)).color(t.text_dim)));
@@ -555,6 +668,130 @@ fn channel(app: &mut SoundApp, ui: &mut Ui, track: &Track) {
             }
         });
     }
+}
+
+/// The MIDI values of a track as the Inspector shows them: transpose in semitones, velocity
+/// offset and the channel override (1..16, none = each note's own channel). These are the values
+/// `track.midi_params_get` reports.
+pub fn midi_values(s: &soundcraft_model::Session, id: TrackId) -> (i32, i32, Option<u8>) {
+    let get = |key: String| s.edit.values.get(&key).copied().filter(|v| v.is_finite());
+    let transpose = get(format!("rtp.{}.transpose", id.0)).unwrap_or(0.0).round().clamp(-48.0, 48.0) as i32;
+    let velocity = get(format!("rtp.{}.velocity", id.0)).unwrap_or(0.0).round().clamp(-127.0, 127.0) as i32;
+    let channel = get(format!("midi.channel.{}", id.0)).filter(|c| (1.0..=16.0).contains(c)).map(|c| c.round() as u8);
+    (transpose, velocity, channel)
+}
+
+/// The MIDI section: non-destructive transpose, velocity offset and channel override.
+fn midi(app: &mut SoundApp, ui: &mut Ui, track: &Track) {
+    let t = Tokens::current();
+    let id = track.id;
+    let (transpose, velocity, channel) = midi_values(app.engine.session(), id);
+    let label = |ui: &mut Ui, text: &str| {
+        ui.add_sized(vec2(62.0, 20.0), egui::Label::new(egui::RichText::new(text).font(regular(10.0)).color(t.text_dim)));
+    };
+    let key = format!("midi:{}", id.0);
+    ui.horizontal(|ui| {
+        label(ui, "Transpose");
+        let mut v = transpose;
+        let resp = ui.add_sized(vec2(78.0, 18.0), egui::DragValue::new(&mut v).range(-48..=48).speed(0.1).suffix(" st"));
+        resp.widget_info(|| WidgetInfo::labeled(WidgetType::DragValue, true, "Inspector: Transpose"));
+        if resp.changed() {
+            let _ = app.engine.execute_merged("track.midi_params", &json!({"tracks": [id.0], "transpose": v}), &key);
+        }
+        if resp.drag_stopped() || resp.lost_focus() {
+            app.engine.end_merge();
+        }
+        let _ = resp.on_hover_text("Transpose the notes this track plays (the clips are untouched)");
+    });
+    ui.horizontal(|ui| {
+        label(ui, "Velocity");
+        let mut v = velocity;
+        let resp =
+            ui.add_sized(vec2(78.0, 18.0), egui::DragValue::new(&mut v).range(-127..=127).speed(0.5).custom_formatter(|n, _| format!("{n:+}")));
+        resp.widget_info(|| WidgetInfo::labeled(WidgetType::DragValue, true, "Inspector: Velocity offset"));
+        if resp.changed() {
+            let _ = app.engine.execute_merged("track.midi_params", &json!({"tracks": [id.0], "velocity": v}), &key);
+        }
+        if resp.drag_stopped() || resp.lost_focus() {
+            app.engine.end_merge();
+        }
+        let _ = resp.on_hover_text("Add to every note's velocity (the clips are untouched)");
+    });
+    ui.horizontal(|ui| {
+        label(ui, "Channel");
+        let mut v = i32::from(channel.unwrap_or(0));
+        let resp = ui.add_sized(
+            vec2(78.0, 18.0),
+            egui::DragValue::new(&mut v)
+                .range(0..=16)
+                .speed(0.1)
+                .custom_formatter(|n, _| if n < 0.5 { "Auto".to_string() } else { format!("{n:.0}") })
+                .custom_parser(|s| if s.trim().eq_ignore_ascii_case("auto") { Some(0.0) } else { s.trim().parse().ok() }),
+        );
+        resp.widget_info(|| WidgetInfo::labeled(WidgetType::DragValue, true, "Inspector: MIDI channel"));
+        if resp.changed() {
+            let ch = if v <= 0 { serde_json::Value::Null } else { json!(v) };
+            let _ = app.engine.execute_merged("track.midi_params", &json!({"tracks": [id.0], "channel": ch}), &key);
+        }
+        if resp.drag_stopped() || resp.lost_focus() {
+            app.engine.end_merge();
+        }
+        let _ = resp.on_hover_text("Send everything on one channel (Auto keeps each note's own)");
+    });
+}
+
+/// The first equaliser insert of a track (slot, insert).
+pub(crate) fn first_eq(track: &Track) -> Option<(usize, &soundcraft_model::Insert)> {
+    track
+        .mixer
+        .inserts
+        .iter()
+        .enumerate()
+        .find_map(|(i, ins)| ins.as_ref().filter(|x| x.plugin == "eq_7band" || x.plugin == "eq_1band").map(|x| (i, x)))
+}
+
+/// Magnitude response in dB of an equaliser insert at `freqs`, from the filter maths itself.
+pub(crate) fn eq_response(ins: &soundcraft_model::Insert, freqs: &[f32]) -> Vec<f32> {
+    let params: Vec<(&str, f32)> = ins.params.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+    if ins.plugin == "eq_7band" {
+        soundcraft_dsp::eq7_response(&params, freqs, 48_000.0)
+    } else {
+        soundcraft_dsp::eq1_response(&params, freqs, 48_000.0)
+    }
+}
+
+/// The equaliser card: the response of the track's first EQ insert, drawn read-only. A click
+/// opens that insert's window.
+fn eq_card(app: &mut SoundApp, ui: &mut Ui, track: &Track) {
+    let t = Tokens::current();
+    let r = row(ui, EQ_H);
+    let resp = ui.interact(r, ui.id().with(("inspector-eq", track.id.0)), if first_eq(track).is_some() { Sense::click() } else { Sense::hover() });
+    resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, first_eq(track).is_some(), "Inspector: Equaliser curve"));
+    ui.painter().rect(r, 5.0, t.inset_bg, Stroke::new(1.0, t.border), StrokeKind::Inside);
+    for db in [-12.0f32, 0.0, 12.0] {
+        let y = r.center().y - db / 18.0 * r.height() * 0.5;
+        ui.painter().hline(r.min.x + 1.0..=r.max.x - 1.0, y, Stroke::new(1.0, t.inset_grid));
+    }
+    let Some((slot, ins)) = first_eq(track) else {
+        ui.painter().text(r.center(), Align2::CENTER_CENTER, "No equaliser: add one from Inserts", regular(10.5), t.text_dim);
+        return;
+    };
+    let n = 96;
+    let freqs: Vec<f32> = (0..n).map(|i| 20.0 * 1000f32.powf(i as f32 / (n - 1) as f32)).collect();
+    let pts: Vec<egui::Pos2> = eq_response(ins, &freqs)
+        .iter()
+        .enumerate()
+        .map(|(i, db)| {
+            pos2(r.min.x + 2.0 + (r.width() - 4.0) * i as f32 / (n - 1) as f32, r.center().y - db.clamp(-18.0, 18.0) / 18.0 * r.height() * 0.5)
+        })
+        .collect();
+    let live = !ins.bypass && ins.active;
+    let col = if live { t.counter_text } else { t.text_dim.gamma_multiply(0.6) };
+    ui.painter().with_clip_rect(r.shrink(1.0)).add(Shape::line(pts, Stroke::new(1.8, col)));
+    if resp.clicked() && !app.ui.plugin_windows.contains(&(track.id, slot)) {
+        app.ui.plugin_windows.push((track.id, slot));
+    }
+    let _ = resp.on_hover_text(if live { "Equaliser response: click to open the equaliser" } else { "Equaliser (bypassed): click to open" });
 }
 
 fn notes(app: &mut SoundApp, ui: &mut Ui, track: &Track) {
@@ -584,10 +821,11 @@ mod tests {
     #[test]
     fn sections_follow_the_track_kind() {
         use Section::*;
-        assert_eq!(inspector_sections(TrackKind::Audio), &[Routing, Inserts, Sends, Channel, Notes]);
+        assert_eq!(inspector_sections(TrackKind::Audio), &[Routing, Inserts, Eq, Sends, Channel, Notes]);
         assert!(inspector_sections(TrackKind::Instrument).contains(&Instrument));
         assert!(!inspector_sections(TrackKind::Audio).contains(&Instrument));
-        assert_eq!(inspector_sections(TrackKind::Midi), &[Routing, Notes]);
+        assert_eq!(inspector_sections(TrackKind::Midi), &[Routing, Midi, Notes]);
+        assert!(inspector_sections(TrackKind::Instrument).contains(&Midi) && !inspector_sections(TrackKind::Audio).contains(&Midi));
         assert_eq!(inspector_sections(TrackKind::Folder), &[Notes]);
         assert_eq!(inspector_sections(TrackKind::Vca), &[Channel, Notes]);
         let master = inspector_sections(TrackKind::Master);
@@ -598,9 +836,34 @@ mod tests {
     }
 
     #[test]
+    fn stereo_pan_and_width_round_trip_inside_the_limits() {
+        assert_eq!(pan_centre(&[-1.0, 1.0]), 0.0);
+        assert_eq!(pan_width(&[-1.0, 1.0]), Some(1.0));
+        assert_eq!(pan_width(&[0.3]), None, "mono has no width");
+        assert_eq!(pan_centre(&[0.3]), 0.3);
+        assert_eq!(set_width(-1.0, 1.0, 0.5), (-0.5, 0.5));
+        assert_eq!(set_width(-1.0, 1.0, 0.0), (0.0, 0.0), "zero width is mono");
+        assert_eq!(set_width(-0.5, 0.5, -1.0), (1.0, -1.0), "negative swaps the sides");
+        assert_eq!(shift_pan(-0.5, 0.5, 0.25), (-0.25, 0.75));
+        let (l, r) = shift_pan(-1.0, 1.0, 0.5);
+        assert!(l >= -1.0 && r <= 1.0, "clamped: {l} {r}");
+    }
+
+    #[test]
+    fn the_eq_curve_follows_the_inserts_parameters() {
+        let mut ins = soundcraft_model::Insert::new("eq_7band");
+        let freqs = [100.0f32, 1000.0, 10_000.0];
+        let flat = eq_response(&ins, &freqs);
+        assert!(flat.iter().all(|d| d.abs() < 0.1), "{flat:?}");
+        ins.params.insert("mid_gain".into(), 12.0);
+        let boosted = eq_response(&ins, &freqs);
+        assert!(boosted[1] > 11.0 && boosted[0] < 3.0, "{boosted:?}");
+    }
+
+    #[test]
     fn every_section_has_a_unique_id() {
         use Section::*;
-        let ids: Vec<_> = [Routing, Instrument, Inserts, Sends, Channel, Notes].iter().map(|s| s.id()).collect();
+        let ids: Vec<_> = [Routing, Instrument, Midi, Inserts, Eq, Sends, Channel, Notes].iter().map(|s| s.id()).collect();
         let mut sorted = ids.clone();
         sorted.sort_unstable();
         sorted.dedup();

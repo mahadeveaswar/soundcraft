@@ -242,6 +242,8 @@ struct Strip {
     prev_owned: [bool; CTRL_SLOTS],
     /// Send sustain off and all-controllers-reset at the next block (after a stop or reset).
     release_ctrls: bool,
+    /// The instrument was bypassed in the previous block (it re-chases the controllers when it returns).
+    inst_off: bool,
     muted: bool,
     gr: f32,
     /// Per-clip effect chains (Clip Effects) and a scratch buffer to render clips into.
@@ -330,6 +332,7 @@ impl Strip {
             ctrl_sent: [CTRL_UNKNOWN; CTRL_SLOTS],
             prev_owned: [false; CTRL_SLOTS],
             release_ctrls: false,
+            inst_off: false,
             muted: false,
             gr: 0.0,
             clip_fx: HashMap::new(),
@@ -1038,7 +1041,21 @@ fn process_strip(
             }
         }
         TrackKind::Instrument | TrackKind::Midi => {
-            if let Some(inst) = strip.instrument.as_mut().filter(|i| !i.failed) {
+            // A bypassed instrument is silent: notes are released and nothing is sent or rendered.
+            let off = t.instrument.as_ref().is_some_and(|i| i.bypass);
+            if off {
+                if let Some(inst) = strip.instrument.as_mut()
+                    && (!strip.held.is_empty() || strip.live.any_held())
+                {
+                    inst.plugin.all_notes_off();
+                }
+                strip.held.clear();
+                strip.live.clear();
+                strip.inst_off = true;
+            } else if std::mem::take(&mut strip.inst_off) {
+                strip.chase = true;
+            }
+            if let Some(inst) = strip.instrument.as_mut().filter(|i| !i.failed && !off) {
                 // #152: push the instrument's stored parameter values into the live plugin
                 // before processing, the same way inserts do below. Without this, the values
                 // loaded from a session (or set via `mix.insert_state`) never reach the plugin
@@ -2514,6 +2531,21 @@ mod tests {
         let (loud, quiet) = (rms(-6.0), rms(-12.0));
         assert!(loud > 0.0, "the synth should sound");
         assert!((quiet / loud - 0.5).abs() < 0.05, "-12 dB vs -6 dB should halve the level: {quiet} / {loud}");
+    }
+
+    #[test]
+    fn a_bypassed_instrument_is_silent_and_returns_when_enabled() {
+        let mut s = synth_session(-6.0);
+        let peak = |s: &Session| render_range(s, Range::new(0, 12_000), 512)[0].iter().fold(0.0f32, |m, x| m.max(x.abs()));
+        assert!(peak(&s) > 0.01, "the note sounds");
+        if let Some(i) = s.tracks[0].instrument.as_mut() {
+            i.bypass = true;
+        }
+        assert_eq!(peak(&s), 0.0, "bypassed: nothing renders");
+        if let Some(i) = s.tracks[0].instrument.as_mut() {
+            i.bypass = false;
+        }
+        assert!(peak(&s) > 0.01, "back on");
     }
 
     #[test]

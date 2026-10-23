@@ -37,7 +37,7 @@ impl LiveHeld {
         LiveHeld { left: [0; 128], tail: 0 }
     }
 
-    fn any_held(&self) -> bool {
+    pub(crate) fn any_held(&self) -> bool {
         self.left.iter().any(|l| *l > 0)
     }
 

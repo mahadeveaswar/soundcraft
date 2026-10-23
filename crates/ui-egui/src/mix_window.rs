@@ -896,8 +896,8 @@ pub(crate) fn insert_slot(app: &mut SoundApp, ui: &mut Ui, track: &Track, slot: 
             app.ui.plugin_windows.push((id, slot));
         }
     }
-    let cmd = if ui.ctx().os().is_mac() { "⌘" } else { "Ctrl+" };
-    let tip = format!("{name}: click to open · {cmd}click to bypass · right-click to change");
+    let cmd = crate::shortcuts::shortcut_label("Cmd", ui.ctx().os().is_mac());
+    let tip = format!("{name}: click to open · {cmd}+click to bypass · right-click to change");
     let menu_resp = if ins.is_none() { resp.clone() } else { resp.clone().on_hover_text(tip) };
     let popup = if ins.is_none() { egui::Popup::menu(&menu_resp) } else { egui::Popup::context_menu(&menu_resp) };
     let popup = popup.close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);

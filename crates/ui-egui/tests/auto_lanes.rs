@@ -2,14 +2,19 @@
 
 use egui::{Event, Modifiers, PointerButton, Pos2, Rect, pos2, vec2};
 use egui_kittest::Harness;
+use egui_kittest::kittest::Queryable;
 use serde_json::json;
 use soundcraft_model::{AutoParam, TrackId};
 use soundcraft_ui_egui::auto_lanes_ui::{header_layout, lane_geometry, total_height};
 use soundcraft_ui_egui::{Services, SoundApp};
 
 fn harness() -> Harness<'static, SoundApp> {
+    harness_sized(vec2(1600.0, 1000.0))
+}
+
+fn harness_sized(size: egui::Vec2) -> Harness<'static, SoundApp> {
     let app = SoundApp::new(soundcraft_engine::demo::demo_engine(), None, Services::default());
-    let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+    let mut h = Harness::builder().with_size(size).with_step_dt(1.0 / 60.0).build_ui_state(
         |ui, app: &mut SoundApp| {
             let ctx = ui.ctx().clone();
             app.logic(&ctx);
@@ -329,6 +334,7 @@ fn drawing_on_a_mute_lane_only_writes_off_and_on() {
     let got = pts(&h, "Kick", &AutoParam::Mute);
     assert!(got.len() >= 2 && got.iter().all(|(_, v)| *v == 0.0 || *v == 1.0), "{got:?}");
     assert!(got.iter().any(|(_, v)| *v == 1.0));
+    assert!(got.windows(2).all(|w| w[0].1 != w[1].1), "a stepped stroke keeps only the changes, not a point per sample: {got:?}");
 }
 
 #[test]
@@ -348,4 +354,74 @@ fn the_track_view_pencil_is_one_undo_step() {
     assert_eq!(h.state().engine.undo_history().len(), history + 1, "one undo step, not one per point");
     assert!(h.state_mut().engine.undo());
     assert!(pts(&h, "Kick", &AutoParam::Volume).is_empty());
+}
+
+#[test]
+fn alt_pencil_draws_one_straight_ramp_in_one_undo_step() {
+    let mut h = harness();
+    show(&mut h, "Kick", "volume");
+    set_tool(&mut h, "pencil");
+    let b = body(&h, "Kick", 0);
+    let (from, to) = (pos2(b.min.x + 200.0, b.max.y - 10.0), pos2(b.min.x + 400.0, b.min.y + 10.0));
+    let history = h.state().engine.undo_history().len();
+    // A wiggling path: the ramp ignores everything but the two ends.
+    h.input_mut().events.push(Event::ModifiersChanged(Modifiers::ALT));
+    move_to(&mut h, from);
+    h.input_mut().events.push(Event::PointerButton { pos: from, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::ALT });
+    h.run_steps(2);
+    for (dx, dy) in [(40.0, -60.0), (80.0, 0.0), (120.0, -10.0), (200.0, -10.0)] {
+        move_to(&mut h, pos2(from.x + dx, (from.y + dy).clamp(b.min.y, b.max.y)));
+    }
+    move_to(&mut h, to);
+    h.input_mut().events.push(Event::PointerButton { pos: to, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::ALT });
+    h.run_steps(2);
+    h.input_mut().events.push(Event::ModifiersChanged(Modifiers::NONE));
+    h.run_steps(2);
+    let got = pts(&h, "Kick", &AutoParam::Volume);
+    // Anchors hold the old value at both ends; the ramp is what lies between them.
+    let inner = &got[1..got.len().saturating_sub(1)];
+    assert!(inner.len() >= 3, "{got:?}");
+    let (a, z) = (inner[0], inner[inner.len() - 1]);
+    for p in inner {
+        let f = (p.0 - a.0) as f64 / (z.0 - a.0) as f64;
+        let want = f64::from(a.1) + f64::from(z.1 - a.1) * f;
+        assert!((f64::from(p.1) - want).abs() < 0.5, "straight line: {p:?} vs {want}");
+    }
+    assert!(z.1 > a.1 + 20.0, "rises with the pointer");
+    assert_eq!(h.state().engine.undo_history().len(), history + 1, "one undo step");
+    assert!(h.state_mut().engine.undo());
+    assert!(pts(&h, "Kick", &AutoParam::Volume).is_empty());
+}
+
+#[test]
+fn alt_pencil_on_a_stepped_lane_only_holds_off_and_on() {
+    let mut h = harness();
+    show(&mut h, "Kick", "mute");
+    set_tool(&mut h, "pencil");
+    let b = body(&h, "Kick", 0);
+    drag(&mut h, pos2(b.min.x + 200.0, b.max.y - 8.0), pos2(b.min.x + 320.0, b.min.y + 8.0), 12, Modifiers::ALT);
+    let got = pts(&h, "Kick", &AutoParam::Mute);
+    assert!(got.len() >= 2 && got.iter().all(|(_, v)| *v == 0.0 || *v == 1.0), "{got:?}");
+    assert!(got.windows(2).all(|w| w[0].1 != w[1].1), "repeated holds are thinned away: {got:?}");
+}
+
+#[test]
+fn midi_controller_lane_menu_converts_the_lane() {
+    let mut h = harness_sized(vec2(1600.0, 1800.0));
+    let tid = id(&h, "Keys");
+    h.state_mut().run("automation.lane_show", json!({"track": tid.0, "param": "cc1"})).unwrap();
+    for (at, v) in [(0, 10.0), (48_000, 100.0)] {
+        h.state_mut().run("automation.set_point", json!({"track": tid.0, "param": "cc1", "at": at, "value": v})).unwrap();
+    }
+    h.run_steps(4);
+    let b = body(&h, "Keys", 0);
+    let head = pos2(b.min.x - 4.0, b.center().y + 12.0);
+    click(&mut h, head, PointerButton::Secondary);
+    h.run_steps(3);
+    h.get_by_label("Convert to MIDI Clip Events").click();
+    h.run_steps(4);
+    assert!(
+        h.state().engine.session().track(tid).unwrap().clips().iter().any(|c| matches!(c.content, soundcraft_model::ClipContent::Midi { .. })),
+        "a clip was written"
+    );
 }

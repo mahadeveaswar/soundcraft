@@ -27,7 +27,7 @@ pub struct ExtraState {
     /// Keys page: the filter text.
     pub key_search: String,
     last_auto_update: f64,
-    applied: Option<(f32, bool)>,
+    applied: Option<(f32, bool, bool)>,
 }
 
 impl Default for ExtraState {
@@ -71,8 +71,15 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
     apply_customization(app, ctx);
 }
 
+/// Seconds the pointer must rest before a tooltip shows: egui's default, or so long (a bit over
+/// eleven days) that none ever does when tooltips are off. Not infinite: egui schedules a repaint
+/// for the remaining wait, and an infinite duration cannot be scheduled.
+pub fn tooltip_delay(on: bool) -> f32 {
+    if on { egui::style::Interaction::default().tooltip_delay } else { 1.0e6 }
+}
+
 fn apply_customization(app: &mut SoundApp, ctx: &egui::Context) {
-    let want = (app.extra.ui_scale.clamp(0.75, 1.5), app.extra.reduce_motion);
+    let want = (app.extra.ui_scale.clamp(0.75, 1.5), app.extra.reduce_motion, app.extra.tooltips);
     // Rescaling mid-drag would move the Interface scale slider out from under the pointer.
     if app.extra.applied == Some(want) || ctx.input(|i| i.pointer.any_down()) {
         return;
@@ -82,6 +89,7 @@ fn apply_customization(app: &mut SoundApp, ctx: &egui::Context) {
         ctx.set_zoom_factor(want.0);
     }
     ctx.global_style_mut(|s| s.animation_time = if want.1 { 0.0 } else { 1.0 / 12.0 });
+    ctx.all_styles_mut(|s| s.interaction.tooltip_delay = tooltip_delay(want.2));
     app.extra.applied = Some(want);
 }
 

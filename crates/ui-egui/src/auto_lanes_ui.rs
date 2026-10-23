@@ -451,7 +451,12 @@ fn header(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: &ShownLane, inde
     );
     icons::draw(&p, lay.draw.shrink2(vec2(4.0, 1.0)), "pencil", if lane.draw { t.text_dark } else { t.text_dim });
     let cmd_key = crate::shortcuts::shortcut_label("Cmd", ui.ctx().os().is_mac());
-    if resp.on_hover_text(format!("Draw: freehand curves in this lane (hold {cmd_key} to draw for one stroke; Shift+drag erases)")).clicked() {
+    if resp
+        .on_hover_text(format!(
+            "Draw: freehand curves in this lane (hold {cmd_key} to draw for one stroke; Alt+drag draws a straight ramp; Shift+drag erases)"
+        ))
+        .clicked()
+    {
         let _ = app.run("automation.lane_draw", json!({"track": id.0, "index": index}));
     }
     param_menu(app, ui, track, lane, index, lay.param);
@@ -476,6 +481,23 @@ fn header_menu(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: &ShownLane)
     if ui.button(if lane.follow { "Stop Following" } else { "Follow Touched Parameter" }).clicked() {
         let _ = app.run("automation.lane_follow", json!({"track": id, "index": index}));
         ui.close();
+    }
+    // Controller lanes of MIDI and instrument tracks can be written into the clips.
+    if lane.param.is_midi() && matches!(track.kind, TrackKind::Instrument | TrackKind::Midi) {
+        ui.separator();
+        let has_points = track.lane(&lane.param).is_some_and(|l| !l.points.is_empty());
+        let param = lane.param.id();
+        if ui.add_enabled(has_points && !lane.locked, egui::Button::new("Convert to MIDI Clip Events")).clicked() {
+            run_or_status(app, "automation.to_clip", json!({"track": id, "param": param}));
+            ui.close();
+        }
+        let clip = app.engine.session().edit.selected_clips.first().copied();
+        if ui.add_enabled(has_points && clip.is_some(), egui::Button::new("Merge into Selected Clip")).clicked()
+            && let Some(clip) = clip
+        {
+            run_or_status(app, "automation.merge_into_clip", json!({"track": id, "param": param, "clip": clip.0}));
+            ui.close();
+        }
     }
 }
 
@@ -802,22 +824,13 @@ pub(crate) fn erase_update(app: &mut SoundApp, tid: TrackId, param: &AutoParam, 
 }
 
 /// The end of a stroke: thin what was drawn (kept in the same undo step), then close the step.
-pub(crate) fn draw_end(
-    app: &mut SoundApp,
-    tid: TrackId,
-    param: &AutoParam,
-    range: (f32, f32),
-    stepped: bool,
-    stroke: Option<StrokeState>,
-    erased: bool,
-) {
+pub(crate) fn draw_end(app: &mut SoundApp, tid: TrackId, param: &AutoParam, range: (f32, f32), stroke: Option<StrokeState>, erased: bool) {
     if let Some(st) = stroke
         && !erased
-        && !stepped
     {
         let tolerance = (range.1 - range.0).abs() * DRAW_THIN_SHARE;
         if tolerance > 0.0 && tolerance.is_finite() {
-            let params = json!({"track": tid.0, "param": param.id(), "start": st.span.0, "end": st.span.1, "tolerance": tolerance});
+            let params = json!({"track": tid.0, "param": param.id(), "start": st.span.0.saturating_sub(1), "end": st.span.1.saturating_add(1), "tolerance": tolerance});
             let _ = app.engine.execute_merged("automation.thin", &params, &stroke_key(tid, param));
         }
     }
@@ -854,6 +867,24 @@ pub(crate) fn off_hint(app: &mut SoundApp, ctx: &egui::Context, track: &Track) {
 enum StrokeMode {
     Draw,
     Erase,
+    /// Alt+drag with the pencil: a straight line from the press to the release.
+    Ramp,
+}
+
+/// The points of a straight ramp between two lane positions: one per `step` samples, values
+/// limited to `range`, stepped lanes holding (they only take the range limits). Either end first.
+pub fn ramp_stroke(from: (Samples, f32), to: (Samples, f32), step: Samples, range: (f32, f32), stepped: bool) -> Vec<(Samples, f32)> {
+    let mut pts = stroke_points(Some(from), to, step, range, stepped);
+    if stepped {
+        // A hold needs a point only where the value changes.
+        let mut held = None;
+        pts.retain(|p| {
+            let keep = held != Some(p.1);
+            held = Some(p.1);
+            keep
+        });
+    }
+    pts
 }
 
 /// True when a lane of `p` on `t` is locked against edits.
@@ -911,10 +942,23 @@ fn body(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: &ShownLane, index:
     if resp.drag_started() {
         let origin_hit = origin.and_then(hit);
         if draw_on || (mods.command && origin_hit.is_none()) {
-            let mode = if mods.shift { StrokeMode::Erase } else { StrokeMode::Draw };
+            let mode = if mods.shift {
+                StrokeMode::Erase
+            } else if mods.alt {
+                StrokeMode::Ramp
+            } else {
+                StrokeMode::Draw
+            };
             ui.data_mut(|d| d.insert_temp(mode_id, mode));
-            if mode == StrokeMode::Draw {
+            if mode != StrokeMode::Erase {
                 off_hint(app, ui.ctx(), track);
+            }
+            if mode == StrokeMode::Ramp
+                && let Some(o) = origin
+            {
+                let (at, _) = draw_position(&s, sample_at(&s, tl, o.x));
+                let y = o.y.clamp(rect.min.y, rect.max.y);
+                ui.data_mut(|d| d.insert_temp(state_id, (at, auto_value(rect, range, y), y)));
             }
         } else if let Some(at) = origin_hit {
             ui.data_mut(|d| d.insert_temp(resp.id, at));
@@ -923,10 +967,43 @@ fn body(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: &ShownLane, index:
     let mode = ui.data(|d| d.get_temp::<StrokeMode>(mode_id));
     if let Some(mode) = mode {
         ui.ctx().data_mut(|d| d.insert_temp(stroke_active_id(), true));
-        if resp.dragged() {
+        if mode == StrokeMode::Ramp {
+            let start = ui.data(|d| d.get_temp::<(Samples, f32, f32)>(state_id));
+            let (end, _) = draw_position(&s, sample_at(&s, tl, pos.x));
+            let value = auto_value(rect, range, pos.y);
+            if let Some((a, _, y)) = start {
+                if resp.dragged() {
+                    let line = Stroke::new(2.0, t.accent);
+                    painter.line_segment(
+                        [
+                            pos2(crate::edit_window::x_of(&s, tl, a), y),
+                            pos2(crate::edit_window::x_of(&s, tl, end), pos.y.clamp(rect.min.y, rect.max.y)),
+                        ],
+                        line,
+                    );
+                }
+                if resp.drag_stopped() {
+                    let (_, step) = draw_position(&s, end);
+                    let from = (a, start.map_or(0.0, |st| st.1));
+                    let points: Vec<_> =
+                        ramp_stroke(from, (end, value), step, range, stepped).iter().map(|(at, v)| json!({"at": at, "value": v})).collect();
+                    if let (Some(first), Some(last)) = (points.first(), points.last()) {
+                        let key = stroke_key(track.id, &lane.param);
+                        let _ = app.engine.execute_merged("automation.draw", &json!({"track": tid, "param": pid, "points": points}), &key);
+                        if stepped {
+                            let (start, end) =
+                                (first["at"].as_i64().unwrap_or(0).saturating_sub(1), last["at"].as_i64().unwrap_or(0).saturating_add(1));
+                            let thin = json!({"track": tid, "param": pid, "start": start, "end": end, "tolerance": 0.0});
+                            let _ = app.engine.execute_merged("automation.thin", &thin, &key);
+                        }
+                    }
+                }
+            }
+        } else if resp.dragged() {
             let mut stroke = ui.data(|d| d.get_temp::<StrokeState>(state_id));
             let at = sample_at(&s, tl, pos.x).max(0);
             match mode {
+                StrokeMode::Ramp => {}
                 StrokeMode::Draw => draw_update(app, track.id, &lane.param, &mut stroke, at, auto_value(rect, range, pos.y), range, stepped),
                 StrokeMode::Erase => erase_update(app, track.id, &lane.param, &mut stroke, at),
             }
@@ -936,10 +1013,15 @@ fn body(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: &ShownLane, index:
         }
         if resp.drag_stopped() {
             let stroke = ui.data(|d| d.get_temp::<StrokeState>(state_id));
-            draw_end(app, track.id, &lane.param, range, stepped, stroke, mode == StrokeMode::Erase);
+            if mode == StrokeMode::Ramp {
+                app.engine.end_merge();
+            } else {
+                draw_end(app, track.id, &lane.param, range, stroke, mode == StrokeMode::Erase);
+            }
             ui.data_mut(|d| {
                 d.remove::<StrokeMode>(mode_id);
                 d.remove::<StrokeState>(state_id);
+                d.remove::<(Samples, f32, f32)>(state_id);
             });
             ui.ctx().data_mut(|d| d.insert_temp(stroke_active_id(), false));
         }

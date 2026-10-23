@@ -8,6 +8,7 @@ use crate::clip_paint::{self, ClipPaint, ClipState, darken};
 use crate::inspector_sections::{PAD, acting_tracks, contrast_text};
 use crate::theme::{Tokens, bold, regular, rgb};
 use crate::track_palette_ui::{self, Target};
+use crate::widgets::{raised_key, shade};
 use egui::{Align, Align2, Id, Key, Layout, Rect, RichText, Sense, Stroke, StrokeKind, Ui, UiBuilder, WidgetInfo, WidgetType, pos2, vec2};
 use serde_json::json;
 use soundcraft_model::{Track, TrackKind};
@@ -52,7 +53,12 @@ fn toggle(ui: &mut Ui, r: Rect, text: &str, on: bool, on_color: egui::Color32, t
         clip_paint::body(painter, r, &p);
         text_on
     } else {
-        painter.rect(r, 5.0, if resp.hovered() { t.button_hi } else { t.button }, Stroke::new(1.0, t.button_border), StrokeKind::Inside);
+        // Off: a raised key (it sinks while pressed) rather than a flat chip.
+        if resp.is_pointer_button_down_on() {
+            painter.rect(r, 5.0, shade(t.button, -0.14), Stroke::new(1.0, t.button_border), StrokeKind::Inside);
+        } else {
+            raised_key(painter, r, [shade(t.button, 0.1), shade(t.button, -0.1)], resp.hovered());
+        }
         if resp.hovered() { t.text } else { t.text_dim }
     };
     painter.text(r.center(), Align2::CENTER_CENTER, text, bold(12.0), col);

@@ -37,6 +37,8 @@ pub struct Dialogs {
     after_save: Option<(String, Value)>,
     /// A session the browser read while the open one had changes, waiting for `SaveChanges`.
     pending_session: Option<(String, Vec<u8>)>,
+    /// The MIDI export dialog's "Include controller lanes" box (sent as `lanes`).
+    pub export_lanes: bool,
 }
 
 impl Dialogs {
@@ -495,9 +497,15 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
                     if replaces {
                         ui.label(format!("“{}” already exists. Do you want to replace it?", file.file_name().unwrap_or_default().to_string_lossy()));
                     }
+                    if cmd == "file.export_midi" {
+                        ui.checkbox(&mut app.dialogs.export_lanes, "Include controller lanes");
+                    }
                     if buttons(ui, if replaces { "Replace" } else { "OK" }, enter && !replaces) {
                         let mut v = json!({});
                         v[key.as_str()] = json!(path);
+                        if cmd == "file.export_midi" && app.dialogs.export_lanes {
+                            v["lanes"] = json!(true);
+                        }
                         if replaces {
                             v["replace"] = json!(true);
                         }

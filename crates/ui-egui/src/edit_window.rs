@@ -2659,8 +2659,7 @@ fn finish_drag(app: &mut SoundApp, s: &Session, tl: Rect, p: Option<Pos2>) {
             if let Some(t) = s.track(track)
                 && let Some(param) = AutoParam::parse(&t.view)
             {
-                let stepped = crate::auto_lanes_ui::is_toggle(t, &param);
-                crate::auto_lanes_ui::draw_end(app, track, &param, lane_range(t, &param), stepped, stroke, erase);
+                crate::auto_lanes_ui::draw_end(app, track, &param, lane_range(t, &param), stroke, erase);
             } else {
                 app.engine.end_merge();
             }

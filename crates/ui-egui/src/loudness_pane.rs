@@ -20,11 +20,37 @@ pub(crate) fn rows(reply: &serde_json::Value) -> [(&'static str, &'static str, f
     ]
 }
 
+/// How often the pane asks the engine for a fresh reading (the meter itself moves slowly).
+const REFRESH_SECS: f64 = 0.1;
+
+/// Whether a reading taken at `last` is still fresh at `now`.
+pub(crate) fn is_fresh(last: Option<f64>, now: f64) -> bool {
+    last.is_some_and(|l| now >= l && now - l < REFRESH_SECS)
+}
+
+/// The latest `mix.loudness` reply, asked for about ten times a second instead of every frame
+/// (a reset or a new session forces the next frame to ask again).
+fn reading(app: &mut SoundApp, ui: &Ui) -> serde_json::Value {
+    let id = egui::Id::new("loudness-reading");
+    let now = ui.input(|i| i.time);
+    let cached: Option<(f64, serde_json::Value)> = ui.data(|d| d.get_temp(id));
+    if let Some((at, reply)) = cached
+        && is_fresh(Some(at), now)
+    {
+        ui.ctx().request_repaint_after_secs((REFRESH_SECS - (now - at)).max(0.01) as f32);
+        return reply;
+    }
+    let reply = app.engine.execute("mix.loudness", &json!({})).unwrap_or_default();
+    ui.data_mut(|d| d.insert_temp(id, (now, reply.clone())));
+    ui.ctx().request_repaint_after_secs(REFRESH_SECS as f32);
+    reply
+}
+
 pub(crate) fn show(app: &mut SoundApp, ui: &mut Ui) {
     let t = Tokens::current();
     let r = ui.max_rect();
     ui.painter().rect_filled(r, 0.0, t.strip_bg);
-    let reply = app.engine.execute("mix.loudness", &json!({})).unwrap_or_default();
+    let reply = reading(app, ui);
     let mut y = r.min.y + 14.0;
     for (label, unit, value) in rows(&reply) {
         ui.painter().text(pos2(r.min.x + 10.0, y), Align2::LEFT_CENTER, label, regular(11.0), t.text_dim);
@@ -40,5 +66,19 @@ pub(crate) fn show(app: &mut SoundApp, ui: &mut Ui) {
     ui.painter().text(btn.center(), Align2::CENTER_CENTER, "Reset", bold(10.5), t.text);
     if resp.clicked() {
         let _ = app.run("mix.loudness_reset", json!({}));
+        ui.data_mut(|d| d.remove::<(f64, serde_json::Value)>(egui::Id::new("loudness-reading")));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_fresh;
+
+    #[test]
+    fn a_reading_is_reused_for_a_tenth_of_a_second() {
+        assert!(!is_fresh(None, 5.0));
+        assert!(is_fresh(Some(5.0), 5.05));
+        assert!(!is_fresh(Some(5.0), 5.11));
+        assert!(!is_fresh(Some(5.0), 4.0), "a clock that went back asks again");
     }
 }

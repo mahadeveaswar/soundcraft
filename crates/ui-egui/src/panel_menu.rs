@@ -44,17 +44,9 @@ pub fn is_visible(app: &SoundApp, panel: Panel) -> bool {
     }
 }
 
-/// The panels that exist in a window (Clips and the MIDI editor belong to Edit).
+/// The panels that exist in a window (see [`Panel::edit_only`]).
 pub fn panels_for(edit: bool) -> Vec<Panel> {
-    LIST.iter()
-        .copied()
-        .filter(|p| {
-            edit || !matches!(
-                p,
-                Panel::Clips | Panel::Midi | Panel::Master | Panel::Visibility | Panel::Meter | Panel::Loudness | Panel::Inspector | Panel::Mixer
-            )
-        })
-        .collect()
+    LIST.iter().copied().filter(|p| edit || !p.edit_only()).collect()
 }
 
 /// `(panel, label, visible)` for the panel list of the current window.
@@ -237,6 +229,16 @@ mod tests {
         assert!(!mix.contains(&Panel::Clips) && !mix.contains(&Panel::Midi));
         assert_eq!(panels_for(true).len(), 11);
         assert!(!mix.contains(&Panel::Master) && !mix.contains(&Panel::Inspector) && !mix.contains(&Panel::Mixer));
+    }
+
+    #[test]
+    fn edit_only_drives_both_the_menu_and_the_mix_validation() {
+        let mix = panels_for(false);
+        for p in LIST.iter().copied() {
+            assert_eq!(mix.contains(&p), !p.edit_only(), "{p:?}");
+        }
+        assert!(Panel::Inspector.edit_only() && Panel::Mixer.edit_only() && Panel::Clips.edit_only() && Panel::Midi.edit_only());
+        assert!(!Panel::Tracks.edit_only() && !Panel::Canvas.edit_only() && !Panel::History.edit_only());
     }
 
     #[test]

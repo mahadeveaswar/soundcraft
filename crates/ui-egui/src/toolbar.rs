@@ -140,18 +140,20 @@ pub(crate) fn mode_click(app: &mut SoundApp, m: EditMode, mods: egui::Modifiers)
 }
 
 fn zoom_group(app: &mut SoundApp, ui: &mut Ui) {
+    let mac = ui.ctx().os().is_mac();
+    let label = |chord: &str| crate::shortcuts::shortcut_label(chord, mac);
     group(ui, 128.0, 52.0, |ui, _| {
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing = vec2(2.0, 3.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
-                if icon_button(ui, vec2(28.0, 22.0), "minus", false, "Zoom out (Cmd+[)").clicked() {
+                if icon_button(ui, vec2(28.0, 22.0), "minus", false, &format!("Zoom out ({})", label("Cmd+["))).clicked() {
                     let _ = app.run("view.zoom_out", json!({}));
                 }
-                if icon_button(ui, vec2(30.0, 22.0), "wave", false, "Waveform zoom in (Cmd+Alt+])").clicked() {
+                if icon_button(ui, vec2(30.0, 22.0), "wave", false, &format!("Waveform zoom in ({})", label("Cmd+Alt+]"))).clicked() {
                     let _ = app.run("view.waveform_zoom", json!({"factor": 2.0}));
                 }
-                if icon_button(ui, vec2(28.0, 22.0), "plus", false, "Zoom in (Cmd+])").clicked() {
+                if icon_button(ui, vec2(28.0, 22.0), "plus", false, &format!("Zoom in ({})", label("Cmd+]"))).clicked() {
                     let _ = app.run("view.zoom_in", json!({}));
                 }
                 if icon_button(ui, vec2(28.0, 22.0), "zoom", false, "Fill window with session (Alt+A)").clicked() {
@@ -168,7 +170,7 @@ fn zoom_group(app: &mut SoundApp, ui: &mut Ui) {
                         &i.to_string(),
                         false,
                         Color32::GRAY,
-                        "Zoom preset (click to recall, Cmd-click to store)",
+                        &format!("Zoom preset (click to recall, {}-click to store)", label("Cmd")),
                     );
                     if r.clicked() {
                         let store = ui.input(|x| x.modifiers.command);
@@ -369,7 +371,7 @@ fn transport(app: &mut SoundApp, ui: &mut Ui) {
                 let (r, resp) = ui.allocate_exact_size(vec2(38.0, 28.0), Sense::click());
                 key(ui.painter(), r, &resp, if recording { Tokens::current().rec_on_face } else { key_fill(&resp) });
                 icons::draw(ui.painter(), r.shrink(5.0), "record", t.rec);
-                let resp = resp.on_hover_text("Record (Cmd+Space)");
+                let resp = resp.on_hover_text(format!("Record ({})", crate::shortcuts::shortcut_label("Cmd+Space", ui.ctx().os().is_mac())));
                 if let Some(why) = app.record_hint() {
                     // Below the whole group, so the hint covers none of its buttons.
                     let below = Rect::from_min_max(r.min, pos2(r.max.x, g.max.y));

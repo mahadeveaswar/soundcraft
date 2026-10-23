@@ -27,12 +27,30 @@ pub fn specs() -> Vec<CommandSpec> {
             has_selection,
             set_instrument_param
         ),
+        cmd!(
+            "mix.instrument_bypass",
+            "Bypass Instrument",
+            [],
+            None,
+            "{track?, value?: bool (default: toggle)} -> {bypass}: a bypassed instrument is silent (held notes are released) and keeps its settings",
+            has_selection,
+            instrument_bypass
+        ),
     ]
 }
 
 /// Fields `mix.instrument` reads. Anything else (a parameter written beside `plugin`, say) used to
 /// be accepted and ignored, so a synth's settings looked set while the render never changed.
 const FIELDS: [&str; 4] = ["track", "tracks", "plugin", "params"];
+
+fn instrument_bypass(e: &mut Engine, p: &Value) -> Result<Value> {
+    let c = "mix.instrument_bypass";
+    let t = tracks_required(e, c, p)?.first().copied().ok_or_else(|| bad(c, "no track"))?;
+    let want = p.get("value").and_then(Value::as_bool);
+    let ins = e.session_mut().track_mut(t).and_then(|tr| tr.instrument.as_mut()).ok_or_else(|| bad(c, "the track has no instrument"))?;
+    ins.bypass = want.unwrap_or(!ins.bypass);
+    Ok(json!({"bypass": ins.bypass}))
+}
 
 fn set_instrument(e: &mut Engine, p: &Value) -> Result<Value> {
     if let Some(k) = p.as_object().and_then(|o| o.keys().find(|k| !FIELDS.contains(&k.as_str()))) {
@@ -102,6 +120,23 @@ mod tests {
 
     fn instrument_of(e: &Engine, t: TrackId) -> Option<String> {
         e.session().track(t).and_then(|tr| tr.instrument.as_ref()).map(|i| i.plugin.clone())
+    }
+
+    #[test]
+    fn bypass_toggles_sets_and_undoes() {
+        let mut e = Engine::default();
+        let t = track(&mut e, "instrument");
+        let bypass = |e: &Engine| e.session().track(t).and_then(|tr| tr.instrument.as_ref()).map(|i| i.bypass);
+        assert_eq!(bypass(&e), Some(false));
+        assert_eq!(e.execute("mix.instrument_bypass", &json!({"track": t.0})).unwrap()["bypass"], true);
+        assert_eq!(bypass(&e), Some(true));
+        e.execute("mix.instrument_bypass", &json!({"track": t.0, "value": true})).unwrap();
+        assert_eq!(bypass(&e), Some(true), "an explicit value does not toggle");
+        e.execute("edit.undo", &json!({})).unwrap();
+        e.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(bypass(&e), Some(false));
+        let audio = track(&mut e, "audio");
+        assert!(e.execute("mix.instrument_bypass", &json!({"track": audio.0})).is_err(), "no instrument, nothing to bypass");
     }
 
     #[test]

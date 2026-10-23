@@ -89,6 +89,8 @@ use std::collections::HashMap;
 use std::sync::mpsc::Receiver;
 
 pub use control::ControlRequest;
+/// The MIDI values the Inspector shows for a track (transpose, velocity offset, channel override).
+pub use inspector_sections::midi_values as inspector_midi_values;
 
 /// Which main window is in front (Window › Mix / Edit).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

@@ -38,6 +38,11 @@ impl Panel {
         Self::Inspector,
         Self::Mixer,
     ];
+    /// Panels that exist only in the Edit window (the one list the Mix window's validation and
+    /// the panel menu both use).
+    pub fn edit_only(self) -> bool {
+        matches!(self, Self::Clips | Self::Midi | Self::Master | Self::Visibility | Self::Meter | Self::Loudness | Self::Inspector | Self::Mixer)
+    }
     pub fn id(self) -> &'static str {
         match self {
             Self::Canvas => "canvas",
@@ -198,12 +203,7 @@ impl Workspace {
 
     pub fn validate_mix(&self) -> Result<(), String> {
         self.validate()?;
-        if self.layout.contains(&Panel::Clips)
-            || self.layout.contains(&Panel::Midi)
-            || [Panel::Master, Panel::Visibility, Panel::Meter, Panel::Loudness, Panel::Inspector, Panel::Mixer]
-                .iter()
-                .any(|p| self.layout.contains(p))
-        {
+        if Panel::ALL.iter().any(|p| p.edit_only() && self.layout.contains(p)) {
             return Err("Clips, MIDI, Master, Visibility, Meter, Loudness, Inspector and Mixer panels belong to the Edit window".into());
         }
         Ok(())

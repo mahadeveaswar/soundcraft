@@ -158,6 +158,16 @@ fn general(app: &mut SoundApp, ui: &mut Ui) {
         }
         ui.end_row();
 
+        ui.label("Audition release tail");
+        let mut tail = app.engine.session().edit.value("options.audition_tail_ms", 300.0).clamp(0.0, 2000.0);
+        let resp = ui.add(egui::DragValue::new(&mut tail).range(0.0..=2000.0).speed(5.0).suffix(" ms").max_decimals(0));
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::DragValue, true, "Audition tail (ms)"));
+        if resp.changed() {
+            let _ = app.run("options.audition_tail_ms", json!({"value": tail}));
+        }
+        let _ = resp.on_hover_text("How long an auditioned note keeps sounding after its key is released (saved with the session)");
+        ui.end_row();
+
         ui.label("Theme");
         let mut modes = crate::theme::ThemeMode::ALL.to_vec();
         if app.ui.theme == crate::theme::ThemeMode::Custom {

@@ -4,6 +4,13 @@ Dated entries, newest first. Each entry groups changes as Added, Changed, Fixed 
 
 ## 2026-10-23 (win)
 
+### Remaining items, UI batch (RM1 B2)
+- Added: lane header menu entries "Convert to MIDI Clip Events" and "Merge into Selected Clip" (`automation.to_clip`, `automation.merge_into_clip`); "Include controller lanes" box in the MIDI export dialog; Alt+drag with the Pencil in an automation lane draws a straight ramp (snaps to the grid, switch lanes hold, one undo step).
+- Added: Inspector rework: Equaliser card (read-only response of the first EQ insert, click opens it), MIDI section (transpose, velocity offset, channel via `track.midi_params`), taller fader with a fine-adjust hint and an editable volume readout, one Pan control plus Width on stereo tracks only, raised off-state toggles, insert and send row actions that exist only while the row is hovered, instrument LED now bypasses the instrument (`mix.instrument_bypass`, silent while bypassed).
+- Added: Settings > General "Audition release tail" control; `Panel::edit_only()` replaces the hand-copied lists in the Mix window validation and the panel menu.
+- Changed: the tooltips preference is honoured (tooltips off gives egui a delay of 1e6 s; on restores the default); hover tips on the zoom group, record key, insert rows and Mix strips use `shortcut_label` instead of hard-coded Ctrl/Cmd text (a source scan test guards this); the Loudness pane asks for a reading about ten times a second; `automation.thin` and the end of a freehand stroke now also drop repeated holds on switch lanes.
+- Decisions: the Mixer pane already moves the meter snapshot out for the frame (no clone), so no change; the plan's biquad maths already exists as `eq7_response`/`eq1_response` and is reused; stereo Pan moves both panners together (each limited to the range) and Width sets their spread around the centre.
+
 ### Remaining items, engine and model batch (RM1 B1)
 - Added: `automation.to_clip` and `automation.merge_into_clip` (`crates/engine/src/cmd/auto_convert.rs`): a controller lane (CC, pitch bend, channel pressure) of an instrument or MIDI track becomes controller events in the MIDI clips under a range, or in one named clip. Switch lanes write held values; continuous lanes are sampled every 32nd note and thinned with a one-pass filter to within half a controller step. A clip is created when none is under the range. Locked lanes, audio tracks and non-controller parameters are refused. One undo step each.
 - Added: `file.export_midi` takes `lanes` (default false) to write MIDI controller lanes as controller events in the file. Clip controller events were already exported; this only adds the lanes.

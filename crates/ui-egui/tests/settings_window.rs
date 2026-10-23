@@ -85,6 +85,10 @@ fn checkboxes_and_the_slider_write_the_preferences() {
     h.get_all_by_role(Role::CheckBox).nth(1).expect("tooltips").click();
     h.run_steps(3);
     assert!(!h.state().ui.tooltips);
+    assert!(h.ctx.global_style().interaction.tooltip_delay > 1000.0, "tooltips off: none ever shows");
+    h.get_all_by_role(Role::CheckBox).nth(1).expect("tooltips").click();
+    h.run_steps(3);
+    assert!(h.state().ui.tooltips && h.ctx.global_style().interaction.tooltip_delay < 5.0, "back on: egui's own delay");
     h.get_all_by_role(Role::CheckBox).nth(2).expect("auto-update").click();
     h.run_steps(3);
     assert!(h.state().extra.auto_update_config);
@@ -171,4 +175,18 @@ fn the_sidebar_lists_the_keys_page_and_opens_it() {
     h.run_steps(3);
     assert_eq!(h.state().extra.settings_tab, SettingsTab::Keys);
     assert!(h.query_by_label("Key set").is_some());
+}
+
+#[test]
+fn the_audition_tail_control_writes_the_command() {
+    let mut h = harness(app());
+    h.state_mut().run("window.settings", json!({})).unwrap();
+    h.run_steps(3);
+    assert_eq!(h.state().engine.session().edit.value("options.audition_tail_ms", 300.0), 300.0);
+    h.get_by_label("Audition tail (ms)").click();
+    h.run_steps(2);
+    h.event(egui::Event::Text("750".into()));
+    h.key_press(egui::Key::Enter);
+    h.run_steps(3);
+    assert_eq!(h.state().engine.session().edit.value("options.audition_tail_ms", 300.0), 750.0);
 }

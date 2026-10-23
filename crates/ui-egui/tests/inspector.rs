@@ -7,7 +7,7 @@ use soundcraft_ui_egui::{MainWindow, Services, SoundApp, UiState, docking::Panel
 
 fn harness() -> Harness<'static, SoundApp> {
     let app = SoundApp::new(soundcraft_engine::demo::demo_engine(), None, Services::default());
-    let mut h = Harness::builder().with_size(vec2(1500.0, 1000.0)).build_ui_state(
+    let mut h = Harness::builder().with_size(vec2(1500.0, 1400.0)).build_ui_state(
         |ui, app: &mut SoundApp| {
             app.logic(&ui.ctx().clone());
             app.ui(ui);
@@ -193,6 +193,12 @@ fn an_old_ui_json_without_the_new_fields_loads() {
     assert!(old.inspector_collapsed.contains("notes"));
 }
 
+/// Moves the pointer over the Inspector's row named `label` (the one in the left dock).
+fn hover_row(h: &mut Harness<'_, SoundApp>, label: &str) {
+    h.query_all_by_label(label).find(|n| n.rect().min.x < 330.0).expect("inspector row").hover();
+    h.run_steps(3);
+}
+
 #[test]
 fn add_eq_runs_mix_insert_and_remove_clears_the_slot() {
     let mut h = open_inspector("Keys");
@@ -208,6 +214,7 @@ fn add_eq_runs_mix_insert_and_remove_clears_the_slot() {
     h.get_by_label(&format!("Inspector: Insert {letter} bypass")).click();
     h.run_steps(3);
     assert!(track(&h, "Keys").mixer.inserts[slot].as_ref().unwrap().bypass);
+    hover_row(&mut h, &format!("Insert {letter}"));
     h.get_by_label(&format!("Inspector: Insert {letter} remove")).click();
     h.run_steps(3);
     assert!(track(&h, "Keys").mixer.inserts[slot].is_none());
@@ -300,6 +307,7 @@ fn a_send_row_mutes_sets_its_level_and_removes() {
     assert!(track(&h, "Keys").mixer.sends[0].as_ref().unwrap().mute);
     h.get_by_label("Inspector: Send A level").click();
     h.run_steps(2);
+    hover_row(&mut h, "Send A");
     h.get_by_label("Inspector: Send A remove").click();
     h.run_steps(3);
     assert!(track(&h, "Keys").mixer.sends[0].is_none());
@@ -314,4 +322,104 @@ fn the_header_shows_the_type_and_an_empty_instrument_says_so() {
     let h = open_inspector("Keys");
     assert!(h.query_by_label("Inspector: Record enable").is_some());
     assert!(h.query_by_label("Inspector: Choose instrument").is_some());
+}
+
+#[test]
+fn row_actions_exist_only_while_the_row_is_hovered() {
+    let mut h = open_inspector("Keys");
+    let keys = track(&h, "Keys").id.0;
+    h.state_mut().run("mix.insert", json!({"track": keys, "slot": 0, "plugin": "eq_7band"})).unwrap();
+    h.run_steps(3);
+    assert!(h.query_by_label("Inspector: Insert A remove").is_none(), "no actions at rest");
+    assert!(h.query_by_label("Inspector: Send A remove").is_none());
+    hover_row(&mut h, "Insert A");
+    assert!(h.query_by_label("Inspector: Insert A remove").is_some(), "shown under the pointer");
+    assert!(h.query_by_label("Inspector: Insert A up").is_some());
+    hover_row(&mut h, "Send A");
+    assert!(h.query_by_label("Inspector: Send A remove").is_some());
+    assert!(h.query_by_label("Inspector: Insert A remove").is_none(), "gone when the pointer leaves");
+}
+
+#[test]
+fn the_instrument_led_bypasses_the_instrument_and_undoes() {
+    let mut h = open_inspector("Keys");
+    let bypass = |h: &Harness<'_, SoundApp>| track(h, "Keys").instrument.as_ref().map(|i| i.bypass);
+    assert_eq!(bypass(&h), Some(false));
+    h.get_by_label("Inspector: Instrument bypass").click();
+    h.run_steps(3);
+    assert_eq!(bypass(&h), Some(true));
+    h.state_mut().run("edit.undo", json!({})).unwrap();
+    assert_eq!(bypass(&h), Some(false));
+}
+
+#[test]
+fn the_eq_card_shows_the_first_eq_and_opens_its_window() {
+    let mut h = open_inspector("Keys");
+    assert!(h.query_all_by_label("Inspector: Equaliser curve").next().is_some());
+    h.get_by_label("Inspector: Add effect menu").click();
+    h.run_steps(3);
+    h.get_by_label("Add EQ").click();
+    h.run_steps(3);
+    let slot = track(&h, "Keys").mixer.inserts.iter().position(|i| i.as_ref().is_some_and(|i| i.plugin == "eq_7band")).expect("EQ slot");
+    h.get_by_label("Inspector: Equaliser curve").click();
+    h.run_steps(3);
+    let id = track(&h, "Keys").id;
+    assert!(h.state().ui.plugin_windows.contains(&(id, slot)), "a click opens the EQ insert");
+}
+
+#[test]
+fn the_midi_section_edits_transpose_velocity_and_channel_through_the_command() {
+    let mut h = open_inspector("Keys");
+    let id = track(&h, "Keys").id;
+    h.get_by_label("Inspector: Transpose").click();
+    h.run_steps(2);
+    h.event(egui::Event::Text("5".into()));
+    h.key_press(egui::Key::Enter);
+    h.run_steps(3);
+    assert_eq!(soundcraft_ui_egui::inspector_midi_values(h.state().engine.session(), id).0, 5);
+    let got = h.state_mut().run("track.midi_params_get", json!({"tracks": [id.0]})).unwrap();
+    assert_eq!(got["tracks"][0]["transpose"], 5.0, "the Inspector shows what the command reports");
+    h.state_mut().run("track.midi_params", json!({"tracks": [id.0], "channel": 3, "velocity": -10})).unwrap();
+    h.run_steps(3);
+    assert_eq!(soundcraft_ui_egui::inspector_midi_values(h.state().engine.session(), id), (5, -10, Some(3)));
+    // An audio track has no MIDI section.
+    let h = open_inspector("Kick");
+    assert!(h.query_by_label("Inspector: Transpose").is_none());
+}
+
+#[test]
+fn stereo_tracks_get_one_pan_and_a_width_and_mono_tracks_only_pan() {
+    let mut h = open_inspector("Keys");
+    assert!(track(&h, "Keys").mixer.pan.len() >= 2);
+    assert!(h.query_by_label("Inspector: Pan").is_some());
+    assert!(
+        h.query_all_by_label("Inspector: Pan 0").next().is_none() && h.query_all_by_label("Inspector: Pan 1").next().is_none(),
+        "no pair of knobs"
+    );
+    h.get_by_label("Inspector: Width").click();
+    h.run_steps(2);
+    h.event(egui::Event::Text("50".into()));
+    h.key_press(egui::Key::Enter);
+    h.run_steps(3);
+    let pan = track(&h, "Keys").mixer.pan.clone();
+    assert!((pan[0] + 0.5).abs() < 0.01 && (pan[1] - 0.5).abs() < 0.01, "{pan:?}");
+    h.state_mut().run("edit.undo", json!({})).unwrap();
+    let pan = track(&h, "Keys").mixer.pan.clone();
+    assert!((pan[0] + 1.0).abs() < 0.01 && (pan[1] - 1.0).abs() < 0.01, "one undo step restores both: {pan:?}");
+    h.state_mut().run("track.new", json!({"count": 1, "format": "mono", "name": "Solo mic"})).unwrap();
+    h.state_mut().run("edit.select", json!({"tracks": ["Solo mic"]})).unwrap();
+    h.run_steps(4);
+    assert!(h.query_by_label("Inspector: Pan").is_some());
+    assert!(h.query_by_label("Inspector: Width").is_none(), "width is a stereo control");
+}
+
+#[test]
+fn the_volume_readout_sets_the_volume_in_tenths() {
+    let mut h = open_inspector("Keys");
+    h.get_by_label("Inspector: Volume").click();
+    h.run_steps(2);
+    h.event(egui::Event::Text("-7.5".into()));
+    h.key_press(egui::Key::Enter);
+    h.run_steps(3);
+    assert!((track(&h, "Keys").mixer.volume_db + 7.5).abs() < 0.01, "{}", track(&h, "Keys").mixer.volume_db);
 }

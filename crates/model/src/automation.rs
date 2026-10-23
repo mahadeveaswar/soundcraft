@@ -338,8 +338,19 @@ impl AutomationLane {
 
     /// Thin: remove points whose removal changes the curve by less than `tolerance`.
     pub fn thin(&mut self, tolerance: f32) -> usize {
-        // Linear thinning would move the transitions of step lanes.
-        if self.param.stepped() || self.points.len() < 3 || tolerance.is_nan() {
+        // Linear thinning would move the transitions of step lanes: they only lose the points that
+        // repeat the value being held.
+        if self.param.stepped() {
+            let before = self.points.len();
+            let mut held: Option<f32> = None;
+            self.points.retain(|p| {
+                let keep = held != Some(p.value);
+                held = Some(p.value);
+                keep
+            });
+            return before - self.points.len();
+        }
+        if self.points.len() < 3 || tolerance.is_nan() {
             return 0;
         }
         let tolerance = f64::from(tolerance);
@@ -418,7 +429,13 @@ mod tests {
         for i in 0..6 {
             m.set_point(i * 10, 0.0);
         }
-        assert_eq!(m.thin_range(1.0, 0, 100), 0, "stepped lanes are never thinned");
+        assert_eq!(m.thin_range(1.0, 0, 100), 5, "stepped lanes lose repeated holds");
+        m.set_point(30, 1.0);
+        m.set_point(40, 1.0);
+        m.set_point(50, 0.0);
+        assert_eq!(m.thin(1.0), 1, "the repeated hold at 40 goes");
+        assert_eq!(m.points.iter().map(|p| (p.at, p.value)).collect::<Vec<_>>(), vec![(0, 0.0), (30, 1.0), (50, 0.0)], "transitions stay");
+        assert_eq!(m.thin(1.0), 0);
     }
 
     #[test]
