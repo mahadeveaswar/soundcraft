@@ -864,6 +864,38 @@ impl SoundApp {
         }
     }
 
+    /// The keyboard/instrument button of an instrument track. A hosted instrument opens its own
+    /// editor directly (pressing again closes it); a built-in instrument, a hosted one without an
+    /// editor here, or an editor that fails to open (the error goes to the status bar) opens the
+    /// instrument's panel.
+    pub fn open_instrument(&mut self, track: TrackId) {
+        let slot = soundcraft_mix::INSTRUMENT_SLOT;
+        let Some(plugin) = self.engine.session().track(track).and_then(|t| t.instrument.as_ref().map(|i| i.plugin.clone())) else { return };
+        let (has, open) = self.player.as_ref().map_or((false, false), |p| (p.has_editor(track, slot), p.editor_open(track, slot)));
+        match instrument_click(soundcraft_mix::is_third_party(&plugin), has, open) {
+            InstrumentClick::CloseEditor => {
+                if let Some(p) = &self.player {
+                    p.close_editor(track, slot);
+                }
+                return;
+            }
+            InstrumentClick::OpenEditor => {
+                if let Some(p) = &self.player {
+                    match p.open_editor(track, slot) {
+                        Ok(()) => return,
+                        Err(e) => {
+                            self.ui.status = format!("{}: {e}", mix_window::plugin_info(&plugin).map_or(plugin.as_str(), |i| i.name));
+                        }
+                    }
+                }
+            }
+            InstrumentClick::Panel => {}
+        }
+        if !self.ui.plugin_windows.contains(&(track, slot)) {
+            self.ui.plugin_windows.push((track, slot));
+        }
+    }
+
     /// Parameter edits made in plugin editors go into the session (one undo step per gesture).
     fn apply_editor_edits(&mut self) {
         let Some(p) = &self.player else { return };
@@ -1565,6 +1597,23 @@ fn feed_meter(d: &mut MeterDisplay, peak: [f32; 2], gr: f32, dt: f32) {
     d.gr = if gr > d.gr { gr } else { d.gr * fall };
 }
 
+/// What pressing an instrument track's instrument button does.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum InstrumentClick {
+    OpenEditor,
+    CloseEditor,
+    Panel,
+}
+
+/// A hosted instrument with an editor toggles that editor; everything else opens the panel.
+pub(crate) fn instrument_click(hosted: bool, has_editor: bool, editor_open: bool) -> InstrumentClick {
+    match (hosted && has_editor, editor_open) {
+        (true, true) => InstrumentClick::CloseEditor,
+        (true, false) => InstrumentClick::OpenEditor,
+        _ => InstrumentClick::Panel,
+    }
+}
+
 /// The status line naming the plugin in `slot` (an insert index or
 /// [`soundcraft_mix::INSTRUMENT_SLOT`]), which the engine took out of the signal path.
 fn failed_plugin_status(s: &soundcraft_model::Session, track: TrackId, slot: usize) -> Option<String> {
@@ -1576,8 +1625,17 @@ fn failed_plugin_status(s: &soundcraft_model::Session, track: TrackId, slot: usi
 
 #[cfg(test)]
 mod tests {
-    use super::{Services, SoundApp, automation_step_due};
+    use super::{InstrumentClick, Services, SoundApp, automation_step_due, instrument_click};
     use serde_json::json;
+
+    #[test]
+    fn the_instrument_button_toggles_a_hosted_editor_and_otherwise_opens_the_panel() {
+        assert_eq!(instrument_click(true, true, false), InstrumentClick::OpenEditor);
+        assert_eq!(instrument_click(true, true, true), InstrumentClick::CloseEditor);
+        assert_eq!(instrument_click(true, false, false), InstrumentClick::Panel);
+        assert_eq!(instrument_click(false, false, false), InstrumentClick::Panel);
+        assert_eq!(instrument_click(false, true, true), InstrumentClick::Panel);
+    }
 
     #[test]
     fn new_session_stops_playback_and_the_old_clock() {

@@ -504,7 +504,6 @@ fn plugin_windows(app: &mut SoundApp, ctx: &egui::Context) {
                 });
                 if instrument && soundcraft_mix::is_third_party(&ins.plugin) {
                     // A hosted instrument keeps its sounds and settings in its own editor.
-                    ui.label(egui::RichText::new("Load and edit sounds in the plugin's own editor.").color(Tokens::current().text_dim));
                     return;
                 }
                 if instrument && ins.plugin == crate::sampler_window::SAMPLER {

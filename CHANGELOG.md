@@ -4,6 +4,11 @@ Dated entries, newest first. Each entry groups changes as Added, Changed, Fixed 
 
 ## 2026-10-23 (win)
 
+### Hosted instrument button (VI1)
+- Changed: the instrument button of an instrument track (arrange header, compact header Keys and Edit buttons, mix strip instrument slot, inspector instrument row and its editor button) opens a hosted instrument's own editor window directly; pressing it again closes the editor. A built-in instrument, a hosted one with no editor, or an editor that fails to open (the error goes to the status line) still opens the instrument panel.
+- Removed: the hint line "Load and edit sounds in the plugin's own editor." from the panel of a hosted instrument.
+- Decisions: the toggle is UI-side (`SoundApp::open_instrument`) because editor windows belong to the audio player, which has no control command; no protocol change. Open issue: hosted editor windows show stale or garbled areas at fractional display scales (see the VI1 task log for hypotheses).
+
 ### Tool independence and menus (TL2)
 - Fixed: the piano roll no longer follows the arrange tool. Arrange Draw used to turn the roll's Select into Draw; the roll now uses only its own tool (`ui.midi_tool`, saved with the roll state). Setting either tool leaves the other alone, and Split, Glue, Erase and Mute in the arrange window never change roll behaviour.
 - Fixed: the arrange tool keys (F5 to F10, the Alternative digits and user bindings of `edit.tool`) do nothing while the pointer is over the roll or its controller lanes.

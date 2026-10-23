@@ -272,7 +272,7 @@ fn routing(app: &mut SoundApp, ui: &mut Ui, track: &Track) {
 
 fn instrument(app: &mut SoundApp, ui: &mut Ui, track: &Track) {
     let t = Tokens::current();
-    let (id, slot) = (track.id, soundcraft_mix::INSTRUMENT_SLOT);
+    let id = track.id;
     let r = row(ui, 26.0);
     let b = 24.0;
     let slot_r = Rect::from_min_max(r.min, pos2(r.max.x - 2.0 * (b + 3.0), r.max.y));
@@ -304,18 +304,15 @@ fn instrument(app: &mut SoundApp, ui: &mut Ui, track: &Track) {
         None => clipped_text(ui, text_r, "Select instrument...", regular(11.0), t.text_dim),
     }
     let hosted = ins.is_some_and(|i| soundcraft_mix::is_third_party(&i.plugin));
-    let win = (id, slot);
-    if resp.clicked() && !led_r.contains(resp.interact_pointer_pos().unwrap_or_default()) && hosted && !app.ui.plugin_windows.contains(&win) {
-        app.ui.plugin_windows.push(win);
+    if resp.clicked() && !led_r.contains(resp.interact_pointer_pos().unwrap_or_default()) && hosted {
+        app.open_instrument(id);
     }
     let menu_resp = if hosted { resp.clone().on_hover_text("Click: open instrument · right-click: change") } else { resp.clone() };
     let popup = if hosted { egui::Popup::context_menu(&menu_resp) } else { egui::Popup::menu(&menu_resp) };
     popup.close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| mix_window::instrument_menu(app, ui, id));
     crate::sampler_window::drop_target(app, ui.ctx(), slot_r, id);
-    if icon_button(ui, edit_r, "float", hosted, "Open the instrument's editor", "Inspector: Open instrument editor").clicked()
-        && !app.ui.plugin_windows.contains(&win)
-    {
-        app.ui.plugin_windows.push(win);
+    if icon_button(ui, edit_r, "float", hosted, "Open the instrument's editor", "Inspector: Open instrument editor").clicked() {
+        app.open_instrument(id);
     }
     let chooser = icon_button(ui, choose_r, "triangle_down", true, "Choose another instrument", "Inspector: Choose instrument");
     egui::Popup::menu(&chooser)

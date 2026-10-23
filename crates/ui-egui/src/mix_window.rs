@@ -791,7 +791,7 @@ fn stacked_body(app: &mut SoundApp, ui: &mut Ui, track: &Track, snap: Option<&Me
 /// open from that menu. Dropping an audio file on it loads the sampler.
 pub(crate) fn instrument_slot(app: &mut SoundApp, ui: &mut Ui, track: &Track, r: Rect) {
     let t = Tokens::current();
-    let (id, slot) = (track.id, soundcraft_mix::INSTRUMENT_SLOT);
+    let id = track.id;
     let ins = track.instrument.as_ref();
     let info = ins.and_then(|i| plugin_info(&i.plugin));
     let resp = ui.interact(r, ui.id().with(("instrument", id.0)), Sense::click());
@@ -801,8 +801,8 @@ pub(crate) fn instrument_slot(app: &mut SoundApp, ui: &mut Ui, track: &Track, r:
         None => empty_slot(ui.painter(), r, resp.hovered(), Mark::Dot),
     }
     let hosted = ins.is_some_and(|i| soundcraft_mix::is_third_party(&i.plugin));
-    if resp.clicked() && hosted && !app.ui.plugin_windows.contains(&(id, slot)) {
-        app.ui.plugin_windows.push((id, slot));
+    if resp.clicked() && hosted {
+        app.open_instrument(id);
     }
     let menu_resp = if hosted { resp.clone().on_hover_text("Click: open instrument · right-click: change") } else { resp.clone() };
     let popup = if hosted { egui::Popup::context_menu(&menu_resp) } else { egui::Popup::menu(&menu_resp) };

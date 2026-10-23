@@ -1292,10 +1292,7 @@ fn track_header(app: &mut SoundApp, ui: &mut Ui, track: &Track, head: Rect, sele
             crate::icons::draw(ui.painter(), r.shrink(1.0), "keyboard", if loaded { t.text } else { t.text_dim });
             let tip = if loaded { "Open instrument" } else { "No instrument loaded" };
             if resp.on_hover_text(tip).clicked() && loaded {
-                let slot = soundcraft_mix::INSTRUMENT_SLOT;
-                if !app.ui.plugin_windows.contains(&(id, slot)) {
-                    app.ui.plugin_windows.push((id, slot));
-                }
+                app.open_instrument(id);
             }
         }
         if matches!(track.kind, TrackKind::Audio | TrackKind::Instrument) {
