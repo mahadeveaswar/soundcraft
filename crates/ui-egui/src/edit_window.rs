@@ -315,7 +315,11 @@ fn main_area_content(app: &mut SoundApp, ui: &mut Ui) {
         } else if resp.clicked() {
             let _ = app.run("edit.select_none", json!({}));
         }
-        resp.context_menu(|ui| crate::track_add_menu::add_track_items(app, ui, None));
+        resp.context_menu(|ui| {
+            crate::track_add_menu::add_track_items(app, ui, None);
+            ui.separator();
+            crate::panel_menu::list_menu(app, ui, true);
+        });
     }
     overlay(app, ui, tl, Rect::from_min_max(pos2(tl.min.x, rulers_rect.min.y), tl.max));
     let _ = header;

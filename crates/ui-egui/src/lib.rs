@@ -135,6 +135,8 @@ pub struct UiState {
     pub inspector_collapsed: std::collections::BTreeSet<String>,
     /// The bottom Mixer pane (Edit window): a row of channel strips.
     pub show_mixer_panel: bool,
+    /// Piano roll settings (lanes, tool, snap, strength, inspector, note colouring).
+    pub midi_editor: midi_editor_state::MidiEditorPrefs,
     /// The Mixer pane's narrow strips, with inserts and sends folded to counts.
     pub mixer_compact: bool,
     pub show_universe: bool,
@@ -259,6 +261,7 @@ impl Default for UiState {
             recent_track_colors: Vec::new(),
             inspector_collapsed: std::iter::once("notes".to_string()).collect(),
             show_mixer_panel: false,
+            midi_editor: midi_editor_state::MidiEditorPrefs::default(),
             mixer_compact: false,
             show_universe: false,
             narrow_mix: false,
@@ -1302,6 +1305,7 @@ impl SoundApp {
         if ctx.current_pass_index() > 0 {
             return;
         }
+        midi_editor_state::sync_prefs(self);
         // Fonts set now take effect next frame, so draw only from the frame after.
         if !self.fonts_ready {
             if self.fonts_installed {

@@ -46,6 +46,15 @@ pub(crate) fn visible_range(count: usize, step: f32, min_x: f32, max_x: f32) -> 
     first.min(count)..last.max(first.min(count))
 }
 
+/// The scrolling strip area and the pinned Master column of a pane body. The Master column keeps
+/// its full strip width when the pane can afford it and never takes more than half of a narrow
+/// pane, so the two rectangles never overlap.
+pub(crate) fn split_body(body: Rect, step: f32) -> (Rect, Rect) {
+    let master_w = step.min(body.width() / 2.0).max(0.0);
+    let split_x = body.max.x - master_w;
+    (Rect::from_min_max(body.min, pos2(split_x, body.max.y)), Rect::from_min_max(pos2(split_x, body.min.y), body.max))
+}
+
 /// The pane body. Called from the dock's panel match.
 pub fn show(app: &mut SoundApp, ui: &mut Ui) {
     let t = Tokens::current();
@@ -66,9 +75,7 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
     }
     let body = Rect::from_min_max(pos2(full.min.x, bar.max.y), full.max);
     let step = mix_window::opts_width(app, &o) + GAP;
-    let master_w = step;
-    let master_rect = Rect::from_min_max(pos2((body.max.x - master_w).max(body.min.x), body.min.y), body.max);
-    let scroll_rect = Rect::from_min_max(body.min, pos2(master_rect.min.x, body.max.y));
+    let (scroll_rect, master_rect) = split_body(body, step);
     // The polled snapshot is taken out for the frame (strips borrow the app) and put back after.
     let snap = app.meters_live().then(|| std::mem::take(&mut app.meter_snapshot));
     let tracks = visible_tracks(app);
@@ -86,6 +93,7 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
     let master = app.engine.session().tracks.iter().find(|t| t.kind == TrackKind::Master).map(|t| t.id);
     if let Some(id) = master {
         let mut master_ui = ui.new_child(UiBuilder::new().max_rect(Rect::from_min_size(master_rect.min, vec2(master_rect.width(), height))));
+        master_ui.set_clip_rect(master_rect.intersect(ui.clip_rect()));
         mix_window::strip(app, &mut master_ui, id, snap.as_ref(), &o);
     }
     if let Some(s) = snap {
@@ -95,7 +103,19 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
 
 #[cfg(test)]
 mod tests {
-    use super::visible_range;
+    use super::{split_body, visible_range};
+    use egui::{Rect, pos2};
+
+    #[test]
+    fn the_pinned_master_never_overlaps_the_scrolling_strips() {
+        for width in [60.0, 150.0, 300.0, 1200.0] {
+            let body = Rect::from_min_max(pos2(10.0, 20.0), pos2(10.0 + width, 270.0));
+            let (scroll, master) = split_body(body, 124.0);
+            assert!(scroll.max.x <= master.min.x, "width {width}");
+            assert!(scroll.min.x >= body.min.x && master.max.x <= body.max.x);
+            assert!(master.width() <= 124.0 && scroll.width() >= 0.0);
+        }
+    }
 
     #[test]
     fn only_strips_in_the_viewport_are_drawn() {

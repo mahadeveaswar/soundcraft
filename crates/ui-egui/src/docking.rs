@@ -38,10 +38,10 @@ impl Panel {
         Self::Inspector,
         Self::Mixer,
     ];
-    /// Panels that exist only in the Edit window (the one list the Mix window's validation and
-    /// the panel menu both use).
+    /// Panels that exist only in the Edit window (the one list the Mix window's validation, its
+    /// docking command and the panel menu all use). Everything else can be docked in either.
     pub fn edit_only(self) -> bool {
-        matches!(self, Self::Clips | Self::Midi | Self::Master | Self::Visibility | Self::Meter | Self::Loudness | Self::Inspector | Self::Mixer)
+        matches!(self, Self::Clips | Self::Midi)
     }
     pub fn id(self) -> &'static str {
         match self {
@@ -204,7 +204,7 @@ impl Workspace {
     pub fn validate_mix(&self) -> Result<(), String> {
         self.validate()?;
         if Panel::ALL.iter().any(|p| p.edit_only() && self.layout.contains(p)) {
-            return Err("Clips, MIDI, Master, Visibility, Meter, Loudness, Inspector and Mixer panels belong to the Edit window".into());
+            return Err("Clips and MIDI Editor panels belong to the Edit window".into());
         }
         Ok(())
     }
@@ -247,6 +247,7 @@ impl Workspace {
         // The Editor and the Mixer share the lower zone as exclusive tabs: opening one joins the
         // other's tab group and shows it in place of the other.
         if let Some(other) = panel.lower_partner()
+            && !matches!(location.as_ref().map(|l| &l.placement), Some(Placement::Split(_)))
             && next.layout.contains(&other)
             && !next.layout.floating.iter().any(|group| group.panels.contains(&other))
         {
@@ -349,13 +350,12 @@ impl Workspace {
     }
 }
 
-/// Mix retains its own arrangement; the timeline-only Clips and MIDI panels stay in Edit.
+/// Mix retains its own arrangement; the timeline-only Clips and MIDI panels stay in Edit, and no
+/// optional panel is open until the user opens one.
 pub fn mix_default() -> Workspace {
     let mut workspace = Workspace::default();
-    let _ = workspace.set_visible(Panel::Clips, false);
-    let _ = workspace.set_visible(Panel::Midi, false);
-    let _ = workspace.set_visible(Panel::Master, false);
-    for panel in [Panel::Visibility, Panel::Meter, Panel::Loudness] {
+    for panel in Panel::ALL.iter().copied().filter(|p| p.edit_only() || !matches!(p, Panel::Canvas | Panel::Tracks | Panel::Memory | Panel::History))
+    {
         let _ = workspace.set_visible(panel, false);
     }
     workspace
@@ -368,13 +368,14 @@ fn sync(workspace: &mut Workspace, app: &crate::SoundApp, edit: bool) -> Result<
     if edit {
         workspace.set_visible(Panel::Clips, app.ui.show_clip_list)?;
         workspace.set_visible(Panel::Midi, app.ui.show_midi_editor)?;
-        workspace.set_visible(Panel::Master, app.ui.show_master_panel)?;
-        workspace.set_visible(Panel::Visibility, app.ui.show_visibility_pane)?;
-        workspace.set_visible(Panel::Meter, app.ui.show_meter_panel)?;
-        workspace.set_visible(Panel::Loudness, app.ui.show_loudness_panel)?;
-        workspace.set_visible(Panel::Inspector, app.ui.show_inspector)?;
-        workspace.set_visible(Panel::Mixer, app.ui.show_mixer_panel)?;
     }
+    // The other panels exist in both windows; their show flags are shared like the track list's.
+    workspace.set_visible(Panel::Master, app.ui.show_master_panel)?;
+    workspace.set_visible(Panel::Visibility, app.ui.show_visibility_pane)?;
+    workspace.set_visible(Panel::Meter, app.ui.show_meter_panel)?;
+    workspace.set_visible(Panel::Loudness, app.ui.show_loudness_panel)?;
+    workspace.set_visible(Panel::Inspector, app.ui.show_inspector)?;
+    workspace.set_visible(Panel::Mixer, app.ui.show_mixer_panel)?;
     Ok(())
 }
 
@@ -385,13 +386,13 @@ fn publish_visibility(app: &mut crate::SoundApp, workspace: &Workspace, edit: bo
     if edit {
         app.ui.show_clip_list = workspace.layout.contains(&Panel::Clips);
         app.ui.show_midi_editor = workspace.layout.contains(&Panel::Midi);
-        app.ui.show_master_panel = workspace.layout.contains(&Panel::Master);
-        app.ui.show_visibility_pane = workspace.layout.contains(&Panel::Visibility);
-        app.ui.show_meter_panel = workspace.layout.contains(&Panel::Meter);
-        app.ui.show_loudness_panel = workspace.layout.contains(&Panel::Loudness);
-        app.ui.show_inspector = workspace.layout.contains(&Panel::Inspector);
-        app.ui.show_mixer_panel = workspace.layout.contains(&Panel::Mixer);
     }
+    app.ui.show_master_panel = workspace.layout.contains(&Panel::Master);
+    app.ui.show_visibility_pane = workspace.layout.contains(&Panel::Visibility);
+    app.ui.show_meter_panel = workspace.layout.contains(&Panel::Meter);
+    app.ui.show_loudness_panel = workspace.layout.contains(&Panel::Loudness);
+    app.ui.show_inspector = workspace.layout.contains(&Panel::Inspector);
+    app.ui.show_mixer_panel = workspace.layout.contains(&Panel::Mixer);
 }
 
 fn store(app: &mut crate::SoundApp, workspace: Workspace, edit: bool) {
@@ -426,15 +427,8 @@ pub(crate) fn cancel_replaced_state(app: &crate::SoundApp, next: &crate::UiState
 }
 
 fn command_for(app: &mut crate::SoundApp, reset: bool, params: &Value, edit: bool) -> Result<Value, String> {
-    if !edit
-        && ["panel", "target"].iter().any(|field| {
-            matches!(
-                params.get(*field).and_then(Value::as_str),
-                Some("clips" | "midi" | "master" | "visibility" | "meter" | "loudness" | "inspector" | "mixer")
-            )
-        })
-    {
-        return Err("Clips, MIDI, Master, Visibility, Meter, Loudness, Inspector and Mixer panels belong to the Edit window".into());
+    if !edit && ["panel", "target"].iter().any(|field| matches!(params.get(*field).and_then(Value::as_str), Some("clips" | "midi"))) {
+        return Err("Clips and MIDI Editor panels belong to the Edit window".into());
     }
     let mut workspace = if edit { app.ui.docking.clone() } else { app.ui.mix_docking.clone() };
     if !reset && !edit {
@@ -445,10 +439,10 @@ fn command_for(app: &mut crate::SoundApp, reset: bool, params: &Value, edit: boo
         // flag would otherwise hide the track list again.
         let defaults = crate::UiState::default();
         app.ui.show_tracks_list = defaults.show_tracks_list;
+        app.ui.show_inspector = defaults.show_inspector;
+        app.ui.show_mixer_panel = defaults.show_mixer_panel;
         if edit {
             app.ui.show_clip_list = defaults.show_clip_list;
-            app.ui.show_inspector = defaults.show_inspector;
-            app.ui.show_mixer_panel = defaults.show_mixer_panel;
         }
         workspace = if edit { Workspace::default() } else { mix_default() };
         sync(&mut workspace, app, edit)?;
@@ -463,6 +457,60 @@ fn command_for(app: &mut crate::SoundApp, reset: bool, params: &Value, edit: boo
     let result = json!({"docking": workspace});
     store(app, workspace, edit);
     Ok(result)
+}
+
+/// Height of the slot a minimized MIDI editor leaves (tab strip plus its own header).
+const MINIMIZED_SLOT: f32 = MIDI_TAB_HEIGHT + 22.0;
+
+impl Workspace {
+    /// The split whose fixed side is the MIDI editor's slot, as `(path, size)` (`path` as in
+    /// `resizeSplit`). `None` when the editor is floating, hidden or in a ratio split.
+    pub fn midi_slot(&self) -> Option<(Vec<bool>, SplitSize)> {
+        fn has(node: &Node<Panel>) -> bool {
+            match node {
+                Node::Tabs { panels, .. } => panels.contains(&Panel::Midi),
+                Node::Split { first, second, .. } => has(first) || has(second),
+                _ => false,
+            }
+        }
+        let mut node = self.layout.root.as_ref()?;
+        let (mut path, mut found) = (Vec::new(), None);
+        while let Node::Split { axis, size, first, second } = node {
+            let in_second = !has(first);
+            if !in_second || has(second) {
+                let fixed = matches!((in_second, size), (false, SplitSize::FixedFirst(_)) | (true, SplitSize::FixedSecond(_)));
+                if fixed && matches!(axis, SplitAxis::Vertical) {
+                    found = Some((path.clone(), *size));
+                }
+                path.push(in_second);
+                node = if in_second { second } else { first };
+            } else {
+                return None;
+            }
+        }
+        found
+    }
+}
+
+fn collapse_midi_slot(app: &mut crate::SoundApp) -> Result<(), String> {
+    if app.midi.slot_restore.is_some() {
+        return Ok(());
+    }
+    let Some((path, size)) = app.ui.docking.midi_slot() else { return Ok(()) };
+    let collapsed = match size {
+        SplitSize::FixedFirst(_) => SplitSize::FixedFirst(MINIMIZED_SLOT),
+        _ => SplitSize::FixedSecond(MINIMIZED_SLOT),
+    };
+    app.midi.slot_restore = Some((path.clone(), size));
+    command_for(app, false, &json!({"operation": "resizeSplit", "path": path, "size": collapsed}), true).map(|_| ())
+}
+
+/// Puts the slot the editor had before it was minimized back (no-op when it was not collapsed).
+pub(crate) fn restore_midi_slot(app: &mut crate::SoundApp) {
+    let Some((path, size)) = app.midi.slot_restore.take() else { return };
+    if let Err(error) = command_for(app, false, &json!({"operation": "resizeSplit", "path": path, "size": size}), true) {
+        app.ui.status = format!("Panel height was not restored: {error}");
+    }
 }
 
 /// The active panel of the tab group the Editor and the Mixer share, if both are docked together.
@@ -531,9 +579,10 @@ pub fn show(app: &mut crate::SoundApp, ui: &mut egui::Ui, window: crate::MainWin
     app.midi.floating = workspace.layout.floating.iter().any(|group| group.panels.contains(&Panel::Midi));
     if edit && !app.ui.show_midi_editor {
         app.midi.minimized = false;
+        app.midi.slot_restore = None;
     }
     let mut style = DockStyle::from_ui(ui);
-    style.min_pane = 96.0;
+    style.min_pane = if app.midi.minimized && app.midi.slot_restore.is_some() { MINIMIZED_SLOT } else { 96.0 };
     style.tab_height = MIDI_TAB_HEIGHT;
     style.background = t.panel_bg;
     style.tab_background = t.panel_bg2;
@@ -545,6 +594,7 @@ pub fn show(app: &mut crate::SoundApp, ui: &mut egui::Ui, window: crate::MainWin
     style.font = crate::theme::regular(11.5);
     let area = ui.available_rect_before_wrap();
     let inner = crate::panel_menu::hints(app, ui, area, edit);
+    let minimized = app.midi.minimized && app.midi.slot_restore.is_some();
     let mut content = Content { app, edit, t };
     let mut run = |ui: &mut egui::Ui| {
         DockArea::new(egui::Id::new(("soundcraft-docking", edit))).show_customized(
@@ -553,7 +603,7 @@ pub fn show(app: &mut crate::SoundApp, ui: &mut egui::Ui, window: crate::MainWin
             &style,
             |panel| panel.label().into(),
             permissions,
-            panel_limits,
+            |panel| panel_limits(panel, minimized),
             &mut content,
         )
     };
@@ -570,8 +620,21 @@ pub fn show(app: &mut crate::SoundApp, ui: &mut egui::Ui, window: crate::MainWin
         }
     }
     if let Some(request) = app.midi.dock_request.take() {
-        let result = if request.get("operation").and_then(Value::as_str) == Some("showAll") {
+        let operation = request.get("operation").and_then(Value::as_str);
+        let closes_midi = operation == Some("close") && request.get("panel").and_then(Value::as_str) == Some("midi");
+        // A close must put the slot size back first: the split it describes goes away with the panel.
+        if closes_midi {
+            restore_midi_slot(app);
+        }
+        let result = if operation == Some("showAll") {
             crate::panel_menu::show_all(app).map(|_| ())
+        } else if operation == Some("midiSlot") {
+            if request.get("collapse").and_then(Value::as_bool) == Some(true) {
+                collapse_midi_slot(app)
+            } else {
+                restore_midi_slot(app);
+                Ok(())
+            }
         } else {
             command_for(app, false, &request, edit).map(|_| ())
         };
@@ -647,11 +710,12 @@ pub(crate) fn minimum_body(ui: &mut egui::Ui, minimum: egui::Vec2, body: impl Fn
     });
 }
 
-fn panel_limits(panel: &Panel) -> PanelLimits {
+fn panel_limits(panel: &Panel, midi_minimized: bool) -> PanelLimits {
     let (min, max_width) = match panel {
         Panel::Canvas => (egui::vec2(300.0, 240.0), 1_000_000.0),
         Panel::Tracks => (egui::vec2(140.0, 120.0), 520.0),
         Panel::Clips => (egui::vec2(180.0, 120.0), 720.0),
+        Panel::Midi if midi_minimized => (egui::vec2(420.0, MINIMIZED_SLOT), 1_000_000.0),
         Panel::Midi => (egui::vec2(420.0, 260.0), 1_000_000.0),
         Panel::Memory => (egui::vec2(260.0, 160.0), 1_000_000.0),
         Panel::History => (egui::vec2(200.0, 160.0), 720.0),

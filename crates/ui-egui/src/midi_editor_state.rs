@@ -7,6 +7,92 @@ use crate::midi_editor::MidiTool;
 use serde_json::{Value, json};
 use soundcraft_time::TICKS_PER_QUARTER;
 
+/// The piano roll settings kept with the other UI preferences (`UiState.midi_editor`), so they
+/// survive a restart. Every field has a default, so older `ui.json` files still load.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct MidiEditorPrefs {
+    pub lanes: Vec<crate::midi_lanes::LaneCfg>,
+    /// `ui.midi_tool` id.
+    pub tool: String,
+    /// `ui.midi_snap` id.
+    pub snap: String,
+    pub quant_strength: u8,
+    pub inspector_open: bool,
+    /// Note colouring: one colour (the track's) instead of colouring by velocity.
+    pub single_colour: bool,
+}
+
+impl Default for MidiEditorPrefs {
+    fn default() -> Self {
+        Self {
+            lanes: crate::midi_lanes::default_lanes(),
+            tool: MidiTool::default().id().into(),
+            snap: MidiSnap::default().id(),
+            quant_strength: 100,
+            inspector_open: false,
+            single_colour: false,
+        }
+    }
+}
+
+impl MidiEditorPrefs {
+    /// Anything unreadable falls back to the default for that field.
+    fn sanitised(mut self) -> Self {
+        self.lanes = crate::midi_lanes::lanes_from_json(&serde_json::to_value(&self.lanes).unwrap_or_default());
+        if MidiTool::parse(&self.tool).is_none() {
+            self.tool = MidiTool::default().id().into();
+        }
+        if MidiSnap::parse(&self.snap).is_none() {
+            self.snap = MidiSnap::default().id();
+        }
+        self.quant_strength = self.quant_strength.min(100);
+        self
+    }
+}
+
+fn current_prefs(app: &SoundApp) -> MidiEditorPrefs {
+    MidiEditorPrefs {
+        lanes: app.midi.lanes.clone(),
+        tool: app.midi.tool.id().into(),
+        snap: app.midi.snap.id(),
+        quant_strength: app.midi.quant_strength,
+        inspector_open: app.midi.inspector_open,
+        single_colour: app.engine.session().edit.flag("midi.single_colour"),
+    }
+}
+
+/// Keeps the editor and `UiState.midi_editor` in step, once per frame. The first call (and any
+/// change made to the stored preferences from outside, such as a restored or scripted `ui.set`)
+/// applies the stored values (unless they are still the defaults) to the editor; after that, editor changes are written back.
+pub fn sync_prefs(app: &mut SoundApp) {
+    let stored = app.ui.midi_editor.clone();
+    // Nothing stored yet: the editor as it is stays, and is stored from now on.
+    if app.midi.synced_prefs.is_none() && stored == MidiEditorPrefs::default() {
+        app.midi.synced_prefs = Some(stored.clone());
+    }
+    if app.midi.synced_prefs.as_ref() != Some(&stored) {
+        let stored = stored.sanitised();
+        app.midi.lanes = stored.lanes.clone();
+        app.midi.active_lane = 0;
+        app.midi.tool = MidiTool::parse(&stored.tool).unwrap_or_default();
+        app.midi.snap = MidiSnap::parse(&stored.snap).unwrap_or_default();
+        app.midi.quant_strength = stored.quant_strength;
+        app.midi.inspector_open = stored.inspector_open;
+        if app.engine.session().edit.flag("midi.single_colour") != stored.single_colour {
+            let _ = app.run("view.midi_single_colour", json!({"value": stored.single_colour}));
+        }
+        app.midi.synced_prefs = Some(current_prefs(app));
+        app.ui.midi_editor = stored;
+        return;
+    }
+    let now = current_prefs(app);
+    if app.midi.synced_prefs.as_ref() != Some(&now) {
+        app.ui.midi_editor = now.clone();
+        app.midi.synced_prefs = Some(now);
+    }
+}
+
 /// How a note division is modified.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Flavor {

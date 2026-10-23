@@ -40,14 +40,15 @@ fn ui_dock_opens_and_closes_the_mixer() {
 }
 
 #[test]
-fn the_mix_window_refuses_the_mixer() {
+fn the_mix_window_refuses_only_the_timeline_panels() {
     let mut h = harness();
     h.state_mut().ui.window = MainWindow::Mix;
     h.run_steps(3);
-    let err = h.state_mut().run("ui.dock", json!({"operation": "open", "panel": "mixer"})).unwrap_err();
-    assert!(err.contains("Mixer"), "{err}");
-    assert!(h.state_mut().run("ui.dock", json!({"operation": "move", "panel": "tracks", "target": "mixer"})).is_err());
-    assert!(!panel_menu::panels_for(false).contains(&Panel::Mixer));
+    let err = h.state_mut().run("ui.dock", json!({"operation": "open", "panel": "midi"})).unwrap_err();
+    assert!(err.contains("MIDI"), "{err}");
+    assert!(h.state_mut().run("ui.dock", json!({"operation": "move", "panel": "tracks", "target": "clips"})).is_err());
+    assert!(!panel_menu::panels_for(false).contains(&Panel::Midi));
+    assert!(panel_menu::panels_for(false).contains(&Panel::Mixer));
 }
 
 #[test]

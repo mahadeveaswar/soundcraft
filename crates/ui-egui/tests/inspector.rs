@@ -60,12 +60,12 @@ fn the_window_command_and_menu_state_follow_the_panel() {
 }
 
 #[test]
-fn the_mix_window_rejects_the_inspector() {
+fn the_mix_window_accepts_the_inspector() {
     let mut h = harness();
     h.state_mut().ui.window = MainWindow::Mix;
     h.run_steps(3);
-    assert!(h.state_mut().run("ui.dock", json!({"operation": "open", "panel": "inspector"})).is_err());
-    assert!(!panel_menu::panels_for(false).contains(&Panel::Inspector));
+    h.state_mut().run("ui.dock", json!({"operation": "open", "panel": "inspector"})).unwrap();
+    assert!(panel_menu::panels_for(false).contains(&Panel::Inspector));
 }
 
 #[test]

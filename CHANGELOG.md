@@ -4,6 +4,16 @@ Dated entries, newest first. Each entry groups changes as Added, Changed, Fixed 
 
 ## 2026-10-23 (win)
 
+### Remaining items, windows and persistence batch (RM1 B3)
+- Added: Mix window panels. Inspector, Visibility, Meters, Loudness, Mixer and Master can be opened in the Mix window (only Clips and the MIDI editor stay Edit-only; `Panel::edit_only` is now that pair). `mix_default` opens none of them. Their show flags are shared with the Edit window like the track list's, each window keeps its own layout.
+- Added: Mixer beside the Session. `ui.dock {operation: "move", panel: "mixer", target: "canvas", zone: "right"}` (also "Dock beside Session" in the Mixer's panel menu) splits it off the Editor/Mixer tab group; closing and reopening keeps that place.
+- Fixed: the Mixer pane's pinned Master column can no longer overlap the last strip (`split_body`, clipped; at narrow widths it takes at most half the pane).
+- Added: piano roll settings (lanes with heights, tool, snap, quantize strength, inspector strip, single-colour notes) are saved in `ui.json` as `midi_editor` and restored at start; old files load with defaults, junk values fall back per field. A restored or scripted `ui.set` re-applies them.
+- Fixed: minimizing the MIDI editor now shrinks its dock slot to the header and restoring (or closing while minimized) puts the previous height back.
+- Added: right-clicking empty canvas (below the tracks in Edit, past the strips in Mix) shows the panel list after Add Track.
+- Added: top bar screenshots in `docs/images/top-bar-*.png` (Standard and Classic at 1280 in Dark, Light and Midnight; Standard Dark at 1920 and at 900), rendered by the `ui_shot` example from the demo session; covered by the existing `docs/images/` row in ATTRIBUTION.md.
+- Decisions: panel show flags are shared between windows (simple, matches the track list) instead of per-window flags; the minimized slot uses the split's own fixed size and is skipped for ratio splits; open-menu screenshots are not taken (menus need real pointer events in the offscreen renderer).
+
 ### Remaining items, UI batch (RM1 B2)
 - Added: lane header menu entries "Convert to MIDI Clip Events" and "Merge into Selected Clip" (`automation.to_clip`, `automation.merge_into_clip`); "Include controller lanes" box in the MIDI export dialog; Alt+drag with the Pencil in an automation lane draws a straight ramp (snaps to the grid, switch lanes hold, one undo step).
 - Added: Inspector rework: Equaliser card (read-only response of the first EQ insert, click opens it), MIDI section (transpose, velocity offset, channel via `track.midi_params`), taller fader with a fine-adjust hint and an editable volume readout, one Pan control plus Width on stereo tracks only, raised off-state toggles, insert and send row actions that exist only while the row is hovered, instrument LED now bypasses the instrument (`mix.instrument_bypass`, silent while bypassed).

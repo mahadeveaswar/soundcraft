@@ -161,6 +161,10 @@ pub fn header(app: &mut SoundApp, ui: &mut Ui, panel: Panel, floating: bool) {
                         app.midi.dock_request = Some(json!({"operation": "float", "panel": panel.id(), "rect": float_rect(panel)}));
                         menu.close();
                     }
+                    if panel == Panel::Mixer && menu.button("Dock beside Session").clicked() {
+                        app.midi.dock_request = Some(json!({"operation": "move", "panel": "mixer", "target": "canvas", "zone": "right"}));
+                        menu.close();
+                    }
                     if menu.button("Dock to default").clicked() {
                         app.midi.dock_request =
                             Some(json!({"operation": "move", "panel": panel.id(), "target": "canvas", "zone": panel.default_zone_name()}));
@@ -228,7 +232,7 @@ mod tests {
         let mix = panels_for(false);
         assert!(!mix.contains(&Panel::Clips) && !mix.contains(&Panel::Midi));
         assert_eq!(panels_for(true).len(), 11);
-        assert!(!mix.contains(&Panel::Master) && !mix.contains(&Panel::Inspector) && !mix.contains(&Panel::Mixer));
+        assert!(mix.contains(&Panel::Master) && mix.contains(&Panel::Inspector) && mix.contains(&Panel::Mixer));
     }
 
     #[test]
@@ -237,7 +241,8 @@ mod tests {
         for p in LIST.iter().copied() {
             assert_eq!(mix.contains(&p), !p.edit_only(), "{p:?}");
         }
-        assert!(Panel::Inspector.edit_only() && Panel::Mixer.edit_only() && Panel::Clips.edit_only() && Panel::Midi.edit_only());
+        assert!(Panel::Clips.edit_only() && Panel::Midi.edit_only());
+        assert!(!Panel::Inspector.edit_only() && !Panel::Mixer.edit_only() && !Panel::Master.edit_only());
         assert!(!Panel::Tracks.edit_only() && !Panel::Canvas.edit_only() && !Panel::History.edit_only());
     }
 

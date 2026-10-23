@@ -67,6 +67,9 @@ Legend: ✅ matches · 🟡 partial · ❌ missing.
 | Fader resolution, fine adjust, numeric entry | 🟡 | |
 | macOS system menu bar | ✅ | #10 |
 
+## Top bar screenshots
+Generic renders of the demo session (`docs/images/top-bar-<style>-<theme>-<width>.png`): the Standard and Classic menu bar, toolbar, zone tabs and transport at 1280 points in Dark, Light and Midnight, plus Standard Dark at 1920 and at the narrow 900 points.
+
 ## Revision history
 
 | Date | Change | Summary |
@@ -79,6 +82,7 @@ Legend: ✅ matches · 🟡 partial · ❌ missing.
 | 2026-10-13 | minor | Waveforms and fade curves share temporary envelopes during drag, without rebuilding media or editing the document before release. Readiness estimate unchanged |
 | 2026-10-13 | minor | Fade curves use bounded physical-pixel sampling; midpoint handles stay visible and inside the clip, with repeat-drag coverage after extreme bends. Readiness estimate unchanged |
 | 2026-10-13 | minor | Continuous fade curvature from a midpoint drag, shared UI/audio envelope, one-step undo and saved session data. Readiness estimate unchanged |
+| 2026-10-23 | minor | Mix window can host Inspector, Visibility, Meters, Loudness, Mixer and Master; Mixer docks beside the session; top bar screenshots added. Readiness estimate unchanged |
 | 2026-10-13 | minor | Existing fades have draggable upper endpoints with matching hover/drag cursors, including at adjacent clip boundaries. Readiness estimate unchanged |
 | 2026-10-13 | minor | Fade drags use the same thin S-curve renderer as committed fades, replacing the dragged side's old curve. Readiness estimate unchanged |
 | 2026-10-13 | minor | Bounded Smart-tool fade previews and commits; full-clip fades target only the dragged clip and side. Readiness estimate unchanged |

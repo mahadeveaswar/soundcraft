@@ -281,6 +281,11 @@ pub struct MidiEditorState {
     pub zoom_h: Option<f32>,
     /// The panel is collapsed to its header.
     pub minimized: bool,
+    /// The dock split (path, size) that held the panel before it was minimized, to put back on
+    /// restore or close.
+    pub slot_restore: Option<(Vec<bool>, craft_ui::layout::SplitSize)>,
+    /// The preferences as last stored in or read from `UiState.midi_editor` (see `sync_prefs`).
+    pub synced_prefs: Option<crate::midi_editor_state::MidiEditorPrefs>,
     /// What notes snap to in this editor (default: follow the session grid).
     pub snap: crate::midi_editor_state::MidiSnap,
     /// Quantize strength 0..=100 used by the header Quantize button.
@@ -321,6 +326,8 @@ impl Default for MidiEditorState {
             row_h: DEFAULT_ROW_H,
             zoom_h: None,
             minimized: false,
+            slot_restore: None,
+            synced_prefs: None,
             snap: crate::midi_editor_state::MidiSnap::default(),
             quant_strength: 100,
             info_error: None,
@@ -1165,7 +1172,10 @@ fn panel_controls(app: &mut SoundApp, ui: &mut Ui, header: Rect) {
                     app.midi.minimized = false;
                     app.midi.dock_request = Some(json!({"operation": "close", "panel": "midi"}));
                 }
-                1 => app.midi.minimized = !app.midi.minimized,
+                1 => {
+                    app.midi.minimized = !app.midi.minimized;
+                    app.midi.dock_request = Some(json!({"operation": "midiSlot", "collapse": app.midi.minimized}));
+                }
                 _ if floating => {
                     app.midi.dock_request = Some(json!({"operation": "move", "panel": "midi", "target": "canvas", "zone": "bottom"}));
                 }
