@@ -4,6 +4,10 @@ Dated entries, newest first. Each entry groups changes as Added, Changed, Fixed 
 
 ## 2026-10-23 (win)
 
+### Clipboard keys on a real keyboard (KF1)
+- Fixed: Cmd/Ctrl+X, C and V did nothing on a real keyboard, because the platform sends Cut, Copy and Paste events instead of key events. They are now turned into the same chords (unless the key event also arrived), so the roll, the arrange window, user key overrides and both key sets work as before; text fields keep the native events.
+- Fixed: Paste events only arrive when the system clipboard holds text, so an internal copy or cut now leaves a short marker text there. The internal clipboard stays the source of truth; foreign clipboard text is ignored.
+
 ### Cut, copy and paste (CP1)
 - Added: piano roll clipboard. `midi.notes_copy`, `midi.notes_cut`, `midi.notes_paste`, `midi.notes_duplicate` (`crates/engine/src/cmd/midi_clip.rs`) with a note clipboard (`Clipboard.notes`) kept apart from the arrange clipboard. Notes keep mute flags, controller events under the notes (on the shown lanes) travel with them, paste goes to a given tick, else the position last placed in the roll, else the playhead or insertion point inside the clip, else the clip start; the clip grows to hold the notes and the pasted notes become the selection. One undo step each. Works across clips, tracks and after the editor is closed.
 - Added: keys over the piano roll or its controller lanes: Cmd/Ctrl+X, C, V, D (and A) act on the notes in both key sets and are not sent to the arrange window; anywhere else they cut, copy, paste and duplicate clips as before. The roll's right-click menu has Cut, Copy, Paste (at the clicked tick) and Duplicate with the Edit key text and enabled states; a controller lane's menu has Cut Events, Copy Events and Paste.

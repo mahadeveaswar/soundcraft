@@ -59,6 +59,46 @@ pub(crate) fn roll_owns(key: Key, mods: Modifiers, mac: bool, roll_busy: bool) -
     roll_busy && matches!(key, Key::X | Key::C | Key::V | Key::D | Key::A) && mods_match(Modifiers::COMMAND, mods, mac)
 }
 
+/// Text put on the OS clipboard after an internal copy or cut. The internal clipboard holds the data; this only makes
+/// the platform emit a Paste event (it does so only for non-empty text), whatever the clipboard held before.
+pub(crate) const CLIPBOARD_MARKER: &str = "soundcraft";
+
+/// Real keyboards give egui Cut / Copy / Paste events instead of Cmd+X / C / V key events. Turn them into the
+/// key chords the routing already knows (unless the same chord arrived as a key too), and keep the OS clipboard
+/// marked after an internal copy. Text fields keep the native events.
+pub(crate) fn clipboard_events(app: &mut SoundApp, ctx: &egui::Context) {
+    if std::mem::take(&mut app.pending_clipboard) {
+        ctx.copy_text(CLIPBOARD_MARKER.to_string());
+    }
+    if ctx.egui_wants_keyboard_input() || app.dialogs.open.is_some() {
+        return;
+    }
+    let mac = ctx.os() == egui::os::OperatingSystem::Mac;
+    let mods =
+        if mac { Modifiers { command: true, mac_cmd: true, ..Modifiers::NONE } } else { Modifiers { ctrl: true, command: true, ..Modifiers::NONE } };
+    ctx.input_mut(|i| {
+        let events = std::mem::take(&mut i.events);
+        let mut out = Vec::with_capacity(events.len());
+        for e in events {
+            let key = match e {
+                egui::Event::Cut => Key::X,
+                egui::Event::Copy => Key::C,
+                egui::Event::Paste(_) => Key::V,
+                other => {
+                    out.push(other);
+                    continue;
+                }
+            };
+            let dup = out.iter().any(|o| matches!(o, egui::Event::Key { key: k, pressed: true, modifiers, .. } if *k == key && modifiers.command));
+            if !dup {
+                out.push(egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: mods });
+                out.push(egui::Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers: mods });
+            }
+        }
+        i.events = out;
+    });
+}
+
 pub fn handle(app: &mut SoundApp, ctx: &egui::Context) {
     // Cmd+= and Cmd+0 are Mix/Edit and Quantize to Grid, not egui's built-in interface zoom.
     ctx.options_mut(|o| o.zoom_with_keyboard = false);

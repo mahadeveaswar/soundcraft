@@ -148,3 +148,62 @@ fn the_roll_menu_has_cut_copy_paste_duplicate_with_their_enabled_states() {
     click(&mut h, at, PointerButton::Primary);
     assert_eq!(note_count(&h), before + 1, "Paste added the copied note");
 }
+
+fn raw(h: &mut H<'_>, e: Event) {
+    h.input_mut().events.push(e);
+    steps(h, 3);
+}
+
+#[test]
+fn real_keyboard_clipboard_events_copy_cut_and_paste_notes_in_both_key_sets() {
+    for preset in ["default", "alternative"] {
+        let mut h = harness(preset);
+        let before = note_count(&h);
+        h.state_mut().midi.selected = vec![0, 1];
+        let at = roll_rect(&h).center();
+        hover(&mut h, at);
+        raw(&mut h, Event::Copy);
+        assert!(h.state().engine.clipboard.notes.is_some(), "{preset}: Copy event copied the notes");
+        raw(&mut h, Event::Paste("soundcraft".into()));
+        assert_eq!(note_count(&h), before + 2, "{preset}: Paste event pasted");
+        raw(&mut h, Event::Cut);
+        assert_eq!(note_count(&h), before, "{preset}: Cut event removed the selected notes");
+        raw(&mut h, Event::Paste("foreign text".into()));
+        assert_eq!(note_count(&h), before + 2, "{preset}: foreign clipboard text still pastes the internal clipboard");
+    }
+}
+
+#[test]
+fn a_copy_event_and_its_key_event_act_once_and_the_marker_reaches_the_os_clipboard() {
+    let mut h = harness("default");
+    let before = note_count(&h);
+    h.state_mut().midi.selected = vec![0, 1];
+    let at = roll_rect(&h).center();
+    hover(&mut h, at);
+    h.input_mut().events.push(Event::Copy);
+    let mut marker = false;
+    for _ in 0..4 {
+        steps(&mut h, 1);
+        marker |= h.output().platform_output.commands.iter().any(|c| matches!(c, egui::OutputCommand::CopyText(t) if t == "soundcraft"));
+    }
+    assert!(marker, "an internal copy puts the marker on the OS clipboard");
+    h.input_mut().events.push(Event::Paste("x".into()));
+    h.input_mut().events.push(Event::Key { key: Key::V, physical_key: None, pressed: true, repeat: false, modifiers: CTRL });
+    steps(&mut h, 3);
+    assert_eq!(note_count(&h), before + 2, "one paste, not two");
+}
+
+#[test]
+fn a_paste_event_over_the_arrange_area_pastes_clips() {
+    let mut h = harness("default");
+    h.state_mut().run("edit.select", json!({"tracks": ["Kick"]})).unwrap();
+    let clip = h.state().engine.session().track_by_name("Kick").unwrap().clips()[0].clone();
+    h.state_mut().run("edit.select", json!({"clips": [clip.id.0]})).unwrap();
+    hover(&mut h, pos2(5.0, 500.0));
+    raw(&mut h, Event::Copy);
+    assert!(!h.state().engine.clipboard.tracks.is_empty());
+    let clips = h.state().engine.session().track_by_name("Kick").unwrap().clips().len();
+    h.state_mut().run("edit.select", json!({"tracks": ["Kick"], "start": clip.end() + 5_000, "end": clip.end() + 5_000})).unwrap();
+    raw(&mut h, Event::Paste("soundcraft".into()));
+    assert_eq!(h.state().engine.session().track_by_name("Kick").unwrap().clips().len(), clips + 1);
+}

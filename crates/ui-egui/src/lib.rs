@@ -444,6 +444,8 @@ pub struct SoundApp {
     /// Bring the separate Mix window to the front on the next frame.
     pub(crate) focus_mix: bool,
     pub synthetic: Vec<egui::Event>,
+    /// An internal copy or cut ran: put the marker text on the OS clipboard next frame so a real paste key reaches us.
+    pending_clipboard: bool,
     /// Where a dropped audio file loads into a track's sampler (last frame's rects).
     pub sample_drop_targets: Vec<(egui::Rect, TrackId)>,
     sample_reads: Vec<sampler_window::SampleRead>,
@@ -532,6 +534,7 @@ impl SoundApp {
             palette: palette::PaletteState::default(),
             focus_mix: false,
             synthetic: Vec::new(),
+            pending_clipboard: false,
             sample_drop_targets: Vec::new(),
             sample_reads: Vec::new(),
             synthetic_grace: 0,
@@ -593,6 +596,9 @@ impl SoundApp {
                     self.edit_layout.follow_hold = false;
                 }
                 crate::midi_clipboard::after_command(self, id, &params, &v);
+                if matches!(id, "edit.copy" | "edit.cut" | "midi.notes_copy" | "midi.notes_cut") {
+                    self.pending_clipboard = true;
+                }
                 if id == "track.clear_clip_indicators" {
                     self.meters.values_mut().chain([&mut self.main_meter]).for_each(|m| m.clip = false);
                 }
@@ -1308,6 +1314,7 @@ impl SoundApp {
             return;
         }
         midi_editor_state::sync_prefs(self);
+        shortcuts::clipboard_events(self, ctx);
         // Fonts set now take effect next frame, so draw only from the frame after.
         if !self.fonts_ready {
             if self.fonts_installed {
